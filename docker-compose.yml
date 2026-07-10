@@ -1,0 +1,24 @@
+services:
+  localagent-box:
+    build: .
+    image: localagent-box
+    container_name: localagent-box
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PORT: "8080"
+      DATA_DIR: "/data"
+      MAX_CONCURRENT_AGENTS: "3"
+      AGENT_TIMEOUT: "3600"
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      API_TOKEN: ${API_TOKEN:-localagent-box}
+    volumes:
+      - agent-data:/data
+      - agent-workspace:/workspace
+
+volumes:
+  agent-data:
+  agent-workspace:

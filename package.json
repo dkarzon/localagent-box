@@ -1,0 +1,27 @@
+{
+  "name": "localagent-box",
+  "version": "0.1.0",
+  "description": "Docker-hostable long-running OpenCode agent daemon",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "build:ui": "npm run build --prefix client",
+    "dev:ui": "npm run dev --prefix client",
+    "postinstall": "node -e \"if (require('fs').existsSync('client/package.json')) require('child_process').execSync('npm install', { cwd: 'client', stdio: 'inherit' })\"",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "pino": "^10.3.1"
+  }
+}

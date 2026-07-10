@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "maxIterations": 5,
+  "completionMarker": "LOOP_COMPLETE",
+  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` with milestones, iteration order, and how to verify. Planning only — no implementation. Later harness cycles should follow this file.\n\nGoal: {{goal}}",
+  "steps": [
+    {
+      "verb": "OBSERVE",
+      "prompt": "Analyze the codebase, tests, and errors relevant to the goal. Use `.localagent-box/loop-plan.md` as the overall direction when present.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+    },
+    {
+      "verb": "PLAN",
+      "prompt": "Pick the next unit of work toward the goal, aligned with `.localagent-box/loop-plan.md` when present. Do not implement yet.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+    },
+    {
+      "verb": "ACT",
+      "prompt": "Implement the plan. Edit repository files and run focused checks.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+    },
+    {
+      "verb": "REFLECT",
+      "prompt": "Evaluate progress toward the goal. If the goal is fully achieved, output a line exactly: `{{completionMarker}}: true`\nOtherwise summarize remaining gaps.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+    }
+  ]
+}

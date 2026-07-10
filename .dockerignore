@@ -1,0 +1,12 @@
+.git/
+.gitignore
+node_modules/
+client/node_modules/
+dist/
+public/assets/
+public/index.html
+data/
+*.md
+.env
+.env.*
+.localagent-box/loop-plan.md

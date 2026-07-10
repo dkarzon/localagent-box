@@ -1,0 +1,343 @@
+import type { IncomingMessage, ServerResponse } from 'http';
+import type { ChildProcess } from 'child_process';
+import type { ConfigStore } from '../services/config-store';
+import type { JsonStore } from '../lib/json-store';
+import type { OpenCodeConfigService } from '../services/opencode-config';
+import type { OllamaProbe } from '../services/ollama-probe';
+import type { GithubAppService } from '../services/github-app';
+import type { GitService } from '../services/git-service';
+import type { OllamaChatService } from '../services/ollama-client';
+import type { RepoService } from '../domains/repos/repo.service';
+import type { AgentService } from '../domains/agents/agent.service';
+import type { ConfigRepository } from '../domains/config/config.repository';
+import type { GitChangedFile } from './git-file-change';
+
+export type { GitChangedFile, GitFileChangeKind } from './git-file-change';
+export type AgentGitChangedFile = GitChangedFile;
+
+export interface AppConfig {
+  ollamaBaseUrl: string;
+  opencodeModel: string;
+  opencodeProvider: string;
+  systemPrompt: string;
+  githubAppId: string;
+  githubAppInstallationId: string;
+  githubAppPrivateKey: string;
+  gitUserName: string;
+  gitUserEmail: string;
+  webhookUrl: string;
+  /** Default true — batch agents auto-approve OpenCode tool permissions */
+  batchAutoApprovePermissions: boolean;
+  /** Default true — loop agents auto-approve OpenCode tool permissions */
+  loopAutoApprovePermissions: boolean;
+  /** Default false — interactive agents require permission approval unless overridden */
+  interactiveAutoApprovePermissions: boolean;
+  /** Auto-create PR when agent completes */
+  autoCreatePullRequest?: boolean;
+  /** Interactive agent timeout in seconds (default 3600) */
+  interactiveAgentTimeoutSeconds: number;
+  /** Loop agent timeout in seconds (default 3600) */
+  loopAgentTimeoutSeconds: number;
+  /** Per-verb model overrides for loop mode. Empty string = use fallback. */
+  loopVerbModels: LoopVerbModels;
+}
+
+export type ConfigPartial = Partial<AppConfig>;
+
+export interface PublicConfig {
+  ollamaBaseUrl: string;
+  opencodeModel: string;
+  opencodeProvider: string;
+  systemPrompt: string | null;
+  githubAppId: string;
+  githubAppInstallationId: string;
+  githubAppPrivateKey: string;
+  hasGithubAppPrivateKey: boolean;
+  gitUserName: string;
+  gitUserEmail: string;
+  webhookUrl: string;
+  batchAutoApprovePermissions: boolean;
+  loopAutoApprovePermissions: boolean;
+  interactiveAutoApprovePermissions: boolean;
+  interactiveAgentTimeoutSeconds: number;
+  loopAgentTimeoutSeconds: number;
+  loopVerbModels: LoopVerbModels;
+}
+
+export interface OllamaModel {
+  name: string;
+  size?: number;
+  modifiedAt?: string;
+}
+
+export interface OllamaProbeResult {
+  status: string;
+  reachable: boolean;
+  message?: string;
+  url?: string;
+  modelCount?: number;
+  models?: OllamaModel[];
+}
+
+export interface Repo {
+  repoId: string;
+  owner: string;
+  name: string;
+  defaultBranch: string;
+  cloneUrl: string;
+  registeredAt: string;
+  lastVerifiedAt: string | null;
+  lastVerifyStatus: string | null;
+  lastVerifyMessage: string | null;
+}
+
+export interface AgentResult {
+  branch: string;
+  baseBranch: string;
+  workspaceId: string;
+  commitSha: string | null;
+  pushed: boolean;
+  filesChanged: number;
+  warning: string | null;
+  opencodeSuccess: boolean;
+}
+
+export type AgentMode = 'batch' | 'interactive' | 'loop';
+
+export type LoopVerb = 'INITIAL_PLAN' | 'OBSERVE' | 'PLAN' | 'ACT' | 'REFLECT';
+
+export type LoopVerbModels = Partial<Record<LoopVerb, string>>;
+
+export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
+  INITIAL_PLAN: '',
+  OBSERVE: '',
+  PLAN: '',
+  ACT: '',
+  REFLECT: '',
+};
+
+export interface LoopStepConfig {
+  verb: LoopVerb;
+  prompt: string;
+}
+
+export interface RepoPromptOverrides {
+  systemPrompt?: string;
+  batchContextPrompt?: string;
+  interactiveContextPrompt?: string;
+  loopContextPrompt?: string;
+}
+
+export interface AgentLoopState {
+  iteration: number;
+  stepIndex: number;
+  currentVerb: LoopVerb;
+  stepsInIteration: number;
+  maxIterations: number;
+  completionMarker: string;
+  canFinish: boolean;
+  /** Failed loop sessions with uncommitted workspace changes can salvage via commit. */
+  canCommitOutstanding: boolean;
+  finishRequested: boolean;
+  configSource: 'server-default' | 'repo-override';
+  effectiveSteps: LoopStepConfig[];
+}
+
+export type AgentStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_input'
+  | 'processing'
+  | 'completing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export type AgentEventType =
+  | 'session.status'
+  | 'assistant.delta'
+  | 'assistant.message'
+  | 'tool.start'
+  | 'tool.end'
+  | 'permission.requested'
+  | 'error'
+  | 'log.line'
+  | 'loop.step.start'
+  | 'loop.step.end'
+  | 'loop.iteration.end';
+
+export interface AgentEvent {
+  seq: number;
+  ts: string;
+  type: AgentEventType;
+  sessionId?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface AgentMessage {
+  ts: string;
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface AgentInteractiveState {
+  canSendMessage: boolean;
+  canFinish: boolean;
+  pendingPermissionId: string | null;
+}
+
+export interface AgentGitStatus {
+  filesChanged: number;
+  files: GitChangedFile[];
+  updatedAt: string;
+}
+
+export type AgentPullRequestState = 'open' | 'closed' | 'merged';
+
+export interface AgentPullRequest {
+  number: number;
+  url: string;
+  state: AgentPullRequestState;
+  title: string;
+  createdAt: string;
+  mergedAt: string | null;
+  updatedAt: string;
+}
+
+export interface AgentTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  cost?: number;
+}
+
+export interface Agent {
+  agentId: string;
+  workspaceId: string;
+  repoId: string;
+  /** Defaults to 'batch' when omitted in persisted records */
+  mode?: AgentMode;
+  prompt: string;
+  systemPrompt: string | null;
+  baseBranch: string;
+  agentBranch: string;
+  /** When true, clone and checkout agentBranch instead of creating a new branch from baseBranch */
+  useExistingBranch?: boolean;
+  commitMessage: string;
+  push: boolean;
+  pushOnFailure: boolean;
+  /** When set, overrides mode default from Settings for OpenCode tool permissions */
+  autoApprovePermissions?: boolean;
+  model: string | null;
+  /** Per-verb model overrides for this loop run (create-time snapshot) */
+  loopVerbModels?: LoopVerbModels;
+  /** Distinct models actually invoked during a loop run's lifecycle */
+  modelsUsed?: string[] | null;
+  status: AgentStatus;
+  /** Present only when mode === 'interactive' */
+  opencodeSessionId?: string | null;
+  turnCount?: number;
+  lastActivityAt?: string | null;
+  awaitingInputSince?: string | null;
+  messagesPreview?: string | null;
+  /** Snapshot of working tree changes at the last awaiting_input checkpoint */
+  gitStatus?: AgentGitStatus | null;
+  interactive?: AgentInteractiveState;
+  /** Present when mode === 'loop' */
+  loop?: AgentLoopState;
+  commitSha: string | null;
+  pushed: boolean;
+  filesChanged: number | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  branch: string | null;
+  error: string | null;
+  result: AgentResult | null;
+  pullRequest?: AgentPullRequest | null;
+  /** Auto-create PR when agent completes */
+  autoCreatePullRequest?: boolean;
+  /** Cumulative token usage across all assistant messages in this session */
+  tokenUsage?: AgentTokenUsage;
+}
+
+export interface AgentJob {
+  agentId: string;
+  workspaceId: string;
+  repoId: string;
+  /** Default 'batch' in worker if missing (legacy job.json) */
+  mode?: AgentMode;
+  prompt: string;
+  systemPrompt?: string;
+  baseBranch: string;
+  agentBranch: string;
+  /** When true, clone and checkout agentBranch instead of creating a new branch from baseBranch */
+  useExistingBranch?: boolean;
+  commitMessage: string;
+  push: boolean;
+  pushOnFailure: boolean;
+  /** When set, overrides mode default from Settings for OpenCode tool permissions */
+  autoApprovePermissions?: boolean;
+  model?: string;
+  /** Per-verb model overrides for this loop run */
+  loopVerbModels?: LoopVerbModels;
+  agentTimeoutMs: number;
+  dataDir: string;
+  workspaceRoot: string;
+  workspaceDir: string;
+  logPath: string;
+}
+
+export interface ServerContext {
+  configStore: ConfigStore;
+  configRepository: ConfigRepository;
+  reposStore: JsonStore<{ repos: Repo[] }>;
+  agentsStore: JsonStore<{ agents: Agent[] }>;
+  opencodeConfig: OpenCodeConfigService;
+  ollamaProbe: OllamaProbe;
+  ollamaChat: OllamaChatService;
+  githubApp: GithubAppService;
+  gitService: GitService;
+  repoManager: RepoService;
+  agentManager: AgentService;
+}
+
+export interface Route {
+  match: (method: string | undefined, pathname: string) => boolean;
+  handle: (req: IncomingMessage, res: ServerResponse, ctx: ServerContext) => Promise<void>;
+}
+
+export class CodedError extends Error {
+  code: string;
+
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = 'CodedError';
+    this.code = code;
+  }
+}
+
+export function getErrorCode(err: unknown): string | undefined {
+  if (err instanceof CodedError) {
+    return err.code;
+  }
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    const code = (err as { code: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+}
+
+export function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return String(err);
+}
+
+export type SpawnFn = (
+  command: string,
+  args: readonly string[],
+  options?: import('child_process').SpawnOptions,
+) => ChildProcess;
