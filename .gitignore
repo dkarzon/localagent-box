@@ -5,3 +5,5 @@ data/
 public/assets/
 public/index.html
 .localagent-box/
+.env
+.env.local
