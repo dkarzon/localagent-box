@@ -20,4 +20,4 @@ export type {
   CreatePullRequestRequest,
   ListAgentsQuery,
 } from './dto';
-export { toCreateAgentResponse, parseCreatePullRequestOptions } from './dto';
+export { toCreateAgentResponse, parseCreatePullRequestOptions, validateCreateAgentRequest } from './dto';

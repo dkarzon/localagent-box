@@ -344,10 +344,10 @@ export function createAgentService(options: {
   });
 
   function createAgent(body: CreateAgentRequest): Agent {
-    const repo = repoManager.getRepo(body.repoId as string);
+    const repo = repoManager.getRepo(body.repoId);
     const agentId = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
     const payload = parseCreateAgentPayload(
-      body as unknown as Record<string, unknown>,
+      body as Record<string, unknown>,
       repo,
       agentId,
     );

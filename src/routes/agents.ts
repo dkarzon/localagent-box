@@ -8,6 +8,7 @@ import { handleAgentEvents } from '../entrypoints/http/sse/agent-events';
 import {
   toCreateAgentResponse,
   parseCreatePullRequestOptions,
+  validateCreateAgentRequest,
   type CreateAgentRequest,
 } from '../domains/agents/dto';
 import type { Route, ServerContext } from '../types';
@@ -78,7 +79,8 @@ const handleGetMessages = withErrorHandling((req, res, ctx, agentId) => {
 });
 
 const handleCreateAgent = withErrorHandling(async (req, res, ctx) => {
-  const body = await readJsonBody(req);
+  const raw = await readJsonBody(req);
+  const body = validateCreateAgentRequest(raw);
   const agent = ctx.agentManager.createAgent(body as unknown as CreateAgentRequest);
   sendJson(res, 201, toCreateAgentResponse(agent));
 }, secretRedact);
