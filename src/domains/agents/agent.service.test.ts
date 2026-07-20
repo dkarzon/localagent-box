@@ -25,6 +25,7 @@ const testRepo: Repo = {
   lastVerifiedAt: null,
   lastVerifyStatus: null,
   lastVerifyMessage: null,
+  autoReviewPullRequests: null,
 };
 
 function mockChildProcess(): ChildProcess {

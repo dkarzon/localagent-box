@@ -24,6 +24,7 @@ export interface RepoRepository {
   add: (repo: Repo) => void;
   remove: (repoId: string) => Repo | undefined;
   updateVerifyStatus: (repoId: string, status: string, message: string) => void;
+  update: (repoId: string, partial: Partial<Pick<Repo, 'autoReviewPullRequests'>>) => Repo | undefined;
 }
 
 export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): RepoRepository {
@@ -35,6 +36,18 @@ export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): 
     reposStore.save({ repos });
   }
 
+  function updateRepo(
+    repoId: string,
+    partial: Partial<Pick<Repo, 'autoReviewPullRequests'>>,
+  ): Repo | undefined {
+    const repos = loadRepos();
+    const repo = repos.find((entry) => entry.repoId === validateRepoId(repoId));
+    if (!repo) return undefined;
+    Object.assign(repo, partial);
+    saveRepos(repos);
+    return repo;
+  }
+
   return {
     findAll: loadRepos,
     findById: (repoId) => loadRepos().find((entry) => entry.repoId === validateRepoId(repoId)),
@@ -44,6 +57,7 @@ export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): 
       repos.push(repo);
       saveRepos(repos);
     },
+    update: updateRepo,
     remove: (repoId) => {
       const repos = loadRepos();
       const index = repos.findIndex((entry) => entry.repoId === validateRepoId(repoId));

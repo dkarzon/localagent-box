@@ -13,6 +13,7 @@ const repo: Repo = {
   lastVerifiedAt: null,
   lastVerifyStatus: null,
   lastVerifyMessage: null,
+  autoReviewPullRequests: null,
 };
 
 describe('parseCreateAgentPayload', () => {

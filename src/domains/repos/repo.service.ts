@@ -18,6 +18,10 @@ export interface RepoService {
   listRepos: () => Repo[];
   getRepo: (repoId: string) => Repo;
   registerRepo: (body: RegisterRepoRequest) => Repo;
+  updateRepo: (
+    repoId: string,
+    updates: Partial<Pick<Repo, 'autoReviewPullRequests'>>,
+  ) => Repo;
   deleteRepo: (repoId: string) => Repo;
   verifyRepo: (
     config: AppConfig,
@@ -79,6 +83,7 @@ export function createRepoService({
       lastVerifiedAt: null,
       lastVerifyStatus: null,
       lastVerifyMessage: null,
+      autoReviewPullRequests: null,
     };
 
     repository.add(repo);
@@ -153,6 +158,13 @@ export function createRepoService({
     listRepos: () => repository.findAll(),
     getRepo,
     registerRepo,
+    updateRepo: (repoId, updates) => {
+      const repo = repository.update(repoId, updates);
+      if (!repo) {
+        throw new CodedError('Repository not found', 'NOT_FOUND');
+      }
+      return repo;
+    },
     deleteRepo,
     verifyRepo,
     resolveAuthenticatedCloneUrl,

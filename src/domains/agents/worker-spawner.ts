@@ -96,13 +96,14 @@ export function createWorkerSpawner(options: {
       autoApprovePermissions: agent.autoApprovePermissions,
       model: agent.model || undefined,
       ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
-      agentTimeoutMs:
-        mode === 'interactive'
-          ? options.getInteractiveAgentTimeoutMs()
-          : mode === 'loop'
-            ? options.getLoopAgentTimeoutMs()
-            : options.agentTimeoutMs,
-      dataDir: options.dataDir,
+      // Pass review-specific fields if present (review mode)
+      ...((mode === 'review' && agent.review?.headBranch && (job as any).mode === 'review')
+        ? { headBranch: ((agent.review as any).headBranch as string) }
+        : {}),
+      ...((mode === 'review' && agent.review?.background && (job as any).mode === 'review')
+        ? { background: ((agent.review as any).background as string) }
+        : {}),
+      agentTimeoutMs: options.agentTimeoutMs,
       workspaceRoot: options.workspaceRoot,
       workspaceDir: options.repository.getWorkspaceDir(agent.workspaceId),
       logPath,

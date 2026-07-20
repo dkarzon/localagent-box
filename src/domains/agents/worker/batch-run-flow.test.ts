@@ -17,6 +17,7 @@ const baseConfig: AppConfig = {
   batchAutoApprovePermissions: true,
   loopAutoApprovePermissions: true,
   interactiveAutoApprovePermissions: false,
+  reviewModel: '',
   interactiveAgentTimeoutSeconds: 3600,
   loopAgentTimeoutSeconds: 3600,
   loopVerbModels: {

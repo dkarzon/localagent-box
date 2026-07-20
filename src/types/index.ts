@@ -34,6 +34,10 @@ export interface AppConfig {
   interactiveAutoApprovePermissions: boolean;
   /** Auto-create PR when agent completes */
   autoCreatePullRequest?: boolean;
+  /** Default false — auto-spawn review agent after PR creation for completed agents */
+  autoReviewPullRequests?: boolean;
+  /** Model for code review (falls back to opencodeModel) */
+  reviewModel: string;
   /** Interactive agent timeout in seconds (default 3600) */
   interactiveAgentTimeoutSeconds: number;
   /** Loop agent timeout in seconds (default 3600) */
@@ -59,6 +63,9 @@ export interface PublicConfig {
   batchAutoApprovePermissions: boolean;
   loopAutoApprovePermissions: boolean;
   interactiveAutoApprovePermissions: boolean;
+  autoCreatePullRequest?: boolean;
+  autoReviewPullRequests?: boolean;
+  reviewModel: string;
   interactiveAgentTimeoutSeconds: number;
   loopAgentTimeoutSeconds: number;
   loopVerbModels: LoopVerbModels;
@@ -89,6 +96,7 @@ export interface Repo {
   lastVerifiedAt: string | null;
   lastVerifyStatus: string | null;
   lastVerifyMessage: string | null;
+  autoReviewPullRequests: boolean | null;
 }
 
 export interface AgentResult {
@@ -102,7 +110,7 @@ export interface AgentResult {
   opencodeSuccess: boolean;
 }
 
-export type AgentMode = 'batch' | 'interactive' | 'loop';
+export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
 
 export type LoopVerb = 'INITIAL_PLAN' | 'OBSERVE' | 'PLAN' | 'ACT' | 'REFLECT';
 
@@ -258,6 +266,10 @@ export interface Agent {
   pullRequest?: AgentPullRequest | null;
   /** Auto-create PR when agent completes */
   autoCreatePullRequest?: boolean;
+  /** Links auto-spawned review to the coding agent that completed */
+  parentAgentId?: string | null;
+  /** Review-specific metadata; present only when mode === 'review' */
+  review?: AgentReviewMetadata | null;
   /** Cumulative token usage across all assistant messages in this session */
   tokenUsage?: AgentTokenUsage;
 }
@@ -334,6 +346,22 @@ export function getErrorMessage(err: unknown): string {
     return err.message;
   }
   return String(err);
+}
+
+export interface AgentReviewMetadata {
+  baseBranch: string | null;
+  headBranch: string | null;
+  background?: string | null;
+  ocrResultPath?: string | null;
+  githubReviewId?: string | null;
+  headSha?: string | null;
+  prNumber?: number | null;
+}
+
+export interface ReviewJobFields {
+  baseBranch: string;
+  headBranch: string;
+  background?: string;
 }
 
 export type SpawnFn = (

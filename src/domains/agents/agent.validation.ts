@@ -1,85 +1,97 @@
-import {
-  validateBranchName,
-  validatePrompt,
-  validateModel,
-  validateSystemPrompt,
-  validateAgentMode,
-  validateMessageText,
-  validateOptionalBoolean,
-} from '../../lib/validation';
-import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
-import { validateRepoId } from '../repos/repo.repository';
-import type { AgentMode, LoopVerbModels, Repo } from '../../types';
+import type { AgentMode } from '../../types';
 
 export interface CreateAgentPayload {
   repoId: string;
   prompt: string;
-  systemPrompt: string | undefined;
+  systemPrompt?: string;
   baseBranch: string;
   agentBranch: string;
-  useExistingBranch: boolean;
+  useExistingBranch?: boolean;
   commitMessage: string;
   push: boolean;
   pushOnFailure: boolean;
-  autoApprovePermissions: boolean | undefined;
-  autoCreatePullRequest:
-    | boolean
-    | undefined;
-  model: string | null;
+  autoApprovePermissions?: boolean;
+  model?: string;
+  loopVerbModels?: Record<string, string>;
   mode: AgentMode;
-  loopVerbModels?: LoopVerbModels;
+  // Review-specific fields (mode: 'review')
+  headBranch?: string;
+  background?: string;
+  parentAgentId?: string;
 }
 
 export function parseCreateAgentPayload(
   body: Record<string, unknown>,
-  repo: Repo,
-  defaultSessionId?: string,
+  repoContext: { defaultBranch?: string | null },
+  agentId: string,
 ): CreateAgentPayload {
-  const sessionId =
-    typeof body.sessionId === 'string' && body.sessionId.trim()
-      ? body.sessionId.trim()
-      : defaultSessionId;
-  const repoId = validateRepoId(body.repoId);
-  const prompt = validatePrompt(body.prompt);
-  const systemPrompt = validateSystemPrompt(body.systemPrompt);
-  const baseBranch = validateBranchName(body.baseBranch || repo.defaultBranch || 'main');
-  const useExistingBranch = body.useExistingBranch === true;
-  const agentBranch = useExistingBranch
-    ? baseBranch
-    : validateBranchName(body.agentBranch, sessionId);
+  const mode = (() => {
+    const raw = typeof body.mode === 'string' ? (body.mode as AgentMode) : undefined;
+    if (raw && ['batch', 'interactive', 'loop', 'review'].includes(raw)) {
+      return raw;
+    }
+    return 'batch';
+  })();
+
+  const baseBranch = (() => {
+    const val = typeof body.baseBranch === 'string' ? body.baseBranch : repoContext.defaultBranch || 'main';
+    return val.trim() || 'main';
+  })();
+
+  const agentBranch =
+    typeof body.agentBranch === 'string' && body.agentBranch.trim()
+      ? body.agentBranch.trim()
+      : `agent/${agentId}`;
+
   const commitMessage =
     typeof body.commitMessage === 'string' && body.commitMessage.trim()
       ? body.commitMessage.trim()
-      : `Agent: ${agentBranch}`;
-  const push = body.push !== false;
-  const pushOnFailure = body.pushOnFailure === true;
-  const autoApprovePermissions = validateOptionalBoolean(body.autoApprovePermissions, 'autoApprovePermissions');
-  const autoCreatePullRequest = validateOptionalBoolean(body.autoCreatePullRequest, 'autoCreatePullRequest');
-  const model = validateModel(body.model);
-  const mode = validateAgentMode(body.mode);
-  const loopVerbModels =
-    mode === 'loop' && body.loopVerbModels != null
-      ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
+      : '';
+
+  const systemPrompt =
+    typeof body.systemPrompt === 'string' && body.systemPrompt.trim()
+      ? body.systemPrompt.trim()
       : undefined;
 
+  const model = typeof body.model === 'string' ? body.model : undefined;
+
+  const loopVerbModels =
+    typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
+      ? (body.loopVerbModels as Record<string, string>)
+      : undefined;
+
+  const headBranch = typeof body.headBranch === 'string' ? body.headBranch.trim() : undefined;
+  const background = typeof body.background === 'string' ? body.background : undefined;
+  const parentAgentId = typeof body.parentAgentId === 'string' ? body.parentAgentId.trim() : undefined;
+
   return {
-    repoId,
-    prompt,
+    repoId: String(body.repoId || ''),
+    prompt: String(typeof body.prompt === 'string' ? body.prompt : ''),
     systemPrompt,
     baseBranch,
     agentBranch,
-    useExistingBranch,
+    useExistingBranch: typeof body.useExistingBranch === 'boolean' ? body.useExistingBranch : undefined,
     commitMessage,
-    push,
-    pushOnFailure,
-    autoApprovePermissions,
-    autoCreatePullRequest,
+    push: typeof body.push === 'boolean' ? body.push : true,
+    pushOnFailure: typeof body.pushOnFailure === 'boolean' ? body.pushOnFailure : false,
+    autoApprovePermissions:
+      typeof body.autoApprovePermissions === 'boolean' ? body.autoApprovePermissions : undefined,
     model,
-    mode,
     loopVerbModels,
+    mode,
+    headBranch,
+    background,
+    parentAgentId,
   };
 }
 
 export function parseMessageText(text: unknown): string {
-  return validateMessageText(text);
+  if (typeof text !== 'string') {
+    throw new Error('text must be a string');
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error('text cannot be empty');
+  }
+  return trimmed;
 }
