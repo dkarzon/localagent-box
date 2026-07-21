@@ -44,6 +44,7 @@ COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 
 RUN npm install -g opencode-ai@v1.15.13
+RUN npm install -g @alibaba-group/open-code-review
 
 RUN mkdir -p /home/node/.local/share/opencode \
     /home/node/.local/state \

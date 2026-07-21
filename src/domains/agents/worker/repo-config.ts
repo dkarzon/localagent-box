@@ -17,7 +17,7 @@ export function validateRepoConfig(raw: unknown): RepoPromptOverrides {
   const obj = raw as Record<string, unknown>;
   const overrides: RepoPromptOverrides = {};
 
-  const allowedKeys = ['systemPrompt', 'batchContextPrompt', 'interactiveContextPrompt', 'loopContextPrompt'];
+  const allowedKeys = ['systemPrompt', 'batchContextPrompt', 'interactiveContextPrompt', 'loopContextPrompt', 'reviewBackground'];
 
   for (const key of allowedKeys) {
     if (obj[key] !== undefined) {

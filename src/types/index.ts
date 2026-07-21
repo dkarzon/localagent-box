@@ -294,6 +294,10 @@ export interface AgentJob {
   model?: string;
   /** Per-verb model overrides for this loop run */
   loopVerbModels?: LoopVerbModels;
+  /** Review mode head branch (set by worker-spawner when mode is 'review') */
+  headBranch?: string;
+  /** Review mode background context */
+  background?: string | null;
   agentTimeoutMs: number;
   dataDir: string;
   workspaceRoot: string;

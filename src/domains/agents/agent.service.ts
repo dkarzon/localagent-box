@@ -352,6 +352,7 @@ export function createAgentService(options: {
       agentId,
     );
 
+    const mode = payload.mode;
     const config = configRepository.load();
     githubApp.assertConfigured(config);
 
@@ -360,6 +361,11 @@ export function createAgentService(options: {
         `Agent branch "${payload.agentBranch}" is already in use by an active job on this repo`,
         'BRANCH_IN_USE',
       );
+    }
+
+    // Validate review-specific fields
+    if (mode === 'review' && !payload.headBranch) {
+      throw new CodedError('Review mode requires headBranch to be specified', 'VALIDATION_ERROR');
     }
     const workspaceId = crypto.randomUUID();
     const workspaceDir = repository.getWorkspaceDir(workspaceId);
@@ -406,9 +412,19 @@ export function createAgentService(options: {
             interactive: buildInteractiveState('queued'),
           }
         : {}),
-      ...(payload.mode === 'loop'
+      ...((mode as import('../../types').AgentMode) === 'loop'
         ? {
             loop: buildLoopState('queued'),
+          }
+        : {}),
+      ...((mode as import('../../types').AgentMode) === 'review'
+        ? {
+            parentAgentId: payload.parentAgentId || null,
+            review: {
+              baseBranch: payload.baseBranch || null,
+              headBranch: payload.headBranch || null,
+              background: payload.background || null,
+            },
           }
         : {}),
     };

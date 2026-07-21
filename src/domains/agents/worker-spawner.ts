@@ -97,11 +97,11 @@ export function createWorkerSpawner(options: {
       model: agent.model || undefined,
       ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
       // Pass review-specific fields if present (review mode)
-      ...((mode === 'review' && agent.review?.headBranch && (job as any).mode === 'review')
-        ? { headBranch: ((agent.review as any).headBranch as string) }
+      ...(mode === 'review' && agent.review?.headBranch
+        ? { headBranch: agent.review.headBranch as unknown as string }
         : {}),
-      ...((mode === 'review' && agent.review?.background && (job as any).mode === 'review')
-        ? { background: ((agent.review as any).background as string) }
+      ...(mode === 'review' && agent.review?.background
+        ? { background: agent.review.background as unknown as string | undefined }
         : {}),
       agentTimeoutMs: options.agentTimeoutMs,
       workspaceRoot: options.workspaceRoot,
