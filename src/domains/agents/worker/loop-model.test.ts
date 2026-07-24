@@ -97,6 +97,28 @@ describe('resolveLoopStepModel', () => {
     };
     assert.equal(resolveLoopStepModel('ORIENT', baseConfig, job), 'mistral');
   });
+
+  it('resolves legacy OBSERVE/PLAN run overrides for ORIENT steps', () => {
+    const jobObserve = {
+      ...baseJob,
+      loopVerbModels: { OBSERVE: 'legacy-observe-model' },
+    };
+    assert.equal(resolveLoopStepModel('ORIENT', baseConfig, jobObserve), 'legacy-observe-model');
+
+    const jobPlan = {
+      ...baseJob,
+      loopVerbModels: { PLAN: 'legacy-plan-model' },
+    };
+    assert.equal(resolveLoopStepModel('ORIENT', baseConfig, jobPlan), 'legacy-plan-model');
+  });
+
+  it('resolves legacy OBSERVE/PLAN settings for ORIENT steps', () => {
+    const config = {
+      ...baseConfig,
+      loopVerbModels: { OBSERVE: 'settings-observe-model' },
+    };
+    assert.equal(resolveLoopStepModel('ORIENT', config, baseJob), 'settings-observe-model');
+  });
 });
 
 describe('collectLoopModels', () => {
@@ -122,5 +144,14 @@ describe('collectLoopModels', () => {
     const models = collectLoopModels(baseConfig, job);
     assert.ok(models.includes('qwen3-coder:32b'));
     assert.ok(models.includes('mistral-large'));
+  });
+
+  it('includes legacy OBSERVE/PLAN run override models', () => {
+    const job = {
+      ...baseJob,
+      loopVerbModels: { OBSERVE: 'legacy-orient-model' },
+    };
+    const models = collectLoopModels(baseConfig, job);
+    assert.ok(models.includes('legacy-orient-model'));
   });
 });
