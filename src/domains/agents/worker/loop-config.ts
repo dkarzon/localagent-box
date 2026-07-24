@@ -10,6 +10,11 @@ export interface LoopConfig {
   completionMarker: string;
   /** One-time kickoff prompt before the first iteration; optional for repo overrides. */
   initialPlanPrompt?: string;
+  /**
+   * When true, exhausting maxIterations (or stalling) without the completion marker fails the run
+   * even if files changed. Default false — commit partial progress with a warning instead of discarding it.
+   */
+  failOnMaxIterations?: boolean;
   steps: LoopStepConfig[];
 }
 
@@ -59,6 +64,14 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     initialPlanPrompt = obj.initialPlanPrompt;
   }
 
+  let failOnMaxIterations: boolean | undefined;
+  if (obj.failOnMaxIterations !== undefined) {
+    if (typeof obj.failOnMaxIterations !== 'boolean') {
+      throw new Error('loop.json failOnMaxIterations must be a boolean when provided');
+    }
+    failOnMaxIterations = obj.failOnMaxIterations;
+  }
+
   if (!Array.isArray(obj.steps) || obj.steps.length === 0) {
     throw new Error('loop.json steps must be a non-empty array');
   }
@@ -84,6 +97,7 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     maxIterations: obj.maxIterations,
     completionMarker: obj.completionMarker.trim(),
     initialPlanPrompt,
+    ...(failOnMaxIterations !== undefined ? { failOnMaxIterations } : {}),
     steps,
   };
 }
