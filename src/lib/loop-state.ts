@@ -25,7 +25,7 @@ export function buildLoopState(
   return {
     iteration: existing?.iteration ?? 1,
     stepIndex: existing?.stepIndex ?? 0,
-    currentVerb: existing?.currentVerb ?? ('OBSERVE' as LoopVerb),
+    currentVerb: existing?.currentVerb ?? ('ORIENT' as LoopVerb),
     stepsInIteration: existing?.stepsInIteration ?? 0,
     maxIterations: existing?.maxIterations ?? 10,
     completionMarker: existing?.completionMarker ?? 'LOOP_COMPLETE',

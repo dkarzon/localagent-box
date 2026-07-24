@@ -30,8 +30,14 @@ import {
   resolveBatchFailureMessage,
   resolveRunConfig,
 } from './batch-run-flow';
-import { finalizeGitChanges, captureGitStatusCheckpoint } from './workspace-setup';
+import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
+
+/**
+ * Cap for the REFLECT summary injected into the next iteration's first step (§2.1).
+ * Durable state lives in the plan-file ledger; the injected summary is only a hint.
+ */
+const MAX_INJECTED_SUMMARY_CHARS = 2000;
 
 function isFinishRequested(
   agentsStore: WorkerContext['agentsStore'],
@@ -125,9 +131,29 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     iteration,
     completionMarker: loopConfig.completionMarker,
   });
-  const conversationText = params.previousIterationSummary
-    ? `${interpolated}\n\n## Previous iteration summary\n${params.previousIterationSummary}`
-    : interpolated;
+
+  // On the first step of an iteration, prepend deterministic host-known ground truth
+  // (working-tree changes) so the model doesn't spend tool calls rediscovering them (§2.3).
+  const hostChangeSummary =
+    stepIndex === 0 && verb !== 'INITIAL_PLAN'
+      ? await buildHostChangeSummary({
+          gitService: params.gitService,
+          workspaceDir: job.workspaceDir,
+          logPath,
+        })
+      : null;
+
+  const conversationParts = [interpolated];
+  if (hostChangeSummary) {
+    conversationParts.push(hostChangeSummary);
+  }
+  if (params.previousIterationSummary) {
+    // §2.1 safety net: the REFLECT ledger lives in the plan file; keep the injected
+    // handoff bounded even if the model ignores the word cap in the prompt.
+    const summary = params.previousIterationSummary.slice(0, MAX_INJECTED_SUMMARY_CHARS);
+    conversationParts.push(`## Previous iteration summary\n${summary}`);
+  }
+  const conversationText = conversationParts.join('\n\n');
   const promptText = buildOpenCodePrompt(
     conversationText,
     job.systemPrompt,
@@ -182,7 +208,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   }
 
   const completionSignal =
-    (verb === 'REFLECT' || verb === 'OBSERVE') &&
+    (verb === 'REFLECT' || verb === 'ORIENT') &&
     parseCompletionSignal(turnResult.assistantText, loopConfig.completionMarker, interpolated);
 
   const reflectText = verb === 'REFLECT' ? turnResult.assistantText : null;
@@ -238,7 +264,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   const initialLoopState = buildLoopState('processing', {
     iteration: hasInitialPlan ? 0 : 1,
     stepIndex: 0,
-    currentVerb: hasInitialPlan ? 'INITIAL_PLAN' : (loopConfig.steps[0]?.verb ?? 'OBSERVE'),
+    currentVerb: hasInitialPlan ? 'INITIAL_PLAN' : (loopConfig.steps[0]?.verb ?? 'ORIENT'),
     stepsInIteration: loopConfig.steps.length,
     maxIterations: loopConfig.maxIterations,
     completionMarker: loopConfig.completionMarker,

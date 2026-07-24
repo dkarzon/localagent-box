@@ -104,14 +104,13 @@ export interface AgentResult {
 
 export type AgentMode = 'batch' | 'interactive' | 'loop';
 
-export type LoopVerb = 'INITIAL_PLAN' | 'OBSERVE' | 'PLAN' | 'ACT' | 'REFLECT';
+export type LoopVerb = 'INITIAL_PLAN' | 'ORIENT' | 'ACT' | 'REFLECT';
 
 export type LoopVerbModels = Partial<Record<LoopVerb, string>>;
 
 export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
   INITIAL_PLAN: '',
-  OBSERVE: '',
-  PLAN: '',
+  ORIENT: '',
   ACT: '',
   REFLECT: '',
 };

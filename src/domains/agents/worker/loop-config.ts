@@ -2,7 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import type { LoopStepConfig, LoopVerb } from '../../../types';
 
-export const LOOP_VERBS: readonly LoopVerb[] = ['OBSERVE', 'PLAN', 'ACT', 'REFLECT'];
+export const LOOP_VERBS: readonly LoopVerb[] = ['ORIENT', 'ACT', 'REFLECT'];
+
+/** Step verbs from before OBSERVE + PLAN were merged; normalized to ORIENT so old repo loop.json files still load. */
+const LEGACY_STEP_VERB_ALIASES: Record<string, LoopVerb> = {
+  OBSERVE: 'ORIENT',
+  PLAN: 'ORIENT',
+};
 
 export interface LoopConfig {
   version: number;
@@ -81,15 +87,18 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
       throw new Error(`loop.json steps[${index}] must be an object`);
     }
     const step = entry as Record<string, unknown>;
-    if (typeof step.verb !== 'string' || !LOOP_VERBS.includes(step.verb as LoopVerb)) {
+    const rawVerb = step.verb;
+    const verb =
+      typeof rawVerb === 'string' ? LEGACY_STEP_VERB_ALIASES[rawVerb] ?? (rawVerb as LoopVerb) : rawVerb;
+    if (typeof verb !== 'string' || !LOOP_VERBS.includes(verb as LoopVerb)) {
       throw new Error(
-        `loop.json steps[${index}].verb must be one of ${LOOP_VERBS.join(', ')}, got ${String(step.verb)}`,
+        `loop.json steps[${index}].verb must be one of ${LOOP_VERBS.join(', ')}, got ${String(rawVerb)}`,
       );
     }
     if (typeof step.prompt !== 'string' || !step.prompt.trim()) {
       throw new Error(`loop.json steps[${index}].prompt must be a non-empty string`);
     }
-    return { verb: step.verb as LoopVerb, prompt: step.prompt };
+    return { verb: verb as LoopVerb, prompt: step.prompt };
   });
 
   return {

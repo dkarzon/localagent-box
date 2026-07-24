@@ -2,25 +2,23 @@ export type StatusVariant = '' | 'success' | 'error';
 
 export type AgentMode = 'batch' | 'interactive' | 'loop';
 
-export type LoopVerb = 'INITIAL_PLAN' | 'OBSERVE' | 'PLAN' | 'ACT' | 'REFLECT';
+export type LoopVerb = 'INITIAL_PLAN' | 'ORIENT' | 'ACT' | 'REFLECT';
 
 /** Model id on the configured provider (e.g. Ollama tag). Empty string = use fallback. */
 export type LoopVerbModels = Partial<Record<LoopVerb, string>>;
 
 export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
   INITIAL_PLAN: '',
-  OBSERVE: '',
-  PLAN: '',
+  ORIENT: '',
   ACT: '',
   REFLECT: '',
 };
 
-export const LOOP_VERBS: LoopVerb[] = ['INITIAL_PLAN', 'OBSERVE', 'PLAN', 'ACT', 'REFLECT'];
+export const LOOP_VERBS: LoopVerb[] = ['INITIAL_PLAN', 'ORIENT', 'ACT', 'REFLECT'];
 
 export const LOOP_VERB_LABELS: Record<LoopVerb, { label: string; hint: string }> = {
   INITIAL_PLAN: { label: 'Initial plan', hint: 'One-time kickoff before iterations' },
-  OBSERVE: { label: 'Observe', hint: 'Read and analyze the codebase' },
-  PLAN: { label: 'Plan', hint: 'Pick the next unit of work' },
+  ORIENT: { label: 'Orient', hint: 'Read the code and pick the next change' },
   ACT: { label: 'Act', hint: 'Implementation (edits, commands)' },
   REFLECT: { label: 'Reflect', hint: 'Progress check / completion marker' },
 };

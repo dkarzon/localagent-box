@@ -21,8 +21,7 @@ const baseConfig: AppConfig = {
   loopAgentTimeoutSeconds: 3600,
   loopVerbModels: {
     INITIAL_PLAN: '',
-    OBSERVE: '',
-    PLAN: '',
+    ORIENT: '',
     ACT: '',
     REFLECT: '',
   },

@@ -17,7 +17,7 @@ describe('validateLoopConfig', () => {
     maxIterations: 5,
     completionMarker: 'LOOP_COMPLETE',
     steps: [
-      { verb: 'OBSERVE', prompt: 'Look at {{goal}}' },
+      { verb: 'ORIENT', prompt: 'Look at {{goal}}' },
       { verb: 'REFLECT', prompt: 'Done? {{completionMarker}}: true' },
     ],
   };
@@ -26,6 +26,21 @@ describe('validateLoopConfig', () => {
     const result = validateLoopConfig(valid);
     assert.equal(result.maxIterations, 5);
     assert.equal(result.steps.length, 2);
+  });
+
+  it('normalizes legacy OBSERVE/PLAN step verbs to ORIENT', () => {
+    const result = validateLoopConfig({
+      ...valid,
+      steps: [
+        { verb: 'OBSERVE', prompt: 'Look at {{goal}}' },
+        { verb: 'PLAN', prompt: 'Decide {{goal}}' },
+        { verb: 'ACT', prompt: 'Do {{goal}}' },
+      ],
+    });
+    assert.deepEqual(
+      result.steps.map((step) => step.verb),
+      ['ORIENT', 'ORIENT', 'ACT'],
+    );
   });
 
   it('rejects invalid version', () => {
@@ -104,7 +119,7 @@ describe('loadServerDefaultLoopConfig', () => {
     assert.equal(config.steps.length, 3);
     assert.deepEqual(
       config.steps.map((step) => step.verb),
-      ['OBSERVE', 'ACT', 'REFLECT'],
+      ['ORIENT', 'ACT', 'REFLECT'],
     );
   });
 });

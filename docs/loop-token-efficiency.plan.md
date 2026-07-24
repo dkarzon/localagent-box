@@ -25,7 +25,7 @@ Reduce input/output token spend per loop run against small local models (llama3.
 Both are read-only reasoning over the same context; merging cuts one full history replay per iteration. New default iteration shape: **ORIENT → ACT → REFLECT** (3 steps).
 
 - `config/loop.default.json`: replace OBSERVE + PLAN entries with one step, prompt: *"Inspect only files relevant to the next unfinished item in `.localagent-box/loop-plan.md`, then state the smallest next change. If the goal is already fully achieved, output `{{completionMarker}}: true` and nothing else."*
-- `loop-config.ts`: keep `OBSERVE`/`PLAN` in `LOOP_VERBS` for repo-override back-compat; add `ORIENT` (or reuse `OBSERVE` as the merged verb to avoid a type change — decide during implementation; reusing `OBSERVE` keeps `loopVerbModels` keys stable).
+- **Decision (implemented):** OBSERVE and PLAN were fully replaced by a new `ORIENT` verb rather than aliasing one of them. `LoopVerb` is now `'INITIAL_PLAN' | 'ORIENT' | 'ACT' | 'REFLECT'` across server (`types/index.ts`) and client (`api/types.ts`), including `loopVerbModels` keys, defaults, model-resolution (`loop-model.ts`), Settings UI presets/labels, and the completion-signal early-exit check. To avoid breaking data written against the old names, legacy `OBSERVE`/`PLAN` are normalized to `ORIENT` at every input boundary: repo `loop.json` step verbs (`validateLoopConfig`), persisted `config.json` on load (`config-store` via `normalizeLoopVerbModels`), and the config/create-agent APIs (`sanitizeLoopVerbModels`).
 
 ### 1.2 Early exit on the first step
 
