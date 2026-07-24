@@ -135,6 +135,9 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     loopConfig.completionMarker,
     repoPromptOverrides,
     config.systemPrompt,
+    // Step 0 always runs on a freshly created/rotated session, so it carries the
+    // full framing; later steps in the same session send only the directive.
+    { includeFraming: stepIndex === 0 },
   );
 
   const turnResult = await session.runTurn({
@@ -268,11 +271,25 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   let session = await startOpenCodeLoopSession({ ctx, autoApprovePermissions });
 
   let loopState = initialLoopState;
-  let exitReason: 'complete' | 'finish' | 'max_iterations' | 'timeout' | 'cancelled' | 'failed' =
-    'max_iterations';
+  let exitReason:
+    | 'complete'
+    | 'finish'
+    | 'max_iterations'
+    | 'stalled'
+    | 'timeout'
+    | 'cancelled'
+    | 'failed' = 'max_iterations';
   const modelsUsed = new Set<string>();
   let opencodeSuccess = false;
   let lastReflectText: string | null = null;
+  // Reached the iteration cap or stalled without a completion signal — commit partial
+  // work instead of discarding it (unless loopConfig.failOnMaxIterations).
+  let reachedCapWithoutCompletion = false;
+  // Stall detection: stop early when the working tree is byte-identical across this
+  // many consecutive iterations (the model is spinning without producing new changes).
+  const STALL_ITERATION_THRESHOLD = 2;
+  let previousIterationPorcelain: string | null = null;
+  let noProgressStreak = 0;
 
   const sharedStepParams = {
     session,
@@ -308,10 +325,12 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     }
     if (exit.kind === 'finish') {
       exitReason = 'finish';
+      opencodeSuccess = true;
       return { action: 'break' };
     }
     if (exit.kind === 'complete') {
       exitReason = 'complete';
+      opencodeSuccess = true;
       return { action: 'break' };
     }
     return { action: 'continue', reflectText: exit.reflectText };
@@ -396,23 +415,52 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
           session.sessionId,
         );
         appendLog(logPath, `Loop iteration ${iteration} ended without completion signal`);
+
+        let porcelainNow: string | null = null;
+        try {
+          porcelainNow = await gitService.getPorcelainStatus(job.workspaceDir);
+        } catch {
+          porcelainNow = null;
+        }
+        if (porcelainNow !== null) {
+          if (previousIterationPorcelain !== null && porcelainNow === previousIterationPorcelain) {
+            noProgressStreak += 1;
+          } else {
+            noProgressStreak = 0;
+          }
+          previousIterationPorcelain = porcelainNow;
+        }
+        if (noProgressStreak >= STALL_ITERATION_THRESHOLD) {
+          exitReason = 'stalled';
+          appendLog(
+            logPath,
+            `Loop stalled — working tree unchanged across ${STALL_ITERATION_THRESHOLD + 1} consecutive iterations; stopping early`,
+          );
+          break outer;
+        }
       }
     }
 
-    if (exitReason === 'max_iterations') {
+    reachedCapWithoutCompletion = exitReason === 'max_iterations' || exitReason === 'stalled';
+    if (reachedCapWithoutCompletion) {
       appendLog(
         logPath,
-        `Loop reached maxIterations (${loopConfig.maxIterations}) without ${loopConfig.completionMarker}: true`,
+        exitReason === 'stalled'
+          ? `Loop stalled without ${loopConfig.completionMarker}: true`
+          : `Loop reached maxIterations (${loopConfig.maxIterations}) without ${loopConfig.completionMarker}: true`,
       );
       if (lastReflectText) {
         appendLog(logPath, `Last REFLECT output preview: ${lastReflectText.slice(0, 200)}`);
       }
-      throw new Error(
-        `Loop reached max iterations (${loopConfig.maxIterations}) without completion signal`,
-      );
+      if (loopConfig.failOnMaxIterations) {
+        throw new Error(
+          exitReason === 'stalled'
+            ? 'Loop stalled without completion signal'
+            : `Loop reached max iterations (${loopConfig.maxIterations}) without completion signal`,
+        );
+      }
     }
-
-    opencodeSuccess = exitReason === 'complete' || exitReason === 'finish';
+    // opencodeSuccess is set at the point 'complete'/'finish' is decided (applyStepExit).
   } finally {
     await session.dispose();
   }
@@ -422,7 +470,10 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     lastActivityAt: new Date().toISOString(),
   });
 
-  const shouldCommit = opencodeSuccess || job.pushOnFailure;
+  // Soft cap: reached maxIterations / stalled without completion, but not a hard failure.
+  // Commit whatever partial work exists rather than throwing it away.
+  const softCap = reachedCapWithoutCompletion && !opencodeSuccess && !job.pushOnFailure;
+  const shouldCommit = opencodeSuccess || job.pushOnFailure || softCap;
   if (!shouldCommit) {
     throw new Error('OpenCode loop failed');
   }
@@ -443,23 +494,38 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   if (!opencodeSuccess && job.pushOnFailure) {
     warnings.push('OpenCode failed but changes were committed per pushOnFailure');
   }
+  if (softCap && gitResult.filesChanged > 0) {
+    warnings.push(
+      exitReason === 'stalled'
+        ? 'Loop stopped early after a stall; committing partial progress'
+        : 'Loop reached max iterations without completion signal; committing partial progress',
+    );
+  }
   if (gitResult.filesChanged === 0) {
     warnings.push('No file changes to commit');
   }
 
-  const status = resolveBatchCompletionStatus({
-    opencodeSuccess,
-    pushOnFailure: job.pushOnFailure,
-    filesChanged: gitResult.filesChanged,
-  });
-
-  if (status === 'failed') {
-    throw new Error(
-      resolveBatchFailureMessage({
+  const status = softCap
+    ? gitResult.filesChanged > 0
+      ? 'completed'
+      : 'failed'
+    : resolveBatchCompletionStatus({
         opencodeSuccess,
         pushOnFailure: job.pushOnFailure,
         filesChanged: gitResult.filesChanged,
-      }),
+      });
+
+  if (status === 'failed') {
+    throw new Error(
+      softCap
+        ? exitReason === 'stalled'
+          ? 'Loop stalled without completion signal and produced no file changes'
+          : `Loop reached max iterations (${loopConfig.maxIterations}) without completion signal and produced no file changes`
+        : resolveBatchFailureMessage({
+            opencodeSuccess,
+            pushOnFailure: job.pushOnFailure,
+            filesChanged: gitResult.filesChanged,
+          }),
     );
   }
 

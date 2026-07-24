@@ -69,7 +69,7 @@ describe('loadLoopConfig', () => {
     const loaded = loadLoopConfig(dir);
     assert.equal(loaded.configSource, 'server-default');
     assert.equal(loaded.config.version, 1);
-    assert.ok(loaded.config.steps.length >= 4);
+    assert.ok(loaded.config.steps.length >= 3);
   });
 
   it('replaces server default entirely when repo loop.json exists (M1)', () => {
@@ -97,14 +97,14 @@ describe('loadLoopConfig', () => {
 });
 
 describe('loadServerDefaultLoopConfig', () => {
-  it('loads bundled default with initial plan and four harness steps', () => {
+  it('loads bundled default with initial plan and three harness steps', () => {
     const config = loadServerDefaultLoopConfig();
     assert.equal(config.version, 1);
     assert.ok(config.initialPlanPrompt?.includes('{{goal}}'));
-    assert.equal(config.steps.length, 4);
+    assert.equal(config.steps.length, 3);
     assert.deepEqual(
       config.steps.map((step) => step.verb),
-      ['OBSERVE', 'PLAN', 'ACT', 'REFLECT'],
+      ['OBSERVE', 'ACT', 'REFLECT'],
     );
   });
 });

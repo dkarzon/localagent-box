@@ -6,15 +6,11 @@
   "steps": [
     {
       "verb": "OBSERVE",
-      "prompt": "Analyze the codebase, tests, and errors relevant to the goal. Use `.localagent-box/loop-plan.md` as the overall direction when present.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
-    },
-    {
-      "verb": "PLAN",
-      "prompt": "Pick the next unit of work toward the goal, aligned with `.localagent-box/loop-plan.md` when present. Do not implement yet.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+      "prompt": "Inspect only the files relevant to the next unfinished item in `.localagent-box/loop-plan.md` (when present), then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {
       "verb": "ACT",
-      "prompt": "Implement the plan. Edit repository files and run focused checks.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+      "prompt": "Implement the change identified in the previous step. Edit repository files and run focused checks.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {
       "verb": "REFLECT",
