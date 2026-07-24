@@ -27,6 +27,7 @@ RUN apt update && apt install -y \
     cmake \
     python3 \
     python3-pip \
+    python3.13-venv \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /workspace/agents /data /app \
