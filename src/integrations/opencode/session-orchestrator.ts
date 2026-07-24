@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getServerEnv } from '../../config/env';
 import {
   createOpenCodeConfigService,
   excludeWorkspaceInfrastructureFromGit,
@@ -113,12 +114,23 @@ export async function runSessionOrchestrator(
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
+  const serverEnv = getServerEnv();
+  const codeReviewGraph = serverEnv.enableCodeReviewGraph
+    ? { repoDir: job.workspaceDir, tools: serverEnv.codeReviewGraphTools }
+    : undefined;
+
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions });
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codeReviewGraph });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
+  if (codeReviewGraph) {
+    appendLog(
+      logPath,
+      `OpenCode MCP: code-review-graph enabled (tools: ${codeReviewGraph.tools.length > 0 ? codeReviewGraph.tools.join(', ') : 'all'})`,
+    );
+  }
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
       logPath,

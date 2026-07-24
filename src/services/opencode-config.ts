@@ -58,11 +58,19 @@ export interface OpenCodeModelConfig {
   };
 }
 
+export interface OpenCodeMcpLocalServer {
+  type: 'local';
+  command: string[];
+  enabled: boolean;
+  timeout?: number;
+}
+
 export interface OpenCodeConfigFile {
   $schema: string;
   model: string;
   instructions?: string[];
   permission?: Record<string, Record<string, string>>;
+  mcp?: Record<string, OpenCodeMcpLocalServer>;
   provider: Record<
     string,
     {
@@ -74,9 +82,37 @@ export interface OpenCodeConfigFile {
   >;
 }
 
+export interface CodeReviewGraphMcpOptions {
+  /** Repository the graph server should index (the agent's workspace clone). */
+  repoDir: string;
+  /** Tool allowlist for `serve --tools`; empty = expose all 30 tools. */
+  tools: string[];
+}
+
 export interface OpenCodeConfigBuildOptions {
   autoApprovePermissions?: boolean;
   job?: AgentJob;
+  codeReviewGraph?: CodeReviewGraphMcpOptions;
+}
+
+export const CODE_REVIEW_GRAPH_BIN = 'code-review-graph';
+
+/** Python process cold-start + SQLite open can exceed OpenCode's 5s default MCP timeout. */
+const CODE_REVIEW_GRAPH_MCP_TIMEOUT_MS = 15_000;
+
+export function buildCodeReviewGraphMcpServer(
+  options: CodeReviewGraphMcpOptions,
+): OpenCodeMcpLocalServer {
+  const command = [CODE_REVIEW_GRAPH_BIN, 'serve', '--repo', options.repoDir];
+  if (options.tools.length > 0) {
+    command.push('--tools', options.tools.join(','));
+  }
+  return {
+    type: 'local',
+    command,
+    enabled: true,
+    timeout: CODE_REVIEW_GRAPH_MCP_TIMEOUT_MS,
+  };
 }
 
 /** Gemma 4 streams thinking in a non-standard `reasoning` field that OpenCode's AI SDK ignores. */
@@ -162,6 +198,12 @@ export function buildOpenCodeConfig(
     file.permission = { '*': { '*': 'allow' } };
   }
 
+  if (options?.codeReviewGraph) {
+    file.mcp = {
+      'code-review-graph': buildCodeReviewGraphMcpServer(options.codeReviewGraph),
+    };
+  }
+
   return file;
 }
 
@@ -179,7 +221,10 @@ function loadBundledToolInstructions(fsImpl: Pick<typeof fs, 'existsSync' | 'rea
   return OPENCODE_TOOL_INSTRUCTIONS;
 }
 
-/** Keep legacy workspace copies out of agent commits when older runs left them behind. */
+/** Written into the workspace by `code-review-graph build`; must never land in agent commits. */
+export const CODE_REVIEW_GRAPH_DATA_DIR = '.code-review-graph/';
+
+/** Keep infrastructure files (legacy instructions copies, MCP graph data) out of agent commits. */
 export function excludeWorkspaceInfrastructureFromGit(
   workspaceDir: string,
   fsImpl: FsLike = fs,
@@ -190,18 +235,24 @@ export function excludeWorkspaceInfrastructureFromGit(
     return;
   }
   const excludePath = pathImpl.join(gitDir, 'info', 'exclude');
-  const entry = OPENCODE_TOOL_INSTRUCTIONS_FILE;
   let existing = '';
   try {
     existing = fsImpl.readFileSync(excludePath, 'utf8');
   } catch {
     existing = '';
   }
-  if (existing.includes(entry)) {
+  const missing = [OPENCODE_TOOL_INSTRUCTIONS_FILE, CODE_REVIEW_GRAPH_DATA_DIR].filter(
+    (entry) => !existing.includes(entry),
+  );
+  if (missing.length === 0) {
     return;
   }
   const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-  fsImpl.appendFileSync(excludePath, `${prefix}# localagent-box infrastructure\n${entry}\n`, 'utf8');
+  fsImpl.appendFileSync(
+    excludePath,
+    `${prefix}# localagent-box infrastructure\n${missing.join('\n')}\n`,
+    'utf8',
+  );
 }
 
 export function createOpenCodeConfigService(options: {

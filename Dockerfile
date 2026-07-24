@@ -45,6 +45,12 @@ RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 
 RUN npm install -g opencode-ai@v1.18.4
 
+# code-review-graph MCP server (stdio). Debian trixie pip is PEP 668 externally-managed,
+# so install into a dedicated venv. Core install only — the [embeddings] extra pulls in torch.
+RUN python3 -m venv /opt/code-review-graph \
+    && /opt/code-review-graph/bin/pip install --no-cache-dir code-review-graph \
+    && ln -s /opt/code-review-graph/bin/code-review-graph /usr/local/bin/code-review-graph
+
 RUN mkdir -p /home/node/.local/share/opencode \
     /home/node/.local/state \
     /home/node/.config/opencode \
