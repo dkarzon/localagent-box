@@ -1,5 +1,9 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
+import { getServerEnv } from '../../../config/env';
+import { CODE_REVIEW_GRAPH_BIN } from '../../../services/opencode-config';
 import { createRepoService } from '../../repos/repo.service';
 import { createJsonStore } from '../../../lib/json-store';
 import type { Agent, AgentGitStatus, AgentJob, AppConfig, Repo } from '../../../types';
@@ -22,6 +26,41 @@ export function ensureLocalagentBoxIgnored(workspaceDir: string): void {
   if (!content.includes(LOCALAGENT_BOX_IGNORE_ENTRY)) {
     const prefix = content.endsWith('\n') ? '' : '\n';
     fs.writeFileSync(gitignorePath, content + prefix + LOCALAGENT_BOX_IGNORE_ENTRY + '\n', 'utf8');
+  }
+}
+
+const execFileAsync = promisify(execFile);
+const CODE_REVIEW_GRAPH_BUILD_TIMEOUT_MS = 120_000;
+
+/**
+ * `code-review-graph serve` does not build the graph itself — without this post-clone
+ * build its MCP tools return empty results. Failures are non-fatal: the agent still
+ * runs, just without graph context.
+ */
+export async function buildCodeReviewGraph(
+  workspaceDir: string,
+  logPath: string,
+  execFileAsyncImpl: typeof execFileAsync = execFileAsync,
+): Promise<boolean> {
+  appendLog(logPath, 'Building code-review-graph index…');
+  try {
+    const startedAt = Date.now();
+    // `build` indexes the repo it runs inside; it has no --repo flag (unlike `serve`).
+    await execFileAsyncImpl(CODE_REVIEW_GRAPH_BIN, ['build'], {
+      cwd: workspaceDir,
+      timeout: CODE_REVIEW_GRAPH_BUILD_TIMEOUT_MS,
+    });
+    appendLog(
+      logPath,
+      `code-review-graph index built in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
+    return true;
+  } catch (err) {
+    appendLog(
+      logPath,
+      `code-review-graph build failed — agent continues without graph context (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return false;
   }
 }
 
@@ -74,6 +113,10 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   }
 
   ensureLocalagentBoxIgnored(job.workspaceDir);
+
+  if (getServerEnv().enableCodeReviewGraph) {
+    await buildCodeReviewGraph(job.workspaceDir, logPath);
+  }
 }
 
 const GIT_FILE_KIND_LABEL: Record<AgentGitStatus['files'][number]['kind'], string> = {

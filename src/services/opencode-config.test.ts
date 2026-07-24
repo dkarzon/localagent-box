@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  buildCodeReviewGraphMcpServer,
   buildGemmaReasoningWorkaroundOptions,
   buildModelConfig,
   buildOpenCodeConfig,
@@ -59,5 +60,49 @@ describe('buildOpenCodeConfig', () => {
     assert.ok(file.provider.ollama?.models['qwen3-coder:30b']);
     assert.ok(file.provider.ollama?.models.mistral);
     assert.equal(Object.keys(file.provider.ollama?.models ?? {}).length, 3);
+  });
+
+  it('omits the mcp block by default', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config);
+    assert.equal(file.mcp, undefined);
+  });
+
+  it('emits the code-review-graph mcp block when requested', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config, {
+      codeReviewGraph: {
+        repoDir: '/workspace/agents/abc',
+        tools: ['get_review_context_tool', 'query_graph_tool'],
+      },
+    });
+    assert.deepEqual(file.mcp?.['code-review-graph'], {
+      type: 'local',
+      command: [
+        'code-review-graph',
+        'serve',
+        '--repo',
+        '/workspace/agents/abc',
+        '--tools',
+        'get_review_context_tool,query_graph_tool',
+      ],
+      enabled: true,
+      timeout: 15000,
+    });
+  });
+});
+
+describe('buildCodeReviewGraphMcpServer', () => {
+  it('omits --tools when the allowlist is empty (expose all)', () => {
+    const server = buildCodeReviewGraphMcpServer({ repoDir: '/repo', tools: [] });
+    assert.deepEqual(server.command, ['code-review-graph', 'serve', '--repo', '/repo']);
   });
 });

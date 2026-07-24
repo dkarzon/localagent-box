@@ -1,9 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { getServerEnv } from '../../config/env';
 import {
   createOpenCodeConfigService,
   excludeWorkspaceInfrastructureFromGit,
   isGemmaThinkingModel,
+  type CodeReviewGraphMcpOptions,
 } from '../../services/opencode-config';
 import type { NormalizedTool } from '../../lib/tool-event';
 import {
@@ -99,6 +101,24 @@ function extractMessageTokenUsage(payload: Record<string, unknown>): {
   };
 }
 
+function resolveCodeReviewGraphOptions(workspaceDir: string): CodeReviewGraphMcpOptions | undefined {
+  const serverEnv = getServerEnv();
+  if (!serverEnv.enableCodeReviewGraph) {
+    return undefined;
+  }
+  return { repoDir: workspaceDir, tools: serverEnv.codeReviewGraphTools };
+}
+
+function logCodeReviewGraphEnabled(
+  logPath: string,
+  codeReviewGraph: CodeReviewGraphMcpOptions,
+): void {
+  appendLog(
+    logPath,
+    `OpenCode MCP: code-review-graph enabled (tools: ${codeReviewGraph.tools.length > 0 ? codeReviewGraph.tools.join(', ') : 'all'})`,
+  );
+}
+
 export async function runSessionOrchestrator(
   options: SessionOrchestratorOptions,
 ): Promise<SessionOrchestratorResult> {
@@ -113,12 +133,17 @@ export async function runSessionOrchestrator(
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
+  const codeReviewGraph = resolveCodeReviewGraphOptions(job.workspaceDir);
+
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions });
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codeReviewGraph });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
+  if (codeReviewGraph) {
+    logCodeReviewGraphEnabled(logPath, codeReviewGraph);
+  }
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
       logPath,
@@ -711,10 +736,15 @@ export async function startOpenCodeLoopSession(options: {
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
+  const codeReviewGraph = resolveCodeReviewGraphOptions(job.workspaceDir);
+
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job });
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job, codeReviewGraph });
+  if (codeReviewGraph) {
+    logCodeReviewGraphEnabled(logPath, codeReviewGraph);
+  }
   excludeWorkspaceInfrastructureFromGit(job.workspaceDir);
 
   const loopVerbs: LoopVerb[] = ['INITIAL_PLAN', 'ORIENT', 'ACT', 'REFLECT'];
