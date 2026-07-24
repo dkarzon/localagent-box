@@ -128,6 +128,58 @@ export async function captureGitStatusCheckpoint({
   }
 }
 
+/**
+ * Deterministic, host-generated summary of the current working-tree changes
+ * (`git status --short` file list + the `git diff --stat` totals line), truncated
+ * to a handful of lines. Injected into the first step of each iteration so the model
+ * gets ground truth about what has changed instead of rediscovering it with tool calls.
+ * Returns null when the working tree is clean or git fails.
+ */
+export async function buildHostChangeSummary({
+  gitService,
+  workspaceDir,
+  logPath,
+}: {
+  gitService: GitService;
+  workspaceDir: string;
+  logPath: string;
+}): Promise<string | null> {
+  const MAX_STATUS_LINES = 15;
+  try {
+    const [porcelain, diffStat] = await Promise.all([
+      gitService.getPorcelainStatus(workspaceDir),
+      gitService.getDiffStat(workspaceDir),
+    ]);
+    const statusLines = porcelain
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+    if (statusLines.length === 0) {
+      return null;
+    }
+
+    const body = statusLines.slice(0, MAX_STATUS_LINES);
+    if (statusLines.length > MAX_STATUS_LINES) {
+      body.push(`… (${statusLines.length - MAX_STATUS_LINES} more files)`);
+    }
+
+    // Last line of `git diff --stat` is the "N files changed, …" totals summary.
+    const diffLines = diffStat.split('\n').map((line) => line.trim()).filter(Boolean);
+    const totals = diffLines[diffLines.length - 1];
+    if (totals && /\bchanged\b/.test(totals)) {
+      body.push(totals);
+    }
+
+    return `## Changes so far (host-generated)\n${body.join('\n')}`;
+  } catch (err) {
+    appendLog(
+      logPath,
+      `Host change summary failed (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return null;
+  }
+}
+
 export async function finalizeGitChanges({
   gitService,
   githubApp,
