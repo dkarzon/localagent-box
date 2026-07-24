@@ -102,13 +102,13 @@ describe('resolveLoopStepModel', () => {
     const jobObserve = {
       ...baseJob,
       loopVerbModels: { OBSERVE: 'legacy-observe-model' },
-    };
+    } as AgentJob;
     assert.equal(resolveLoopStepModel('ORIENT', baseConfig, jobObserve), 'legacy-observe-model');
 
     const jobPlan = {
       ...baseJob,
       loopVerbModels: { PLAN: 'legacy-plan-model' },
-    };
+    } as AgentJob;
     assert.equal(resolveLoopStepModel('ORIENT', baseConfig, jobPlan), 'legacy-plan-model');
   });
 
@@ -116,7 +116,7 @@ describe('resolveLoopStepModel', () => {
     const config = {
       ...baseConfig,
       loopVerbModels: { OBSERVE: 'settings-observe-model' },
-    };
+    } as AppConfig;
     assert.equal(resolveLoopStepModel('ORIENT', config, baseJob), 'settings-observe-model');
   });
 });
@@ -150,7 +150,7 @@ describe('collectLoopModels', () => {
     const job = {
       ...baseJob,
       loopVerbModels: { OBSERVE: 'legacy-orient-model' },
-    };
+    } as AgentJob;
     const models = collectLoopModels(baseConfig, job);
     assert.ok(models.includes('legacy-orient-model'));
   });
