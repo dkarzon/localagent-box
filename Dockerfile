@@ -23,6 +23,7 @@ RUN apt update && apt install -y \
     curl \
     ca-certificates \
     file \
+    ripgrep \
     build-essential \
     cmake \
     python3 \
