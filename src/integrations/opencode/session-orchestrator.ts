@@ -717,7 +717,7 @@ export async function startOpenCodeLoopSession(options: {
   perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job });
   excludeWorkspaceInfrastructureFromGit(job.workspaceDir);
 
-  const loopVerbs: LoopVerb[] = ['INITIAL_PLAN', 'OBSERVE', 'PLAN', 'ACT', 'REFLECT'];
+  const loopVerbs: LoopVerb[] = ['INITIAL_PLAN', 'ORIENT', 'ACT', 'REFLECT'];
   appendLog(
     logPath,
     `Loop verb models: ${loopVerbs

@@ -171,7 +171,7 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `interactiveAutoApprovePermissions` | When true, interactive agents auto-approve tool permissions (default false) |
 | `interactiveAgentTimeoutSeconds` | Interactive session timeout in seconds (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
 | `loopAgentTimeoutSeconds` | Loop session timeout in seconds (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
-| `loopVerbModels` | Per-verb model overrides for loop mode (`INITIAL_PLAN`, `OBSERVE`, `PLAN`, `ACT`, `REFLECT`). Empty string on a verb uses the fallback chain below. |
+| `loopVerbModels` | Per-verb model overrides for loop mode (`INITIAL_PLAN`, `ORIENT`, `ACT`, `REFLECT`). Empty string on a verb uses the fallback chain below. Legacy `OBSERVE`/`PLAN` keys are accepted and folded into `ORIENT`. |
 
 Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.
 
@@ -193,15 +193,14 @@ Example — global default `llama3.2`, ACT on a coder model, others blank:
   "opencodeModel": "llama3.2",
   "loopVerbModels": {
     "INITIAL_PLAN": "",
-    "OBSERVE": "",
-    "PLAN": "",
+    "ORIENT": "",
     "ACT": "qwen3-coder:30b",
     "REFLECT": ""
   }
 }
 ```
 
-OBSERVE, PLAN, REFLECT, and INITIAL_PLAN use `llama3.2`; ACT uses `qwen3-coder:30b`.
+ORIENT, REFLECT, and INITIAL_PLAN use `llama3.2`; ACT uses `qwen3-coder:30b`.
 
 ### Examples
 
@@ -354,15 +353,14 @@ Loop mode uses a server default at `config/loop.default.json`. A repo can fully 
   "completionMarker": "LOOP_COMPLETE",
   "initialPlanPrompt": "Create a high-level plan for the goal before iterative cycles begin.\n\nGoal: {{goal}}",
   "steps": [
-    { "verb": "OBSERVE", "prompt": "Analyze the codebase…\n\nGoal: {{goal}}\nIteration: {{iteration}}" },
-    { "verb": "PLAN", "prompt": "Decide the smallest next change…\n\nGoal: {{goal}}\nIteration: {{iteration}}" },
-    { "verb": "ACT", "prompt": "Implement the plan…\n\nGoal: {{goal}}\nIteration: {{iteration}}" },
+    { "verb": "ORIENT", "prompt": "Inspect the relevant code and state the smallest next change…\n\nGoal: {{goal}}\nIteration: {{iteration}}" },
+    { "verb": "ACT", "prompt": "Implement the change…\n\nGoal: {{goal}}\nIteration: {{iteration}}" },
     { "verb": "REFLECT", "prompt": "If done, output: {{completionMarker}}: true\n\nGoal: {{goal}}\nIteration: {{iteration}}" }
   ]
 }
 ```
 
-Template variables: `{{goal}}` (create-time prompt), `{{iteration}}` (1-based macro-iteration; `0` during optional `initialPlanPrompt`), `{{completionMarker}}`. Optional `initialPlanPrompt` runs once before the first iteration to produce a high-level plan for the goal. The model must emit a line matching `LOOP_COMPLETE: true` (or your custom marker) on REFLECT to signal completion. Loop runs fail if no file changes are committed at end (same as batch).
+Valid step verbs are `ORIENT`, `ACT`, and `REFLECT` (legacy `OBSERVE`/`PLAN` are accepted and normalized to `ORIENT`). Template variables: `{{goal}}` (create-time prompt), `{{iteration}}` (1-based macro-iteration; `0` during optional `initialPlanPrompt`), `{{completionMarker}}`. Optional `initialPlanPrompt` runs once before the first iteration to produce a high-level plan for the goal. The model must emit a line matching `LOOP_COMPLETE: true` (or your custom marker) on REFLECT to signal completion. Loop runs fail if no file changes are committed at end (same as batch).
 
 ### Create-agent body
 

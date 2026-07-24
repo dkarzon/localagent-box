@@ -5,7 +5,7 @@
   "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` with milestones, iteration order, and how to verify. Planning only — no implementation. Later harness cycles should follow this file.\n\nGoal: {{goal}}",
   "steps": [
     {
-      "verb": "OBSERVE",
+      "verb": "ORIENT",
       "prompt": "Inspect only the files relevant to the next unfinished item in `.localagent-box/loop-plan.md` (when present), then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {

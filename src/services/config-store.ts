@@ -1,4 +1,5 @@
 import type { AppConfig, ConfigPartial, LoopVerbModels, PublicConfig } from '../types';
+import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
 
 export const DEFAULT_CONFIG: AppConfig = {
   ollamaBaseUrl: '',
@@ -19,8 +20,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   loopAgentTimeoutSeconds: 3600,
   loopVerbModels: {
     INITIAL_PLAN: '',
-    OBSERVE: '',
-    PLAN: '',
+    ORIENT: '',
     ACT: '',
     REFLECT: '',
   },
@@ -29,8 +29,7 @@ export const DEFAULT_CONFIG: AppConfig = {
 export function getLoopVerbModelsDefault(): LoopVerbModels {
   return {
     INITIAL_PLAN: '',
-    OBSERVE: '',
-    PLAN: '',
+    ORIENT: '',
     ACT: '',
     REFLECT: '',
   };
@@ -53,7 +52,13 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
   function loadRaw(): AppConfig {
     try {
       const raw = fs.readFileSync(configPath, 'utf8');
-      return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+      const parsed = { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as AppConfig;
+      // Migrate configs persisted before OBSERVE/PLAN were merged into ORIENT.
+      parsed.loopVerbModels = {
+        ...getLoopVerbModelsDefault(),
+        ...normalizeLoopVerbModels(parsed.loopVerbModels),
+      };
+      return parsed;
     } catch (err) {
       if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT') {
         return { ...DEFAULT_CONFIG };

@@ -182,7 +182,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   }
 
   const completionSignal =
-    (verb === 'REFLECT' || verb === 'OBSERVE') &&
+    (verb === 'REFLECT' || verb === 'ORIENT') &&
     parseCompletionSignal(turnResult.assistantText, loopConfig.completionMarker, interpolated);
 
   const reflectText = verb === 'REFLECT' ? turnResult.assistantText : null;
@@ -238,7 +238,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   const initialLoopState = buildLoopState('processing', {
     iteration: hasInitialPlan ? 0 : 1,
     stepIndex: 0,
-    currentVerb: hasInitialPlan ? 'INITIAL_PLAN' : (loopConfig.steps[0]?.verb ?? 'OBSERVE'),
+    currentVerb: hasInitialPlan ? 'INITIAL_PLAN' : (loopConfig.steps[0]?.verb ?? 'ORIENT'),
     stepsInIteration: loopConfig.steps.length,
     maxIterations: loopConfig.maxIterations,
     completionMarker: loopConfig.completionMarker,
