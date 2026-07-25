@@ -30,7 +30,7 @@ import {
   resolveBatchFailureMessage,
   resolveRunConfig,
 } from './batch-run-flow';
-import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
+import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary, buildRepoMap } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
 
 /**
