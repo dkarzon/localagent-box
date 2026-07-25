@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  buildCodeReviewGraphMcpServer,
+  buildCodegraphMcpServer,
   buildGemmaReasoningWorkaroundOptions,
   buildModelConfig,
   buildOpenCodeConfig,
@@ -72,37 +72,27 @@ describe('buildOpenCodeConfig', () => {
     assert.equal(file.mcp, undefined);
   });
 
-  it('emits the code-review-graph mcp block when requested', () => {
+  it('emits the codegraph mcp block when requested', () => {
     const config = {
       ollamaBaseUrl: 'http://localhost:11434',
       opencodeProvider: 'ollama',
       opencodeModel: 'llama3.2',
     } as AppConfig;
-    const file = buildOpenCodeConfig(config, {
-      codeReviewGraph: {
-        repoDir: '/workspace/agents/abc',
-        tools: ['get_review_context_tool', 'query_graph_tool'],
-      },
-    });
-    assert.deepEqual(file.mcp?.['code-review-graph'], {
+    const file = buildOpenCodeConfig(config, { codegraph: true });
+    assert.deepEqual(file.mcp?.codegraph, {
       type: 'local',
-      command: [
-        'code-review-graph',
-        'serve',
-        '--repo',
-        '/workspace/agents/abc',
-        '--tools',
-        'get_review_context_tool,query_graph_tool',
-      ],
+      command: ['codegraph', 'serve', '--mcp'],
       enabled: true,
       timeout: 15000,
     });
   });
 });
 
-describe('buildCodeReviewGraphMcpServer', () => {
-  it('omits --tools when the allowlist is empty (expose all)', () => {
-    const server = buildCodeReviewGraphMcpServer({ repoDir: '/repo', tools: [] });
-    assert.deepEqual(server.command, ['code-review-graph', 'serve', '--repo', '/repo']);
+describe('buildCodegraphMcpServer', () => {
+  it('matches the official opencode print-config shape', () => {
+    const server = buildCodegraphMcpServer();
+    assert.deepEqual(server.command, ['codegraph', 'serve', '--mcp']);
+    assert.equal(server.type, 'local');
+    assert.equal(server.enabled, true);
   });
 });

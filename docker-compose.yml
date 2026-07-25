@@ -15,10 +15,8 @@ services:
       AGENT_TIMEOUT: "3600"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       API_TOKEN: ${API_TOKEN:-localagent-box}
-      # Expose the code-review-graph MCP server to agents (set to "true" to enable).
-      ENABLE_CODE_REVIEW_GRAPH: ${ENABLE_CODE_REVIEW_GRAPH:-}
-      # Comma-separated MCP tool allowlist; "*" exposes all 30 tools. Default: 4 review-focused tools.
-      CODE_REVIEW_GRAPH_TOOLS: ${CODE_REVIEW_GRAPH_TOOLS:-}
+      # Expose the codegraph MCP server to agents (set to "true" to enable).
+      ENABLE_CODEGRAPH: ${ENABLE_CODEGRAPH:-}
     volumes:
       - agent-data:/data
       - agent-workspace:/workspace

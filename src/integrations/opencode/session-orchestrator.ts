@@ -5,7 +5,6 @@ import {
   createOpenCodeConfigService,
   excludeWorkspaceInfrastructureFromGit,
   isGemmaThinkingModel,
-  type CodeReviewGraphMcpOptions,
 } from '../../services/opencode-config';
 import type { NormalizedTool } from '../../lib/tool-event';
 import {
@@ -101,22 +100,12 @@ function extractMessageTokenUsage(payload: Record<string, unknown>): {
   };
 }
 
-function resolveCodeReviewGraphOptions(workspaceDir: string): CodeReviewGraphMcpOptions | undefined {
-  const serverEnv = getServerEnv();
-  if (!serverEnv.enableCodeReviewGraph) {
-    return undefined;
-  }
-  return { repoDir: workspaceDir, tools: serverEnv.codeReviewGraphTools };
+function isCodegraphEnabled(): boolean {
+  return getServerEnv().enableCodegraph;
 }
 
-function logCodeReviewGraphEnabled(
-  logPath: string,
-  codeReviewGraph: CodeReviewGraphMcpOptions,
-): void {
-  appendLog(
-    logPath,
-    `OpenCode MCP: code-review-graph enabled (tools: ${codeReviewGraph.tools.length > 0 ? codeReviewGraph.tools.join(', ') : 'all'})`,
-  );
+function logCodegraphEnabled(logPath: string): void {
+  appendLog(logPath, 'OpenCode MCP: codegraph enabled');
 }
 
 export async function runSessionOrchestrator(
@@ -133,16 +122,16 @@ export async function runSessionOrchestrator(
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
-  const codeReviewGraph = resolveCodeReviewGraphOptions(job.workspaceDir);
+  const codegraph = isCodegraphEnabled();
 
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codeReviewGraph });
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codegraph });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
-  if (codeReviewGraph) {
-    logCodeReviewGraphEnabled(logPath, codeReviewGraph);
+  if (codegraph) {
+    logCodegraphEnabled(logPath);
   }
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
@@ -736,14 +725,14 @@ export async function startOpenCodeLoopSession(options: {
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
-  const codeReviewGraph = resolveCodeReviewGraphOptions(job.workspaceDir);
+  const codegraph = isCodegraphEnabled();
 
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job, codeReviewGraph });
-  if (codeReviewGraph) {
-    logCodeReviewGraphEnabled(logPath, codeReviewGraph);
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job, codegraph });
+  if (codegraph) {
+    logCodegraphEnabled(logPath);
   }
   excludeWorkspaceInfrastructureFromGit(job.workspaceDir);
 
