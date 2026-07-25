@@ -266,7 +266,13 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
         return {
           event: {
             type: 'assistant.delta',
-            payload: { text: delta, partId, field: textPart.field },
+            payload: {
+              text: delta,
+              partId,
+              field: textPart.field,
+              // Non-prefix snapshot — client must replace, not concatenate
+              ...(source === 'updated-reset' ? { replace: true } : {}),
+            },
           },
           debug: {
             partId,
@@ -284,8 +290,17 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
         const error = event.properties.error;
         return { event: { type: 'error', payload: { error }, status: 'failed' } };
       }
-      case 'message.updated':
+      case 'message.updated': {
+        // OpenCode emits message.updated frequently; only finalize when the
+        // assistant message has time.completed (see AssistantMessage.time).
+        const info = event.properties.info as
+          | { role?: string; time?: { completed?: number } }
+          | undefined;
+        if (info?.role !== 'assistant' || info.time?.completed == null) {
+          return { event: null };
+        }
         return { event: { type: 'assistant.message', payload: event.properties } };
+      }
       case 'session.created':
       case 'session.updated':
         return { event: { type: 'session.status', payload: event.properties } };

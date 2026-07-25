@@ -56,6 +56,17 @@ function findToolEntryIndex(
   return -1;
 }
 
+/** Latest assistant bubble — tools may sit after it while the turn is still open. */
+function findLastAssistantIndex(state: TranscriptEntry[], streamingOnly = false): number {
+  for (let i = state.length - 1; i >= 0; i -= 1) {
+    const entry = state[i];
+    if (entry?.role === 'assistant' && (!streamingOnly || entry.streaming)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function buildToolCall(
   tool: ReturnType<typeof extractToolFromPayload>,
   eventTs: string,
@@ -113,13 +124,27 @@ export function transcriptReducer(state: TranscriptEntry[], action: TranscriptAc
         case 'assistant.delta': {
           const delta = typeof event.payload.text === 'string' ? event.payload.text : '';
           if (!delta) return state;
+          const replace = event.payload.replace === true;
 
-          const last = state[state.length - 1];
-          if (last?.role === 'assistant' && last.streaming) {
-            return [
-              ...state.slice(0, -1),
-              { ...last, text: last.text + delta, ts: event.ts },
-            ];
+          // Continue the open stream, or the latest assistant when it is still
+          // the tail entry (defense if a premature finalize closed it).
+          const streamingIdx = findLastAssistantIndex(state, true);
+          const idx =
+            streamingIdx >= 0
+              ? streamingIdx
+              : state[state.length - 1]?.role === 'assistant'
+                ? state.length - 1
+                : -1;
+          if (idx >= 0) {
+            const entry = state[idx]!;
+            const next = [...state];
+            next[idx] = {
+              ...entry,
+              text: replace ? delta : entry.text + delta,
+              ts: event.ts,
+              streaming: true,
+            };
+            return next;
           }
 
           return [
@@ -135,17 +160,25 @@ export function transcriptReducer(state: TranscriptEntry[], action: TranscriptAc
         }
         case 'assistant.message': {
           const text = extractAssistantText(event.payload);
-          const last = state[state.length - 1];
-          if (last?.role === 'assistant') {
-            return [
-              ...state.slice(0, -1),
-              {
-                ...last,
-                text: mergeAssistantText(last.text, text),
-                ts: event.ts,
-                streaming: false,
-              },
-            ];
+          // Prefer the open streaming bubble; otherwise only merge if the
+          // latest entry is still an assistant (not a tool gap → new step).
+          const streamingIdx = findLastAssistantIndex(state, true);
+          const idx =
+            streamingIdx >= 0
+              ? streamingIdx
+              : state[state.length - 1]?.role === 'assistant'
+                ? state.length - 1
+                : -1;
+          if (idx >= 0) {
+            const entry = state[idx]!;
+            const next = [...state];
+            next[idx] = {
+              ...entry,
+              text: mergeAssistantText(entry.text, text),
+              ts: event.ts,
+              streaming: false,
+            };
+            return next;
           }
           if (!text) return state;
           return [

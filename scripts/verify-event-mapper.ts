@@ -77,4 +77,36 @@ const snapshotSkip = mapper.map(updatedEvent('prt_3', 'One'), 'sess', 'batch');
 assert.equal(snapshotSkip.event, null);
 assert.equal(snapshotSkip.debug?.source, 'updated-skip');
 
+mapper.reset();
+const resetSnapshot = mapper.map(updatedEvent('prt_5', 'Hello'), 'sess', 'batch');
+assert.equal(resetSnapshot.event?.payload.text, 'Hello');
+const resetReplace = mapper.map(updatedEvent('prt_5', 'Goodbye'), 'sess', 'batch');
+assert.equal(resetReplace.event?.payload.text, 'Goodbye');
+assert.equal(resetReplace.event?.payload.replace, true);
+assert.equal(resetReplace.debug?.source, 'updated-reset');
+
+function messageUpdated(
+  role: 'assistant' | 'user',
+  completed?: number,
+): OpenCodeServerEvent {
+  return {
+    type: 'message.updated',
+    properties: {
+      info: {
+        role,
+        time: completed == null ? { created: 1 } : { created: 1, completed },
+      },
+    },
+  };
+}
+
+const midUpdate = mapper.map(messageUpdated('assistant'), 'sess', 'interactive');
+assert.equal(midUpdate.event, null, 'incomplete message.updated must not finalize');
+
+const userUpdate = mapper.map(messageUpdated('user', 2), 'sess', 'interactive');
+assert.equal(userUpdate.event, null, 'user message.updated must be ignored');
+
+const completedUpdate = mapper.map(messageUpdated('assistant', 2), 'sess', 'interactive');
+assert.equal(completedUpdate.event?.type, 'assistant.message');
+
 console.log('verify-event-mapper: ok');

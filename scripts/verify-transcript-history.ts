@@ -110,4 +110,120 @@ assert.equal(
   'without events, assistant messages should come from persisted messages',
 );
 
+// Mid-turn finalize then more deltas must not create overlapping bubbles.
+const midTurnFinalizeEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Hello' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Hello' },
+  },
+  {
+    seq: 3,
+    ts: '2026-05-30T10:00:03.000Z',
+    type: 'assistant.delta',
+    payload: { text: ' world' },
+  },
+  {
+    seq: 4,
+    ts: '2026-05-30T10:00:04.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Hello world' },
+  },
+];
+
+const midTurnEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Hi' }],
+  midTurnFinalizeEvents,
+);
+const midTurnAssistants = midTurnEntries.filter((e) => e.role === 'assistant');
+assert.equal(
+  midTurnAssistants.length,
+  1,
+  `mid-turn finalize must keep one assistant bubble, got ${midTurnAssistants.length}`,
+);
+assert.equal(midTurnAssistants[0]?.text, 'Hello world');
+
+// Tool gap: continue streaming into the open assistant bubble, not a new one.
+const toolGapEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Before tool' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'tool.start',
+    payload: {
+      tool: { callId: 'c1', name: 'bash', status: 'running', title: 'bash' },
+    },
+  },
+  {
+    seq: 3,
+    ts: '2026-05-30T10:00:03.000Z',
+    type: 'tool.end',
+    payload: {
+      tool: { callId: 'c1', name: 'bash', status: 'completed', title: 'bash' },
+    },
+  },
+  {
+    seq: 4,
+    ts: '2026-05-30T10:00:04.000Z',
+    type: 'assistant.delta',
+    payload: { text: ' after tool' },
+  },
+  {
+    seq: 5,
+    ts: '2026-05-30T10:00:05.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Before tool after tool' },
+  },
+];
+
+const toolGapEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Run' }],
+  toolGapEvents,
+);
+const toolGapAssistants = toolGapEntries.filter((e) => e.role === 'assistant');
+assert.equal(
+  toolGapAssistants.length,
+  1,
+  'deltas after tools must append to the open streaming assistant',
+);
+assert.equal(toolGapAssistants[0]?.text, 'Before tool after tool');
+
+// Replace deltas must not concatenate the full snapshot onto prior text.
+const replaceEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Hello' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Goodbye', replace: true },
+  },
+];
+
+const replaceEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Hi' }],
+  replaceEvents,
+);
+assert.equal(
+  replaceEntries.find((e) => e.role === 'assistant')?.text,
+  'Goodbye',
+  'replace delta must overwrite bubble text',
+);
+
 console.log('verify-transcript-history: ok');
