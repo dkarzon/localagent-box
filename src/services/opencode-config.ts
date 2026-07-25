@@ -82,36 +82,24 @@ export interface OpenCodeConfigFile {
   >;
 }
 
-export interface CodeReviewGraphMcpOptions {
-  /** Repository the graph server should index (the agent's workspace clone). */
-  repoDir: string;
-  /** Tool allowlist for `serve --tools`; empty = expose all 30 tools. */
-  tools: string[];
-}
-
 export interface OpenCodeConfigBuildOptions {
   autoApprovePermissions?: boolean;
   job?: AgentJob;
-  codeReviewGraph?: CodeReviewGraphMcpOptions;
+  /** When true, inject the codegraph MCP server into opencode.json. */
+  codegraph?: boolean;
 }
 
-export const CODE_REVIEW_GRAPH_BIN = 'code-review-graph';
+export const CODEGRAPH_BIN = 'codegraph';
 
-/** Python process cold-start + SQLite open can exceed OpenCode's 5s default MCP timeout. */
-const CODE_REVIEW_GRAPH_MCP_TIMEOUT_MS = 15_000;
+/** Cold-start + first connect catch-up can exceed OpenCode's 5s default MCP timeout. */
+const CODEGRAPH_MCP_TIMEOUT_MS = 15_000;
 
-export function buildCodeReviewGraphMcpServer(
-  options: CodeReviewGraphMcpOptions,
-): OpenCodeMcpLocalServer {
-  const command = [CODE_REVIEW_GRAPH_BIN, 'serve', '--repo', options.repoDir];
-  if (options.tools.length > 0) {
-    command.push('--tools', options.tools.join(','));
-  }
+export function buildCodegraphMcpServer(): OpenCodeMcpLocalServer {
   return {
     type: 'local',
-    command,
+    command: [CODEGRAPH_BIN, 'serve', '--mcp'],
     enabled: true,
-    timeout: CODE_REVIEW_GRAPH_MCP_TIMEOUT_MS,
+    timeout: CODEGRAPH_MCP_TIMEOUT_MS,
   };
 }
 
@@ -198,9 +186,9 @@ export function buildOpenCodeConfig(
     file.permission = { '*': { '*': 'allow' } };
   }
 
-  if (options?.codeReviewGraph) {
+  if (options?.codegraph) {
     file.mcp = {
-      'code-review-graph': buildCodeReviewGraphMcpServer(options.codeReviewGraph),
+      codegraph: buildCodegraphMcpServer(),
     };
   }
 
@@ -221,8 +209,8 @@ function loadBundledToolInstructions(fsImpl: Pick<typeof fs, 'existsSync' | 'rea
   return OPENCODE_TOOL_INSTRUCTIONS;
 }
 
-/** Written into the workspace by `code-review-graph build`; must never land in agent commits. */
-export const CODE_REVIEW_GRAPH_DATA_DIR = '.code-review-graph/';
+/** Written into the workspace by `codegraph init`; must never land in agent commits. */
+export const CODEGRAPH_DATA_DIR = '.codegraph/';
 
 /** Keep infrastructure files (legacy instructions copies, MCP graph data) out of agent commits. */
 export function excludeWorkspaceInfrastructureFromGit(
@@ -241,7 +229,7 @@ export function excludeWorkspaceInfrastructureFromGit(
   } catch {
     existing = '';
   }
-  const missing = [OPENCODE_TOOL_INSTRUCTIONS_FILE, CODE_REVIEW_GRAPH_DATA_DIR].filter(
+  const missing = [OPENCODE_TOOL_INSTRUCTIONS_FILE, CODEGRAPH_DATA_DIR].filter(
     (entry) => !existing.includes(entry),
   );
   if (missing.length === 0) {

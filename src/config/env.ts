@@ -22,10 +22,8 @@ export interface ServerEnv {
   opencodePortBase: number;
   /** Max wait for `opencode serve` to accept `/path` (includes first-run DB migration). */
   opencodeStartupTimeoutMs: number;
-  /** Expose the code-review-graph MCP server to agents (requires the binary in the image). */
-  enableCodeReviewGraph: boolean;
-  /** MCP tool allowlist passed to `code-review-graph serve --tools`; empty = expose all. */
-  codeReviewGraphTools: string[];
+  /** Expose the codegraph MCP server to agents (requires the binary in the image). */
+  enableCodegraph: boolean;
 }
 
 let cachedEnv: ServerEnv | null = null;
@@ -40,27 +38,6 @@ function parsePort(value: string | undefined): number {
 
 function parseBool(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((value || '').trim());
-}
-
-/** Small review-focused subset — injecting all 30 tools overwhelms local models. */
-const DEFAULT_CODE_REVIEW_GRAPH_TOOLS = [
-  'get_review_context_tool',
-  'detect_changes_tool',
-  'get_impact_radius_tool',
-  'query_graph_tool',
-];
-
-function parseCodeReviewGraphTools(value: string | undefined): string[] {
-  if (value == null || value === '') {
-    return DEFAULT_CODE_REVIEW_GRAPH_TOOLS;
-  }
-  if (value.trim() === '*') {
-    return [];
-  }
-  return value
-    .split(',')
-    .map((tool) => tool.trim())
-    .filter(Boolean);
 }
 
 function resolveAgentWorkspace(dataDir: string): string {
@@ -105,8 +82,7 @@ export function loadServerEnv(): ServerEnv {
     opencodeBin: process.env.OPENCODE_BIN || 'opencode',
     opencodePortBase: parsePositiveInt(process.env.OPENCODE_PORT_BASE, 4100),
     opencodeStartupTimeoutMs: parsePositiveInt(process.env.OPENCODE_STARTUP_TIMEOUT_MS, 900_000),
-    enableCodeReviewGraph: parseBool(process.env.ENABLE_CODE_REVIEW_GRAPH),
-    codeReviewGraphTools: parseCodeReviewGraphTools(process.env.CODE_REVIEW_GRAPH_TOOLS),
+    enableCodegraph: parseBool(process.env.ENABLE_CODEGRAPH),
   };
 }
 

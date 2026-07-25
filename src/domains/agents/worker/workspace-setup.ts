@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import { getServerEnv } from '../../../config/env';
-import { CODE_REVIEW_GRAPH_BIN } from '../../../services/opencode-config';
+import { CODEGRAPH_BIN } from '../../../services/opencode-config';
 import { createRepoService } from '../../repos/repo.service';
 import { createJsonStore } from '../../../lib/json-store';
 import type { Agent, AgentGitStatus, AgentJob, AppConfig, Repo } from '../../../types';
@@ -30,35 +30,36 @@ export function ensureLocalagentBoxIgnored(workspaceDir: string): void {
 }
 
 const execFileAsync = promisify(execFile);
-const CODE_REVIEW_GRAPH_BUILD_TIMEOUT_MS = 120_000;
+const CODEGRAPH_INIT_TIMEOUT_MS = 180_000;
 
 /**
- * `code-review-graph serve` does not build the graph itself — without this post-clone
- * build its MCP tools return empty results. Failures are non-fatal: the agent still
- * runs, just without graph context.
+ * `codegraph serve --mcp` expects a `.codegraph/` index — without this post-clone
+ * `init` its explore tool has nothing to query. Failures are non-fatal: the agent
+ * still runs, just without graph context.
  */
-export async function buildCodeReviewGraph(
+export async function initCodegraph(
   workspaceDir: string,
   logPath: string,
   execFileAsyncImpl: typeof execFileAsync = execFileAsync,
 ): Promise<boolean> {
-  appendLog(logPath, 'Building code-review-graph index…');
+  appendLog(logPath, 'Building codegraph index…');
   try {
     const startedAt = Date.now();
-    // `build` indexes the repo it runs inside; it has no --repo flag (unlike `serve`).
-    await execFileAsyncImpl(CODE_REVIEW_GRAPH_BIN, ['build'], {
+    // `init` creates `.codegraph/` and builds the full graph in one step.
+    await execFileAsyncImpl(CODEGRAPH_BIN, ['init'], {
       cwd: workspaceDir,
-      timeout: CODE_REVIEW_GRAPH_BUILD_TIMEOUT_MS,
+      timeout: CODEGRAPH_INIT_TIMEOUT_MS,
+      env: { ...process.env, CODEGRAPH_TELEMETRY: '0' },
     });
     appendLog(
       logPath,
-      `code-review-graph index built in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+      `codegraph index built in ${Math.round((Date.now() - startedAt) / 1000)}s`,
     );
     return true;
   } catch (err) {
     appendLog(
       logPath,
-      `code-review-graph build failed — agent continues without graph context (${err instanceof Error ? err.message : String(err)})`,
+      `codegraph init failed — agent continues without graph context (${err instanceof Error ? err.message : String(err)})`,
     );
     return false;
   }
@@ -114,8 +115,8 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
 
   ensureLocalagentBoxIgnored(job.workspaceDir);
 
-  if (getServerEnv().enableCodeReviewGraph) {
-    await buildCodeReviewGraph(job.workspaceDir, logPath);
+  if (getServerEnv().enableCodegraph) {
+    await initCodegraph(job.workspaceDir, logPath);
   }
 }
 

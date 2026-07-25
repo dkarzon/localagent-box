@@ -53,33 +53,22 @@ test('loadServerEnv reads .env from cwd without overriding existing vars', () =>
   assert.equal(env.apiToken, 'from-shell');
 });
 
-test('code-review-graph flag defaults to disabled with review-focused tool allowlist', () => {
-  delete process.env.ENABLE_CODE_REVIEW_GRAPH;
-  delete process.env.CODE_REVIEW_GRAPH_TOOLS;
+test('codegraph flag defaults to disabled', () => {
+  delete process.env.ENABLE_CODEGRAPH;
   resetServerEnvCache();
 
   const env = loadServerEnv();
-  assert.equal(env.enableCodeReviewGraph, false);
-  assert.deepEqual(env.codeReviewGraphTools, [
-    'get_review_context_tool',
-    'detect_changes_tool',
-    'get_impact_radius_tool',
-    'query_graph_tool',
-  ]);
+  assert.equal(env.enableCodegraph, false);
 });
 
-test('code-review-graph env parsing: enable flag, custom allowlist, and * for all tools', () => {
-  process.env.ENABLE_CODE_REVIEW_GRAPH = 'true';
-  process.env.CODE_REVIEW_GRAPH_TOOLS = ' query_graph_tool, detect_changes_tool ,';
+test('codegraph env parsing: enable flag', () => {
+  process.env.ENABLE_CODEGRAPH = 'true';
   resetServerEnvCache();
   let env = loadServerEnv();
-  assert.equal(env.enableCodeReviewGraph, true);
-  assert.deepEqual(env.codeReviewGraphTools, ['query_graph_tool', 'detect_changes_tool']);
+  assert.equal(env.enableCodegraph, true);
 
-  process.env.ENABLE_CODE_REVIEW_GRAPH = 'false';
-  process.env.CODE_REVIEW_GRAPH_TOOLS = '*';
+  process.env.ENABLE_CODEGRAPH = 'false';
   resetServerEnvCache();
   env = loadServerEnv();
-  assert.equal(env.enableCodeReviewGraph, false);
-  assert.deepEqual(env.codeReviewGraphTools, []);
+  assert.equal(env.enableCodegraph, false);
 });
