@@ -3,7 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { describe, it } from 'node:test';
 import os from 'os';
-import { buildCodeReviewGraph, ensureLocalagentBoxIgnored } from './workspace-setup';
+
+
+import type { GitService } from '../../../services/git-service';
 
 describe('ensureLocalagentBoxIgnored', () => {
   const base = path.join(os.tmpdir(), 'test-gitignore-');

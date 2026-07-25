@@ -132,6 +132,20 @@ describe('interpolateStepPrompt', () => {
     );
     assert.equal(result, 'Goal: fix bug Iter: 3 Marker: LOOP_COMPLETE');
   });
+
+  it('injects repoMap when provided and drops the tag empty when absent', () => {
+    const withRepo = interpolateStepPrompt(
+      '{{repoMap}}\n---\n{{goal}}',
+      { goal: 'fix bug', iteration: 1, completionMarker: 'X', repoMap: 'src/main.ts\nREADME.md' },
+    );
+    assert.equal(withRepo, 'src/main.ts\nREADME.md\n---\nfix bug');
+
+    const withoutRepo = interpolateStepPrompt(
+      '{{repoMap}}\n{{goal}}',
+      { goal: 'fix bug', iteration: 1, completionMarker: 'X' },
+    );
+    assert.equal(withoutRepo, '\nfix bug');
+  });
 });
 
 describe('parseCompletionSignal', () => {
