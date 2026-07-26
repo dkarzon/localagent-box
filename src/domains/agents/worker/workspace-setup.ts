@@ -275,4 +275,51 @@ export async function finalizeGitChanges({
   return { commitSha, pushed, filesChanged };
 }
 
+const MAX_REPO_MAP_FILE_LINES = 100;
+
+/**
+ * Deterministic repo map prepended to the INITIAL_PLAN prompt (§4.2).
+ * Returns a markdown section with:
+ *   - `git ls-files` formatted as a compact tree (~100 lines max)
+ *   - First ~40 lines of README.md (when present)
+ *   - `package.json` scripts section (when present)
+ */
+export async function buildRepoMap(
+  gitService: GitService,
+  workspaceDir: string,
+): Promise<string> {
+  // Tracked files as a compact list
+  const allFiles = await gitService.getTrackedFiles(workspaceDir);
+  const fileListSections: string[] = ['## Repository File List'];
+  for (const f of allFiles.slice(0, MAX_REPO_MAP_FILE_LINES)) {
+    fileListSections.push(f);
+  }
+  if (allFiles.length > MAX_REPO_MAP_FILE_LINES) {
+    fileListSections.push(`… (${allFiles.length - MAX_REPO_MAP_FILE_LINES} more files)`);
+  }
+
+  // README.md header (~40 lines)
+  const readmePath = path.join(workspaceDir, 'README.md');
+  let readmeSection: string | null = null;
+  if (fs.existsSync(readmePath)) {
+    const lines = fs.readFileSync(readmePath, 'utf8').split('\n').slice(0, 40);
+    readmeSection = `## README.md\n${lines.join('\n')}`;
+  }
+
+  // package.json scripts section
+  const pkgPath = path.join(workspaceDir, 'package.json');
+  let scriptSection: string | null = null;
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+      if (typeof pkg.scripts === 'object' && pkg.scripts !== null) {
+        scriptSection = `### package.json scripts\n\`\`\`json\n${JSON.stringify(pkg.scripts, null, 2)}\n\`\`\``;
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  return [fileListSections.join('\n'), readmeSection, scriptSection]
+    .filter(Boolean)
+    .join('\n\n');
+}
 

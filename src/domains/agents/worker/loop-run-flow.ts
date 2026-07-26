@@ -30,7 +30,7 @@ import {
   resolveBatchFailureMessage,
   resolveRunConfig,
 } from './batch-run-flow';
-import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
+import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary, buildRepoMap } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
 
 /**
@@ -67,7 +67,7 @@ type LoopStepExit =
   | { kind: 'failed'; pushOnFailure: boolean; failureMessage?: string };
 
 interface RunLoopStepParams {
-  session: OpenCodeLoopSessionHandle;
+    session: OpenCodeLoopSessionHandle;
   loopState: AgentLoopState;
   loopConfig: { completionMarker: string };
   job: WorkerContext['job'];
@@ -83,6 +83,8 @@ interface RunLoopStepParams {
   repoPromptOverrides?: RepoPromptOverrides;
   /** REFLECT output from the previous iteration, injected into the first step of a rotated session. */
   previousIterationSummary?: string;
+  /** Optional repo map prepended to INITIAL_PLAN (§4.2). */
+  repoMap?: string;
 }
 
 async function runLoopStep(params: RunLoopStepParams): Promise<{
@@ -105,6 +107,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     promptTemplate,
     repoPromptOverrides,
   } = params;
+
 
   let loopState = patchLoopState('processing', baseLoopState, {
     iteration,
@@ -130,6 +133,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     goal: job.prompt,
     iteration,
     completionMarker: loopConfig.completionMarker,
+    repoMap: params.repoMap,
   });
 
   // On the first step of an iteration, prepend deterministic host-known ground truth
@@ -372,6 +376,8 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     };
 
     if (hasInitialPlan && loopConfig.initialPlanPrompt) {
+      const repoMap = await buildRepoMap(gitService, job.workspaceDir);
+      appendLog(logPath, 'Built host-generated repo map for INITIAL_PLAN');
       const initialResult = await runStepAndTrack({
         ...sharedStepParams,
         loopState,
@@ -379,6 +385,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
         stepIndex: 0,
         verb: 'INITIAL_PLAN',
         promptTemplate: loopConfig.initialPlanPrompt,
+        repoMap,
       });
       loopState = initialResult.loopState;
       const initialExit = applyStepExit(initialResult.exit);

@@ -2,7 +2,7 @@
   "version": 1,
   "maxIterations": 5,
   "completionMarker": "LOOP_COMPLETE",
-  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration and noting how to verify it. Planning only — no implementation. This file is the shared ledger: each later cycle reads it and ticks items, so keep it the source of truth for progress.\n\nGoal: {{goal}}",
+  "initialPlanPrompt": "{{repoMap}}\n\nSurvey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration and noting how to verify it. Planning only — no implementation. This file is the shared ledger: each later cycle reads it and ticks items, so keep it the source of truth for progress.\n\nGoal: {{goal}}",
   "steps": [
     {
       "verb": "ORIENT",
