@@ -163,6 +163,7 @@ function createTestContext(options?: {
     createBranch: async () => {},
     getPorcelainStatus: async () => ' M src/changed.ts',
     getDiffStat: async () => ' src/changed.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)',
+    getTrackedFiles: async () => [],
     parsePorcelainStatus: () => [{ path: 'src/changed.ts', kind: 'modified', statusCode: ' M' }],
     countChangedFiles: () => 1,
     commitAll: async () => 'deadbeef1234567890',
