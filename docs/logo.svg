@@ -18,9 +18,9 @@
   <line x1="120" y1="70" x2="120" y2="45" stroke="#4CC2FF" stroke-width="5"/>
   <circle cx="120" cy="40" r="8" fill="#4CC2FF"/>
 
-  <!-- Git branch icon on the box -->
-  <circle cx="60" cy="180" r="10" fill="#4CC2FF"/>
-  <circle cx="90" cy="160" r="10" fill="#4CC2FF"/>
-  <line x1="60" y1="180" x2="90" y2="160" stroke="#4CC2FF" stroke-width="5"/>
-  <line x1="90" y1="160" x2="90" y2="140" stroke="#4CC2FF" stroke-width="5"/>
+  <!-- Git branch icon connecting to robot -->
+  <circle cx="58" cy="188" r="10" fill="#4CC2FF"/>
+  <circle cx="100" cy="168" r="10" fill="#4CC2FF"/>
+  <line x1="58" y1="188" x2="100" y2="168" stroke="#4CC2FF" stroke-width="5" stroke-linecap="round"/>
+  <line x1="100" y1="168" x2="100" y2="150" stroke="#4CC2FF" stroke-width="5" stroke-linecap="round"/>
 </svg>
