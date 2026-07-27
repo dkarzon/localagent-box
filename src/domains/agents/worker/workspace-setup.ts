@@ -289,14 +289,14 @@ export async function buildRepoMap(
   workspaceDir: string,
 ): Promise<string> {
   // Tracked files as a compact list
-  const allFiles = await gitService.getTrackedFiles(workspaceDir);
-  const fileListSections: string[] = ['## Repository File List'];
-  for (const f of allFiles.slice(0, MAX_REPO_MAP_FILE_LINES)) {
-    fileListSections.push(f);
-  }
-  if (allFiles.length > MAX_REPO_MAP_FILE_LINES) {
-    fileListSections.push(`… (${allFiles.length - MAX_REPO_MAP_FILE_LINES} more files)`);
-  }
+  //const allFiles = await gitService.getTrackedFiles(workspaceDir);
+  //const fileListSections: string[] = ['## Repository File List'];
+  //for (const f of allFiles.slice(0, MAX_REPO_MAP_FILE_LINES)) {
+  //  fileListSections.push(f);
+  //}
+  //if (allFiles.length > MAX_REPO_MAP_FILE_LINES) {
+  //  fileListSections.push(`… (${allFiles.length - MAX_REPO_MAP_FILE_LINES} more files)`);
+  //}
 
   // README.md header (~40 lines)
   const readmePath = path.join(workspaceDir, 'README.md');
@@ -318,7 +318,7 @@ export async function buildRepoMap(
     } catch { /* ignore parse errors */ }
   }
 
-  return [fileListSections.join('\n'), readmeSection, scriptSection]
+  return [/*fileListSections.join('\n'),*/ readmeSection, scriptSection]
     .filter(Boolean)
     .join('\n\n');
 }
