@@ -119,7 +119,7 @@ export function buildModelFlag(config: AppConfig): string | null {
 
 /** Brief framing only — the user's task prompt is the primary instruction. */
 export const SENIOR_ENGINEER_SYSTEM_PROMPT =
-  'Coding agent in an isolated clone on a dedicated branch. Implement only the task above; minimal scoped diff; no secrets or unrelated edits.';
+  'Coding agent in an isolated clone on a dedicated branch. Implement only the task; minimal scoped diff; no secrets or unrelated edits.';
 
 export const BATCH_RUN_CONTEXT_PROMPT =
   'Batch: one unattended run — implement the task in this session (edit files, run checks). Do not stop at a plan or overview; the host fails the run if there are no file changes when you go idle.';
