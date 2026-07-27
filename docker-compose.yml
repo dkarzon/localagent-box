@@ -15,6 +15,8 @@ services:
       AGENT_TIMEOUT: "3600"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       API_TOKEN: ${API_TOKEN:-localagent-box}
+      # Expose the codegraph MCP server to agents (set to "true" to enable).
+      ENABLE_CODEGRAPH: ${ENABLE_CODEGRAPH:-}
     volumes:
       - agent-data:/data
       - agent-workspace:/workspace

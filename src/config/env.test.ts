@@ -52,3 +52,23 @@ test('loadServerEnv reads .env from cwd without overriding existing vars', () =>
   assert.equal(env.dataDir, './from-env');
   assert.equal(env.apiToken, 'from-shell');
 });
+
+test('codegraph flag defaults to disabled', () => {
+  delete process.env.ENABLE_CODEGRAPH;
+  resetServerEnvCache();
+
+  const env = loadServerEnv();
+  assert.equal(env.enableCodegraph, false);
+});
+
+test('codegraph env parsing: enable flag', () => {
+  process.env.ENABLE_CODEGRAPH = 'true';
+  resetServerEnvCache();
+  let env = loadServerEnv();
+  assert.equal(env.enableCodegraph, true);
+
+  process.env.ENABLE_CODEGRAPH = 'false';
+  resetServerEnvCache();
+  env = loadServerEnv();
+  assert.equal(env.enableCodegraph, false);
+});

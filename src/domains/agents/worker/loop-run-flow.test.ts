@@ -97,9 +97,9 @@ describe('completion signal on non-REFLECT steps', () => {
     assert.equal(parseCompletionSignal(actOutput, 'LOOP_COMPLETE'), true);
   });
 
-  it('completes when OBSERVE step emits marker', () => {
-    const observeOutput = 'Bug already fixed on this branch. LOOP_COMPLETE: true';
-    assert.equal(parseCompletionSignal(observeOutput, 'LOOP_COMPLETE'), true);
+  it('completes when ORIENT step emits marker', () => {
+    const orientOutput = 'Bug already fixed on this branch. LOOP_COMPLETE: true';
+    assert.equal(parseCompletionSignal(orientOutput, 'LOOP_COMPLETE'), true);
   });
 
   it('does not complete if non-REFLECT step shows progress without marker', () => {

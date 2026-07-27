@@ -128,7 +128,7 @@ export const INTERACTIVE_RUN_CONTEXT_PROMPT =
   'Interactive: follow-ups are allowed; the host commits only when the user finishes the session.';
 
 export const LOOP_RUN_CONTEXT_PROMPT =
-  'Loop: unattended multi-step harness — each step is a directive toward the goal. The host fails on zero file changes at end (like batch). On REFLECT, emit {{completionMarker}}: true when the goal is fully achieved. Do not stop after plans or overviews — ACT steps must produce file edits.';
+  'Loop: unattended multi-step harness — each step is a directive toward the goal. The host fails on zero file changes at end (like batch). Emit {{completionMarker}}: true when the goal is fully achieved — on REFLECT, or on the first step of an iteration if it was already complete before you started. Do not stop after plans or overviews — ACT steps must produce file edits.';
 
 export type OpenCodeRunMode = 'batch' | 'interactive' | 'loop';
 
@@ -148,6 +148,16 @@ function resolveRunModeContext(
   return null;
 }
 
+export interface BuildOpenCodePromptOptions {
+  /**
+   * Prepend the static `## Context` framing (system prompt + mode context).
+   * Set false for follow-up turns in an existing session, where the framing was
+   * already sent on the first turn and replaying it only wastes input tokens.
+   * Defaults to true.
+   */
+  includeFraming?: boolean;
+}
+
 export function buildOpenCodePrompt(
   userPrompt: string,
   jobSystemPrompt?: string,
@@ -155,10 +165,17 @@ export function buildOpenCodePrompt(
   completionMarker?: string,
   repoOverrides?: RepoPromptOverrides,
   serverSystemPrompt?: string,
+  options?: BuildOpenCodePromptOptions,
 ): string {
   const trimmed = typeof userPrompt === 'string' ? userPrompt.trim() : '';
   if (!trimmed) {
     throw new Error('Prompt cannot be empty');
+  }
+
+  // Follow-up turns in a live session already carry the framing in history —
+  // send only the directive.
+  if (options?.includeFraming === false) {
+    return trimmed;
   }
 
   const system =
@@ -179,5 +196,7 @@ export function buildOpenCodePrompt(
     contextLines.push(modeContext);
   }
 
-  return ['## Task', trimmed, '## Context', contextLines.join('\n')].join('\n\n');
+  // Static `## Context` first, changing `## Task` last: keeps the prompt prefix
+  // stable across turns so Ollama can reuse its KV cache.
+  return ['## Context', contextLines.join('\n'), '## Task', trimmed].join('\n\n');
 }

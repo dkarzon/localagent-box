@@ -1,4 +1,10 @@
+import { normalizeLoopVerbModels } from '../../../lib/loop-verb-models';
 import type { AgentJob, AppConfig, LoopVerb } from '../../../types';
+
+function verbModel(models: unknown, verb: LoopVerb): string | undefined {
+  const model = normalizeLoopVerbModels(models)[verb];
+  return model && model !== '' ? model : undefined;
+}
 
 /** Model resolution: run override → Settings verb → job fallback → global default */
 export function resolveLoopStepModel(
@@ -6,12 +12,12 @@ export function resolveLoopStepModel(
   config: AppConfig,
   job?: AgentJob,
 ): string | null {
-  const runOverride = job?.loopVerbModels?.[verb];
-  if (runOverride && runOverride !== '') {
+  const runOverride = verbModel(job?.loopVerbModels, verb);
+  if (runOverride) {
     return runOverride;
   }
-  const verbSpecific = config.loopVerbModels?.[verb];
-  if (verbSpecific && verbSpecific !== '') {
+  const verbSpecific = verbModel(config.loopVerbModels, verb);
+  if (verbSpecific) {
     return verbSpecific;
   }
   if (job?.model) {
@@ -27,15 +33,13 @@ export function collectLoopModels(config: AppConfig, job?: AgentJob): string[] {
     set.add(config.opencodeModel);
   }
 
-  for (const verb of Object.keys(config.loopVerbModels || {}) as LoopVerb[]) {
-    const model = config.loopVerbModels?.[verb];
+  for (const model of Object.values(normalizeLoopVerbModels(config.loopVerbModels))) {
     if (model && model !== '') {
       set.add(model);
     }
   }
 
-  for (const verb of Object.keys(job?.loopVerbModels || {}) as LoopVerb[]) {
-    const model = job?.loopVerbModels?.[verb];
+  for (const model of Object.values(normalizeLoopVerbModels(job?.loopVerbModels))) {
     if (model && model !== '') {
       set.add(model);
     }

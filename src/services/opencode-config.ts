@@ -58,11 +58,19 @@ export interface OpenCodeModelConfig {
   };
 }
 
+export interface OpenCodeMcpLocalServer {
+  type: 'local';
+  command: string[];
+  enabled: boolean;
+  timeout?: number;
+}
+
 export interface OpenCodeConfigFile {
   $schema: string;
   model: string;
   instructions?: string[];
   permission?: Record<string, Record<string, string>>;
+  mcp?: Record<string, OpenCodeMcpLocalServer>;
   provider: Record<
     string,
     {
@@ -77,6 +85,22 @@ export interface OpenCodeConfigFile {
 export interface OpenCodeConfigBuildOptions {
   autoApprovePermissions?: boolean;
   job?: AgentJob;
+  /** When true, inject the codegraph MCP server into opencode.json. */
+  codegraph?: boolean;
+}
+
+export const CODEGRAPH_BIN = 'codegraph';
+
+/** Cold-start + first connect catch-up can exceed OpenCode's 5s default MCP timeout. */
+const CODEGRAPH_MCP_TIMEOUT_MS = 15_000;
+
+export function buildCodegraphMcpServer(): OpenCodeMcpLocalServer {
+  return {
+    type: 'local',
+    command: [CODEGRAPH_BIN, 'serve', '--mcp'],
+    enabled: true,
+    timeout: CODEGRAPH_MCP_TIMEOUT_MS,
+  };
 }
 
 /** Gemma 4 streams thinking in a non-standard `reasoning` field that OpenCode's AI SDK ignores. */
@@ -162,6 +186,12 @@ export function buildOpenCodeConfig(
     file.permission = { '*': { '*': 'allow' } };
   }
 
+  if (options?.codegraph) {
+    file.mcp = {
+      codegraph: buildCodegraphMcpServer(),
+    };
+  }
+
   return file;
 }
 
@@ -179,7 +209,10 @@ function loadBundledToolInstructions(fsImpl: Pick<typeof fs, 'existsSync' | 'rea
   return OPENCODE_TOOL_INSTRUCTIONS;
 }
 
-/** Keep legacy workspace copies out of agent commits when older runs left them behind. */
+/** Written into the workspace by `codegraph init`; must never land in agent commits. */
+export const CODEGRAPH_DATA_DIR = '.codegraph/';
+
+/** Keep infrastructure files (legacy instructions copies, MCP graph data) out of agent commits. */
 export function excludeWorkspaceInfrastructureFromGit(
   workspaceDir: string,
   fsImpl: FsLike = fs,
@@ -190,18 +223,24 @@ export function excludeWorkspaceInfrastructureFromGit(
     return;
   }
   const excludePath = pathImpl.join(gitDir, 'info', 'exclude');
-  const entry = OPENCODE_TOOL_INSTRUCTIONS_FILE;
   let existing = '';
   try {
     existing = fsImpl.readFileSync(excludePath, 'utf8');
   } catch {
     existing = '';
   }
-  if (existing.includes(entry)) {
+  const missing = [OPENCODE_TOOL_INSTRUCTIONS_FILE, CODEGRAPH_DATA_DIR].filter(
+    (entry) => !existing.includes(entry),
+  );
+  if (missing.length === 0) {
     return;
   }
   const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-  fsImpl.appendFileSync(excludePath, `${prefix}# localagent-box infrastructure\n${entry}\n`, 'utf8');
+  fsImpl.appendFileSync(
+    excludePath,
+    `${prefix}# localagent-box infrastructure\n${missing.join('\n')}\n`,
+    'utf8',
+  );
 }
 
 export function createOpenCodeConfigService(options: {

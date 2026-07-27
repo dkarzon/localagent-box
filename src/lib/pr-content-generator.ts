@@ -61,21 +61,27 @@ export function buildPullRequestGenerationPrompt(ctx: PullRequestGenerationConte
   const branch = ctx.agent.agentBranch || ctx.agent.branch;
   const lines = [
     'Write a GitHub pull request title and markdown description for the code changes below.',
-    'Use an imperative, specific title (max 72 characters when possible).',
-    'The description must include ## Summary and ## Test plan sections with concrete bullets.',
-    'Base the content on the task, agent summary, commit message, and diff — not generic filler.',
-    'Respond with JSON only: {"title":"...","body":"..."}',
     '',
-    `Repository: ${ctx.repoOwner}/${ctx.repoName}`,
+    'Rules for the PR title:',
+    '- Generate a concise, human-readable single-sentence summary as the title (max ~72 chars).',
+    '- The title must NOT be a markdown heading like "## Task" or any other heading format.',
+    '- Use an imperative mood (e.g., "Add login", "Fix crash in parser").',
+    '',
+    'Rules for the PR description (body):',
+    '- Include ## Summary and ## Test plan sections with concrete bullets.',
+    '-',
+    `  Base the content on the task, agent summary, commit message, and diff — not generic filler.`,
+    '',
+    'Respond with JSON only: {"title":"...","body":"..."}',
   ];
 
   if (branch) {
     lines.push(`Head branch: ${branch}`);
   }
-  lines.push(`Base branch: ${ctx.base}`);
+  lines.push('Base branch:', ctx.base);
 
   if (ctx.agent.prompt?.trim()) {
-    lines.push('', '## Task', ctx.agent.prompt.trim());
+    lines.push('', 'Task', ctx.agent.prompt.trim());
   }
 
   if (ctx.agent.commitMessage?.trim()) {

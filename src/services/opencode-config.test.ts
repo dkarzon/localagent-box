@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  buildCodegraphMcpServer,
   buildGemmaReasoningWorkaroundOptions,
   buildModelConfig,
   buildOpenCodeConfig,
@@ -59,5 +60,39 @@ describe('buildOpenCodeConfig', () => {
     assert.ok(file.provider.ollama?.models['qwen3-coder:30b']);
     assert.ok(file.provider.ollama?.models.mistral);
     assert.equal(Object.keys(file.provider.ollama?.models ?? {}).length, 3);
+  });
+
+  it('omits the mcp block by default', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config);
+    assert.equal(file.mcp, undefined);
+  });
+
+  it('emits the codegraph mcp block when requested', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config, { codegraph: true });
+    assert.deepEqual(file.mcp?.codegraph, {
+      type: 'local',
+      command: ['codegraph', 'serve', '--mcp'],
+      enabled: true,
+      timeout: 15000,
+    });
+  });
+});
+
+describe('buildCodegraphMcpServer', () => {
+  it('matches the official opencode print-config shape', () => {
+    const server = buildCodegraphMcpServer();
+    assert.deepEqual(server.command, ['codegraph', 'serve', '--mcp']);
+    assert.equal(server.type, 'local');
+    assert.equal(server.enabled, true);
   });
 });

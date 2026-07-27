@@ -22,6 +22,8 @@ export interface ServerEnv {
   opencodePortBase: number;
   /** Max wait for `opencode serve` to accept `/path` (includes first-run DB migration). */
   opencodeStartupTimeoutMs: number;
+  /** Expose the codegraph MCP server to agents (requires the binary in the image). */
+  enableCodegraph: boolean;
 }
 
 let cachedEnv: ServerEnv | null = null;
@@ -32,6 +34,10 @@ function parsePort(value: string | undefined): number {
     throw new Error(`Invalid PORT: ${value}`);
   }
   return port;
+}
+
+function parseBool(value: string | undefined): boolean {
+  return /^(1|true|yes|on)$/i.test((value || '').trim());
 }
 
 function resolveAgentWorkspace(dataDir: string): string {
@@ -76,6 +82,7 @@ export function loadServerEnv(): ServerEnv {
     opencodeBin: process.env.OPENCODE_BIN || 'opencode',
     opencodePortBase: parsePositiveInt(process.env.OPENCODE_PORT_BASE, 4100),
     opencodeStartupTimeoutMs: parsePositiveInt(process.env.OPENCODE_STARTUP_TIMEOUT_MS, 900_000),
+    enableCodegraph: parseBool(process.env.ENABLE_CODEGRAPH),
   };
 }
 

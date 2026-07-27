@@ -73,7 +73,8 @@ export interface ParsedToolPayload {
 }
 
 export function extractAssistantText(payload: Record<string, unknown>): string {
-  const info = payload.info as { content?: string; text?: string } | undefined;
+  const info = payload.info as { role?: string; content?: string; text?: string } | undefined;
+  if (info?.role && info.role !== 'assistant') return '';
   if (typeof info?.content === 'string') return info.content;
   if (typeof info?.text === 'string') return info.text;
 

@@ -17,7 +17,7 @@ describe('validateLoopConfig', () => {
     maxIterations: 5,
     completionMarker: 'LOOP_COMPLETE',
     steps: [
-      { verb: 'OBSERVE', prompt: 'Look at {{goal}}' },
+      { verb: 'ORIENT', prompt: 'Look at {{goal}}' },
       { verb: 'REFLECT', prompt: 'Done? {{completionMarker}}: true' },
     ],
   };
@@ -26,6 +26,21 @@ describe('validateLoopConfig', () => {
     const result = validateLoopConfig(valid);
     assert.equal(result.maxIterations, 5);
     assert.equal(result.steps.length, 2);
+  });
+
+  it('normalizes legacy OBSERVE/PLAN step verbs to ORIENT', () => {
+    const result = validateLoopConfig({
+      ...valid,
+      steps: [
+        { verb: 'OBSERVE', prompt: 'Look at {{goal}}' },
+        { verb: 'PLAN', prompt: 'Decide {{goal}}' },
+        { verb: 'ACT', prompt: 'Do {{goal}}' },
+      ],
+    });
+    assert.deepEqual(
+      result.steps.map((step) => step.verb),
+      ['ORIENT', 'ORIENT', 'ACT'],
+    );
   });
 
   it('rejects invalid version', () => {
@@ -69,7 +84,7 @@ describe('loadLoopConfig', () => {
     const loaded = loadLoopConfig(dir);
     assert.equal(loaded.configSource, 'server-default');
     assert.equal(loaded.config.version, 1);
-    assert.ok(loaded.config.steps.length >= 4);
+    assert.ok(loaded.config.steps.length >= 3);
   });
 
   it('replaces server default entirely when repo loop.json exists (M1)', () => {
@@ -97,14 +112,14 @@ describe('loadLoopConfig', () => {
 });
 
 describe('loadServerDefaultLoopConfig', () => {
-  it('loads bundled default with initial plan and four harness steps', () => {
+  it('loads bundled default with initial plan and three harness steps', () => {
     const config = loadServerDefaultLoopConfig();
     assert.equal(config.version, 1);
     assert.ok(config.initialPlanPrompt?.includes('{{goal}}'));
-    assert.equal(config.steps.length, 4);
+    assert.equal(config.steps.length, 3);
     assert.deepEqual(
       config.steps.map((step) => step.verb),
-      ['OBSERVE', 'PLAN', 'ACT', 'REFLECT'],
+      ['ORIENT', 'ACT', 'REFLECT'],
     );
   });
 });
@@ -116,6 +131,20 @@ describe('interpolateStepPrompt', () => {
       { goal: 'fix bug', iteration: 3, completionMarker: 'LOOP_COMPLETE' },
     );
     assert.equal(result, 'Goal: fix bug Iter: 3 Marker: LOOP_COMPLETE');
+  });
+
+  it('injects repoMap when provided and drops the tag empty when absent', () => {
+    const withRepo = interpolateStepPrompt(
+      '{{repoMap}}\n---\n{{goal}}',
+      { goal: 'fix bug', iteration: 1, completionMarker: 'X', repoMap: 'src/main.ts\nREADME.md' },
+    );
+    assert.equal(withRepo, 'src/main.ts\nREADME.md\n---\nfix bug');
+
+    const withoutRepo = interpolateStepPrompt(
+      '{{repoMap}}\n{{goal}}',
+      { goal: 'fix bug', iteration: 1, completionMarker: 'X' },
+    );
+    assert.equal(withoutRepo, '\nfix bug');
   });
 });
 

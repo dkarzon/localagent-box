@@ -38,6 +38,11 @@ describe('mergeAssistantText', () => {
       'Implemented exponential backoff with jitter.',
     );
   });
+
+  it('collapses exact snapshot duplication from double-emitted deltas', () => {
+    const snapshot = 'Implemented exponential backoff with jitter.';
+    assert.equal(mergeAssistantText(snapshot + snapshot, snapshot), snapshot);
+  });
 });
 
 describe('extractAssistantSummaryFromEvents', () => {

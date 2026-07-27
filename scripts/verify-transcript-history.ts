@@ -110,4 +110,177 @@ assert.equal(
   'without events, assistant messages should come from persisted messages',
 );
 
+// Mid-turn finalize then more deltas must not create overlapping bubbles.
+const midTurnFinalizeEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Hello' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Hello' },
+  },
+  {
+    seq: 3,
+    ts: '2026-05-30T10:00:03.000Z',
+    type: 'assistant.delta',
+    payload: { text: ' world' },
+  },
+  {
+    seq: 4,
+    ts: '2026-05-30T10:00:04.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Hello world' },
+  },
+];
+
+const midTurnEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Hi' }],
+  midTurnFinalizeEvents,
+);
+const midTurnAssistants = midTurnEntries.filter((e) => e.role === 'assistant');
+assert.equal(
+  midTurnAssistants.length,
+  1,
+  `mid-turn finalize must keep one assistant bubble, got ${midTurnAssistants.length}`,
+);
+assert.equal(midTurnAssistants[0]?.text, 'Hello world');
+
+// Tool gap: continue streaming into the open assistant bubble, not a new one.
+const toolGapEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Before tool' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'tool.start',
+    payload: {
+      tool: { callId: 'c1', name: 'bash', status: 'running', title: 'bash' },
+    },
+  },
+  {
+    seq: 3,
+    ts: '2026-05-30T10:00:03.000Z',
+    type: 'tool.end',
+    payload: {
+      tool: { callId: 'c1', name: 'bash', status: 'completed', title: 'bash' },
+    },
+  },
+  {
+    seq: 4,
+    ts: '2026-05-30T10:00:04.000Z',
+    type: 'assistant.delta',
+    payload: { text: ' after tool' },
+  },
+  {
+    seq: 5,
+    ts: '2026-05-30T10:00:05.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Before tool after tool' },
+  },
+];
+
+const toolGapEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Run' }],
+  toolGapEvents,
+);
+const toolGapAssistants = toolGapEntries.filter((e) => e.role === 'assistant');
+assert.equal(
+  toolGapAssistants.length,
+  1,
+  'deltas after tools must append to the open streaming assistant',
+);
+assert.equal(toolGapAssistants[0]?.text, 'Before tool after tool');
+
+// Replace deltas must not concatenate the full snapshot onto prior text.
+const replaceEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Hello' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Goodbye', replace: true },
+  },
+];
+
+const replaceEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Hi' }],
+  replaceEvents,
+);
+assert.equal(
+  replaceEntries.find((e) => e.role === 'assistant')?.text,
+  'Goodbye',
+  'replace delta must overwrite bubble text',
+);
+
+// Reasoning deltas must not appear in the conversation bubble.
+const reasoningEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Thinking about it…', field: 'reasoning' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Done.', field: 'text' },
+  },
+  {
+    seq: 3,
+    ts: '2026-05-30T10:00:03.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Done.' },
+  },
+];
+const reasoningEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Go' }],
+  reasoningEvents,
+);
+assert.equal(
+  reasoningEntries.find((e) => e.role === 'assistant')?.text,
+  'Done.',
+  'reasoning deltas must not pollute the conversation bubble',
+);
+
+// Exact doubled stream with empty snapshot must collapse on finalize.
+const doubled = 'A'.repeat(80);
+const doubledEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: doubled + doubled },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.message',
+    payload: { info: { role: 'assistant' } },
+  },
+];
+const doubledEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Go' }],
+  doubledEvents,
+);
+assert.equal(
+  doubledEntries.find((e) => e.role === 'assistant')?.text,
+  doubled,
+  'exact duplicated assistant text must collapse on finalize',
+);
+
 console.log('verify-transcript-history: ok');

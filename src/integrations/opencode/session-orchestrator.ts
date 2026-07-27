@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getServerEnv } from '../../config/env';
 import {
   createOpenCodeConfigService,
   excludeWorkspaceInfrastructureFromGit,
@@ -99,6 +100,14 @@ function extractMessageTokenUsage(payload: Record<string, unknown>): {
   };
 }
 
+function isCodegraphEnabled(): boolean {
+  return getServerEnv().enableCodegraph;
+}
+
+function logCodegraphEnabled(logPath: string): void {
+  appendLog(logPath, 'OpenCode MCP: codegraph enabled');
+}
+
 export async function runSessionOrchestrator(
   options: SessionOrchestratorOptions,
 ): Promise<SessionOrchestratorResult> {
@@ -113,12 +122,17 @@ export async function runSessionOrchestrator(
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
+  const codegraph = isCodegraphEnabled();
+
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions });
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codegraph });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
+  if (codegraph) {
+    logCodegraphEnabled(logPath);
+  }
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
       logPath,
@@ -318,10 +332,13 @@ export async function runSessionOrchestrator(
       return;
     }
     if (mapped.type === 'assistant.delta') {
-      const deltaText = mapped.payload.text;
-      if (typeof deltaText === 'string') {
-        accumulatedStreamedTextLen += deltaText.length;
-        accumulatedStreamedText += deltaText;
+      // Keep reasoning out of persisted conversation text; it often echoes the answer.
+      if (mapped.payload.field !== 'reasoning') {
+        const deltaText = mapped.payload.text;
+        if (typeof deltaText === 'string') {
+          accumulatedStreamedTextLen += deltaText.length;
+          accumulatedStreamedText += deltaText;
+        }
       }
     }
     eventWriter.write(mapped.type, mapped.payload, sessionId || undefined);
@@ -711,13 +728,18 @@ export async function startOpenCodeLoopSession(options: {
   const eventWriter = new EventWriter(getEventsPath(job));
   fs.mkdirSync(agentDir, { recursive: true });
 
+  const codegraph = isCodegraphEnabled();
+
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job });
+  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job, codegraph });
+  if (codegraph) {
+    logCodegraphEnabled(logPath);
+  }
   excludeWorkspaceInfrastructureFromGit(job.workspaceDir);
 
-  const loopVerbs: LoopVerb[] = ['INITIAL_PLAN', 'OBSERVE', 'PLAN', 'ACT', 'REFLECT'];
+  const loopVerbs: LoopVerb[] = ['INITIAL_PLAN', 'ORIENT', 'ACT', 'REFLECT'];
   appendLog(
     logPath,
     `Loop verb models: ${loopVerbs
@@ -800,9 +822,11 @@ export async function startOpenCodeLoopSession(options: {
     eventWriter.write(mapped.type, mapped.payload, sessionId || undefined);
 
     if (mapped.type === 'assistant.delta') {
-      const deltaText = mapped.payload.text;
-      if (typeof deltaText === 'string') {
-        turnState.streamedAssistantText += deltaText;
+      if (mapped.payload.field !== 'reasoning') {
+        const deltaText = mapped.payload.text;
+        if (typeof deltaText === 'string') {
+          turnState.streamedAssistantText += deltaText;
+        }
       }
     }
 

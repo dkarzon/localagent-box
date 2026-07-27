@@ -172,24 +172,21 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
     if (!globalModel) return;
     setLoopVerbModels({
       INITIAL_PLAN: globalModel,
-      OBSERVE: globalModel,
-      PLAN: globalModel,
+      ORIENT: globalModel,
       ACT: globalModel,
       REFLECT: globalModel,
     });
   };
 
-  const applyObservePlanReflectPreset = () => {
+  const applyOrientReflectPreset = () => {
     const source =
-      loopVerbModels.OBSERVE?.trim() ||
-      loopVerbModels.PLAN?.trim() ||
+      loopVerbModels.ORIENT?.trim() ||
       loopVerbModels.REFLECT?.trim() ||
       values.opencodeModel.trim();
     if (!source) return;
     setLoopVerbModels((prev) => ({
       ...prev,
-      OBSERVE: source,
-      PLAN: source,
+      ORIENT: source,
       REFLECT: source,
     }));
   };
@@ -607,8 +604,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                   >
                     Copy global model to all verbs
                   </Button>
-                  <Button type="button" variant="ghost" onClick={applyObservePlanReflectPreset}>
-                    Same model for Observe / Plan / Reflect
+                  <Button type="button" variant="ghost" onClick={applyOrientReflectPreset}>
+                    Same model for Orient / Reflect
                   </Button>
                 </div>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">

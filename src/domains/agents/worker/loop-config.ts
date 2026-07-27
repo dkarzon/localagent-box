@@ -2,7 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import type { LoopStepConfig, LoopVerb } from '../../../types';
 
-export const LOOP_VERBS: readonly LoopVerb[] = ['OBSERVE', 'PLAN', 'ACT', 'REFLECT'];
+export const LOOP_VERBS: readonly LoopVerb[] = ['ORIENT', 'ACT', 'REFLECT'];
+
+/** Step verbs from before OBSERVE + PLAN were merged; normalized to ORIENT so old repo loop.json files still load. */
+const LEGACY_STEP_VERB_ALIASES: Record<string, LoopVerb> = {
+  OBSERVE: 'ORIENT',
+  PLAN: 'ORIENT',
+};
 
 export interface LoopConfig {
   version: number;
@@ -10,6 +16,11 @@ export interface LoopConfig {
   completionMarker: string;
   /** One-time kickoff prompt before the first iteration; optional for repo overrides. */
   initialPlanPrompt?: string;
+  /**
+   * When true, exhausting maxIterations (or stalling) without the completion marker fails the run
+   * even if files changed. Default false — commit partial progress with a warning instead of discarding it.
+   */
+  failOnMaxIterations?: boolean;
   steps: LoopStepConfig[];
 }
 
@@ -22,6 +33,8 @@ export interface InterpolateVars {
   goal: string;
   iteration: number;
   completionMarker: string;
+  /** Optional repo map prepended to INITIAL_PLAN (§4.2). */
+  repoMap?: string;
 }
 
 const bundledDefaultPath = path.join(__dirname, '..', '..', '..', '..', 'config', 'loop.default.json');
@@ -59,6 +72,14 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     initialPlanPrompt = obj.initialPlanPrompt;
   }
 
+  let failOnMaxIterations: boolean | undefined;
+  if (obj.failOnMaxIterations !== undefined) {
+    if (typeof obj.failOnMaxIterations !== 'boolean') {
+      throw new Error('loop.json failOnMaxIterations must be a boolean when provided');
+    }
+    failOnMaxIterations = obj.failOnMaxIterations;
+  }
+
   if (!Array.isArray(obj.steps) || obj.steps.length === 0) {
     throw new Error('loop.json steps must be a non-empty array');
   }
@@ -68,15 +89,18 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
       throw new Error(`loop.json steps[${index}] must be an object`);
     }
     const step = entry as Record<string, unknown>;
-    if (typeof step.verb !== 'string' || !LOOP_VERBS.includes(step.verb as LoopVerb)) {
+    const rawVerb = step.verb;
+    const verb =
+      typeof rawVerb === 'string' ? LEGACY_STEP_VERB_ALIASES[rawVerb] ?? (rawVerb as LoopVerb) : rawVerb;
+    if (typeof verb !== 'string' || !LOOP_VERBS.includes(verb as LoopVerb)) {
       throw new Error(
-        `loop.json steps[${index}].verb must be one of ${LOOP_VERBS.join(', ')}, got ${String(step.verb)}`,
+        `loop.json steps[${index}].verb must be one of ${LOOP_VERBS.join(', ')}, got ${String(rawVerb)}`,
       );
     }
     if (typeof step.prompt !== 'string' || !step.prompt.trim()) {
       throw new Error(`loop.json steps[${index}].prompt must be a non-empty string`);
     }
-    return { verb: step.verb as LoopVerb, prompt: step.prompt };
+    return { verb: verb as LoopVerb, prompt: step.prompt };
   });
 
   return {
@@ -84,6 +108,7 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     maxIterations: obj.maxIterations,
     completionMarker: obj.completionMarker.trim(),
     initialPlanPrompt,
+    ...(failOnMaxIterations !== undefined ? { failOnMaxIterations } : {}),
     steps,
   };
 }
@@ -119,7 +144,8 @@ export function interpolateStepPrompt(template: string, vars: InterpolateVars): 
   return template
     .replaceAll('{{goal}}', vars.goal)
     .replaceAll('{{iteration}}', String(vars.iteration))
-    .replaceAll('{{completionMarker}}', vars.completionMarker);
+    .replaceAll('{{completionMarker}}', vars.completionMarker)
+    .replaceAll('{{repoMap}}', vars.repoMap ?? '');
 }
 
 function normalizeForEchoComparison(text: string): string {

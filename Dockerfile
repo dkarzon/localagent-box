@@ -23,10 +23,12 @@ RUN apt update && apt install -y \
     curl \
     ca-certificates \
     file \
+    ripgrep \
     build-essential \
     cmake \
     python3 \
     python3-pip \
+    python3.13-venv \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /workspace/agents /data /app \
@@ -45,6 +47,11 @@ RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 
 RUN npm install -g opencode-ai@v1.18.4
 RUN npm install -g @alibaba-group/open-code-review
+
+# codegraph MCP server (stdio). Bundles its own runtime — no native build needed.
+RUN npm install -g @colbymchenry/codegraph \
+    && codegraph --version
+ENV CODEGRAPH_TELEMETRY=0
 
 RUN mkdir -p /home/node/.local/share/opencode \
     /home/node/.local/state \

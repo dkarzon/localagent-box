@@ -1,5 +1,9 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
+import { getServerEnv } from '../../../config/env';
+import { CODEGRAPH_BIN } from '../../../services/opencode-config';
 import { createRepoService } from '../../repos/repo.service';
 import { createJsonStore } from '../../../lib/json-store';
 import type { Agent, AgentGitStatus, AgentJob, AppConfig, Repo } from '../../../types';
@@ -22,6 +26,42 @@ export function ensureLocalagentBoxIgnored(workspaceDir: string): void {
   if (!content.includes(LOCALAGENT_BOX_IGNORE_ENTRY)) {
     const prefix = content.endsWith('\n') ? '' : '\n';
     fs.writeFileSync(gitignorePath, content + prefix + LOCALAGENT_BOX_IGNORE_ENTRY + '\n', 'utf8');
+  }
+}
+
+const execFileAsync = promisify(execFile);
+const CODEGRAPH_INIT_TIMEOUT_MS = 180_000;
+
+/**
+ * `codegraph serve --mcp` expects a `.codegraph/` index — without this post-clone
+ * `init` its explore tool has nothing to query. Failures are non-fatal: the agent
+ * still runs, just without graph context.
+ */
+export async function initCodegraph(
+  workspaceDir: string,
+  logPath: string,
+  execFileAsyncImpl: typeof execFileAsync = execFileAsync,
+): Promise<boolean> {
+  appendLog(logPath, 'Building codegraph index…');
+  try {
+    const startedAt = Date.now();
+    // `init` creates `.codegraph/` and builds the full graph in one step.
+    await execFileAsyncImpl(CODEGRAPH_BIN, ['init'], {
+      cwd: workspaceDir,
+      timeout: CODEGRAPH_INIT_TIMEOUT_MS,
+      env: { ...process.env, CODEGRAPH_TELEMETRY: '0' },
+    });
+    appendLog(
+      logPath,
+      `codegraph index built in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
+    return true;
+  } catch (err) {
+    appendLog(
+      logPath,
+      `codegraph init failed — agent continues without graph context (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return false;
   }
 }
 
@@ -74,6 +114,10 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   }
 
   ensureLocalagentBoxIgnored(job.workspaceDir);
+
+  if (getServerEnv().enableCodegraph) {
+    await initCodegraph(job.workspaceDir, logPath);
+  }
 }
 
 const GIT_FILE_KIND_LABEL: Record<AgentGitStatus['files'][number]['kind'], string> = {
@@ -128,6 +172,58 @@ export async function captureGitStatusCheckpoint({
   }
 }
 
+/**
+ * Deterministic, host-generated summary of the current working-tree changes
+ * (`git status --short` file list + the `git diff --stat` totals line), truncated
+ * to a handful of lines. Injected into the first step of each iteration so the model
+ * gets ground truth about what has changed instead of rediscovering it with tool calls.
+ * Returns null when the working tree is clean or git fails.
+ */
+export async function buildHostChangeSummary({
+  gitService,
+  workspaceDir,
+  logPath,
+}: {
+  gitService: GitService;
+  workspaceDir: string;
+  logPath: string;
+}): Promise<string | null> {
+  const MAX_STATUS_LINES = 15;
+  try {
+    const [porcelain, diffStat] = await Promise.all([
+      gitService.getPorcelainStatus(workspaceDir),
+      gitService.getDiffStat(workspaceDir),
+    ]);
+    const statusLines = porcelain
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+    if (statusLines.length === 0) {
+      return null;
+    }
+
+    const body = statusLines.slice(0, MAX_STATUS_LINES);
+    if (statusLines.length > MAX_STATUS_LINES) {
+      body.push(`… (${statusLines.length - MAX_STATUS_LINES} more files)`);
+    }
+
+    // Last line of `git diff --stat` is the "N files changed, …" totals summary.
+    const diffLines = diffStat.split('\n').map((line) => line.trim()).filter(Boolean);
+    const totals = diffLines[diffLines.length - 1];
+    if (totals && /\bchanged\b/.test(totals)) {
+      body.push(totals);
+    }
+
+    return `## Changes so far (host-generated)\n${body.join('\n')}`;
+  } catch (err) {
+    appendLog(
+      logPath,
+      `Host change summary failed (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return null;
+  }
+}
+
 export async function finalizeGitChanges({
   gitService,
   githubApp,
@@ -179,4 +275,51 @@ export async function finalizeGitChanges({
   return { commitSha, pushed, filesChanged };
 }
 
+const MAX_REPO_MAP_FILE_LINES = 100;
+
+/**
+ * Deterministic repo map prepended to the INITIAL_PLAN prompt (§4.2).
+ * Returns a markdown section with:
+ *   - `git ls-files` formatted as a compact tree (~100 lines max)
+ *   - First ~40 lines of README.md (when present)
+ *   - `package.json` scripts section (when present)
+ */
+export async function buildRepoMap(
+  gitService: GitService,
+  workspaceDir: string,
+): Promise<string> {
+  // Tracked files as a compact list
+  const allFiles = await gitService.getTrackedFiles(workspaceDir);
+  const fileListSections: string[] = ['## Repository File List'];
+  for (const f of allFiles.slice(0, MAX_REPO_MAP_FILE_LINES)) {
+    fileListSections.push(f);
+  }
+  if (allFiles.length > MAX_REPO_MAP_FILE_LINES) {
+    fileListSections.push(`… (${allFiles.length - MAX_REPO_MAP_FILE_LINES} more files)`);
+  }
+
+  // README.md header (~40 lines)
+  const readmePath = path.join(workspaceDir, 'README.md');
+  let readmeSection: string | null = null;
+  if (fs.existsSync(readmePath)) {
+    const lines = fs.readFileSync(readmePath, 'utf8').split('\n').slice(0, 40);
+    readmeSection = `## README.md\n${lines.join('\n')}`;
+  }
+
+  // package.json scripts section
+  const pkgPath = path.join(workspaceDir, 'package.json');
+  let scriptSection: string | null = null;
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+      if (typeof pkg.scripts === 'object' && pkg.scripts !== null) {
+        scriptSection = `### package.json scripts\n\`\`\`json\n${JSON.stringify(pkg.scripts, null, 2)}\n\`\`\``;
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  return [fileListSections.join('\n'), readmeSection, scriptSection]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
