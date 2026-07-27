@@ -332,10 +332,13 @@ export async function runSessionOrchestrator(
       return;
     }
     if (mapped.type === 'assistant.delta') {
-      const deltaText = mapped.payload.text;
-      if (typeof deltaText === 'string') {
-        accumulatedStreamedTextLen += deltaText.length;
-        accumulatedStreamedText += deltaText;
+      // Keep reasoning out of persisted conversation text; it often echoes the answer.
+      if (mapped.payload.field !== 'reasoning') {
+        const deltaText = mapped.payload.text;
+        if (typeof deltaText === 'string') {
+          accumulatedStreamedTextLen += deltaText.length;
+          accumulatedStreamedText += deltaText;
+        }
       }
     }
     eventWriter.write(mapped.type, mapped.payload, sessionId || undefined);
@@ -819,9 +822,11 @@ export async function startOpenCodeLoopSession(options: {
     eventWriter.write(mapped.type, mapped.payload, sessionId || undefined);
 
     if (mapped.type === 'assistant.delta') {
-      const deltaText = mapped.payload.text;
-      if (typeof deltaText === 'string') {
-        turnState.streamedAssistantText += deltaText;
+      if (mapped.payload.field !== 'reasoning') {
+        const deltaText = mapped.payload.text;
+        if (typeof deltaText === 'string') {
+          turnState.streamedAssistantText += deltaText;
+        }
       }
     }
 

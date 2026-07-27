@@ -37,6 +37,10 @@ export function mergeAssistantText(streamed: string, snapshot: string): string {
   if (!snapshot) {
     return streamed;
   }
+  // Delta+updated double-emit produces the final text twice in the stream.
+  if (streamed === snapshot + snapshot) {
+    return snapshot;
+  }
   if (streamed.startsWith(snapshot) || streamed.length >= snapshot.length) {
     return streamed;
   }

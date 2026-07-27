@@ -226,4 +226,61 @@ assert.equal(
   'replace delta must overwrite bubble text',
 );
 
+// Reasoning deltas must not appear in the conversation bubble.
+const reasoningEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Thinking about it…', field: 'reasoning' },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.delta',
+    payload: { text: 'Done.', field: 'text' },
+  },
+  {
+    seq: 3,
+    ts: '2026-05-30T10:00:03.000Z',
+    type: 'assistant.message',
+    payload: { text: 'Done.' },
+  },
+];
+const reasoningEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Go' }],
+  reasoningEvents,
+);
+assert.equal(
+  reasoningEntries.find((e) => e.role === 'assistant')?.text,
+  'Done.',
+  'reasoning deltas must not pollute the conversation bubble',
+);
+
+// Exact doubled stream with empty snapshot must collapse on finalize.
+const doubled = 'A'.repeat(80);
+const doubledEvents: AgentEvent[] = [
+  {
+    seq: 1,
+    ts: '2026-05-30T10:00:01.000Z',
+    type: 'assistant.delta',
+    payload: { text: doubled + doubled },
+  },
+  {
+    seq: 2,
+    ts: '2026-05-30T10:00:02.000Z',
+    type: 'assistant.message',
+    payload: { info: { role: 'assistant' } },
+  },
+];
+const doubledEntries = buildTranscriptFromHistory(
+  [{ ts: '2026-05-30T10:00:00.000Z', role: 'user', text: 'Go' }],
+  doubledEvents,
+);
+assert.equal(
+  doubledEntries.find((e) => e.role === 'assistant')?.text,
+  doubled,
+  'exact duplicated assistant text must collapse on finalize',
+);
+
 console.log('verify-transcript-history: ok');

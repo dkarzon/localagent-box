@@ -47,6 +47,11 @@ export function computeSnapshotTextDelta(previous: string, next: string): {
   if (next.startsWith(previous)) {
     return { delta: next.slice(previous.length), source: 'updated-backfill' };
   }
+  // OpenCode can deliver part.updated out of order after deltas already advanced
+  // the snapshot; a shorter stale snapshot must not reset streamed text.
+  if (previous.startsWith(next)) {
+    return { delta: '', source: 'updated-skip' };
+  }
   return { delta: next, source: 'updated-reset' };
 }
 
@@ -175,6 +180,12 @@ export interface OpenCodeEventMapper {
 /** Stateful mapper — tracks per-part text snapshots for delta + backfill. */
 export function createOpenCodeEventMapper(): OpenCodeEventMapper {
   const textSnapshots = new Map<string, string>();
+  /**
+   * OpenCode publishes both message.part.updated (cumulative part.text) and
+   * message.part.delta (same chunk) per stream step. Remember the gap we just
+   * emitted from updated so a following identical delta is not double-written.
+   */
+  const lastEmittedUpdatedGap = new Map<string, string>();
 
   function mapTextDelta(
     partId: string,
@@ -185,6 +196,30 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
     const key = snapshotKey(partId, field);
     const previous = textSnapshots.get(key) ?? '';
     const isIncrementalDelta = source === 'delta' || source === 'reasoning-delta';
+
+    if (isIncrementalDelta && delta) {
+      const pendingGap = lastEmittedUpdatedGap.get(key);
+      if (pendingGap !== undefined) {
+        lastEmittedUpdatedGap.delete(key);
+        // updated already emitted this chunk — skip the duplicate delta.
+        if (pendingGap === delta) {
+          return {
+            event: null,
+            debug: {
+              partId,
+              source,
+              field,
+              previousLen: previous.length,
+              nextLen: previous.length,
+              emittedLen: 0,
+              deltaLen: delta.length,
+              preview: delta.slice(0, 80),
+            },
+          };
+        }
+      }
+    }
+
     const next = isIncrementalDelta ? previous + delta : delta;
     textSnapshots.set(key, next);
 
@@ -248,6 +283,7 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
         const { delta, source } = computeSnapshotTextDelta(previous, textPart.text);
         const mappedSource = snapshotSourceForField(textPart.field, source);
         if (!delta) {
+          lastEmittedUpdatedGap.delete(key);
           return {
             event: null,
             debug: {
@@ -262,7 +298,9 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
           };
         }
 
-        textSnapshots.set(key, source === 'updated-reset' ? textPart.text : previous + delta);
+        const nextSnapshot = source === 'updated-reset' ? textPart.text : previous + delta;
+        textSnapshots.set(key, nextSnapshot);
+        lastEmittedUpdatedGap.set(key, delta);
         return {
           event: {
             type: 'assistant.delta',
@@ -327,6 +365,7 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
     map,
     reset: () => {
       textSnapshots.clear();
+      lastEmittedUpdatedGap.clear();
     },
     getTextSnapshot: (partId: string, field: TextStreamField = 'text') =>
       textSnapshots.get(snapshotKey(partId, field)),

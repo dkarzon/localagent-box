@@ -95,6 +95,10 @@ export type TranscriptAction =
 export function mergeAssistantText(streamed: string, snapshot: string): string {
   if (!streamed) return snapshot;
   if (!snapshot) return streamed;
+  // Delta+updated double-emit produces the final text twice in the stream.
+  if (streamed === snapshot + snapshot) {
+    return snapshot;
+  }
   if (streamed.startsWith(snapshot) || streamed.length >= snapshot.length) {
     return streamed;
   }
@@ -102,6 +106,23 @@ export function mergeAssistantText(streamed: string, snapshot: string): string {
     return snapshot;
   }
   return streamed.length >= snapshot.length ? streamed : snapshot;
+}
+
+/**
+ * Repair exact full-text duplication when assistant.message has no usable snapshot
+ * (common for OpenCode message.updated payloads without parts).
+ * Only collapses substantial blobs to avoid eating short intentional repeats.
+ */
+export function collapseExactDuplicatedText(text: string, minHalfLength = 80): string {
+  if (text.length < minHalfLength * 2 || text.length % 2 !== 0) {
+    return text;
+  }
+  const half = text.length / 2;
+  const first = text.slice(0, half);
+  if (first === text.slice(half)) {
+    return first;
+  }
+  return text;
 }
 
 export function transcriptReducer(state: TranscriptEntry[], action: TranscriptAction): TranscriptEntry[] {
@@ -122,6 +143,11 @@ export function transcriptReducer(state: TranscriptEntry[], action: TranscriptAc
       const { event } = action;
       switch (event.type) {
         case 'assistant.delta': {
+          // Reasoning streams into the same bubble otherwise, and thinking models
+          // often echo the final answer there — hide it from the conversation view.
+          if (event.payload.field === 'reasoning') {
+            return state;
+          }
           const delta = typeof event.payload.text === 'string' ? event.payload.text : '';
           if (!delta) return state;
           const replace = event.payload.replace === true;
@@ -174,7 +200,7 @@ export function transcriptReducer(state: TranscriptEntry[], action: TranscriptAc
             const next = [...state];
             next[idx] = {
               ...entry,
-              text: mergeAssistantText(entry.text, text),
+              text: collapseExactDuplicatedText(mergeAssistantText(entry.text, text)),
               ts: event.ts,
               streaming: false,
             };
@@ -186,7 +212,7 @@ export function transcriptReducer(state: TranscriptEntry[], action: TranscriptAc
             {
               id: `assistant-${event.seq}`,
               role: 'assistant',
-              text,
+              text: collapseExactDuplicatedText(text),
               ts: event.ts,
               streaming: false,
             },
