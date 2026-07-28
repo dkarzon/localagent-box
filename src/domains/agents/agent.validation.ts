@@ -35,13 +35,22 @@ export function parseCreateAgentPayload(
   agentId: string,
 ): CreateAgentPayload {
   const mode = validateAgentMode(body.mode);
+  const isReview = mode === 'review';
 
   const baseBranch = (() => {
     const val = typeof body.baseBranch === 'string' ? body.baseBranch : repoContext.defaultBranch || 'main';
     return val.trim() || 'main';
   })();
 
-  const agentBranch = validateBranchName(body.agentBranch, agentId);
+  const headBranch = typeof body.headBranch === 'string' ? body.headBranch.trim() : undefined;
+  const resolvedUseExistingBranch = isReview
+    ? true
+    : typeof body.useExistingBranch === 'boolean'
+      ? body.useExistingBranch
+      : false;
+  const agentBranch = resolvedUseExistingBranch
+    ? ''
+    : validateBranchName(body.agentBranch, agentId);
 
   const systemPrompt =
     typeof body.systemPrompt === 'string' && body.systemPrompt.trim()
@@ -50,11 +59,8 @@ export function parseCreateAgentPayload(
 
   const model = typeof body.model === 'string' ? body.model : undefined;
 
-  const headBranch = typeof body.headBranch === 'string' ? body.headBranch.trim() : undefined;
   const background = typeof body.background === 'string' ? body.background : undefined;
   const parentAgentId = typeof body.parentAgentId === 'string' ? body.parentAgentId.trim() : undefined;
-
-  const isReview = mode === 'review';
 
   const prompt = isReview
     ? String(typeof body.prompt === 'string' ? body.prompt : '')
@@ -64,11 +70,6 @@ export function parseCreateAgentPayload(
     mode === 'loop' && typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
       ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
       : undefined;
-  const resolvedUseExistingBranch = isReview
-    ? true
-    : typeof body.useExistingBranch === 'boolean'
-      ? body.useExistingBranch
-      : false;
   const resolvedAgentBranch =
     isReview && headBranch
       ? headBranch
