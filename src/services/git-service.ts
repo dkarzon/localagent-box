@@ -25,6 +25,7 @@ export interface GitService {
     params: { owner: string; name: string; branch: string },
   ) => Promise<{ ok: boolean; owner: string; name: string; branch: string; message: string }>;
   createBranch: (targetDir: string, branchName: string) => Promise<void>;
+  fetchAndCheckoutBranch: (targetDir: string, branchName: string) => Promise<void>;
   getPorcelainStatus: (targetDir: string) => Promise<string>;
   /** `git diff --stat <baseRef>` (default HEAD) — deterministic working-tree change summary; '' on failure. */
   getDiffStat: (targetDir: string, baseRef?: string) => Promise<string>;
@@ -167,6 +168,35 @@ export function createGitService(options: {
         execErr.stderr || execErr.message || 'Git branch creation failed',
       );
       throw new Error(message || 'Git branch creation failed');
+    }
+  }
+
+  async function fetchAndCheckoutBranch(targetDir: string, branchName: string): Promise<void> {
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+    };
+    try {
+      await execFileAsyncImpl(
+        'git',
+        ['fetch', 'origin', `${branchName}:refs/heads/${branchName}`, '--depth', '1'],
+        {
+          cwd: targetDir,
+          timeout: CLONE_TIMEOUT_MS,
+          env: gitEnv,
+        },
+      );
+      await execFileAsyncImpl('git', ['checkout', branchName], {
+        cwd: targetDir,
+        timeout: 60000,
+        env: gitEnv,
+      });
+    } catch (err) {
+      const execErr = err as { stderr?: string; message?: string };
+      const message = githubApp.redactSecrets(
+        execErr.stderr || execErr.message || 'Git fetch/checkout failed',
+      );
+      throw new Error(message || 'Git fetch/checkout failed');
     }
   }
 
@@ -382,6 +412,7 @@ export function createGitService(options: {
     shallowClone,
     verifyClone,
     createBranch,
+    fetchAndCheckoutBranch,
     getPorcelainStatus,
     getDiffStat,
     getTrackedFiles,

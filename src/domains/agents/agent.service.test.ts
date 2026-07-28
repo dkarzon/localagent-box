@@ -164,6 +164,7 @@ function createTestContext(options?: {
       message: 'ok',
     }),
     createBranch: async () => {},
+    fetchAndCheckoutBranch: async () => {},
     getPorcelainStatus: async () => ' M src/changed.ts',
     getDiffStat: async () => ' src/changed.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)',
     getTrackedFiles: async () => [],

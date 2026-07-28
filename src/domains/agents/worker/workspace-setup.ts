@@ -106,7 +106,11 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   appendLog(logPath, `Cloned ${ctx.repo.owner}/${ctx.repo.name} @ ${cloneResult.branch}`);
 
   if (job.useExistingBranch) {
-    appendLog(logPath, `Checked out existing branch ${job.baseBranch}`);
+    if (job.agentBranch !== job.baseBranch) {
+      appendLog(logPath, `Fetching and checking out ${job.agentBranch}…`);
+      await gitService.fetchAndCheckoutBranch(job.workspaceDir, job.agentBranch);
+    }
+    appendLog(logPath, `Checked out existing branch ${job.agentBranch}`);
   } else {
     appendLog(logPath, `Creating branch ${job.agentBranch}…`);
     await gitService.createBranch(job.workspaceDir, job.agentBranch);
