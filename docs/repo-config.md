@@ -94,4 +94,3 @@ Loop step prompts support these templates (replaced at runtime):
 | `{{goal}}` | Agent task description |
 | `{{iteration}}` | Current 1-based iteration number |
 | `{{completionMarker}}` | The configured completion token |
-| `{{repoMap}}` | Codebase map (available in `initialPlanPrompt`) |

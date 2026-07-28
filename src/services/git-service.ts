@@ -29,8 +29,6 @@ export interface GitService {
   getPorcelainStatus: (targetDir: string) => Promise<string>;
   /** `git diff --stat <baseRef>` (default HEAD) — deterministic working-tree change summary; '' on failure. */
   getDiffStat: (targetDir: string, baseRef?: string) => Promise<string>;
-  /** `git ls-files` — list tracked files, one per line. */
-  getTrackedFiles: (targetDir: string) => Promise<string[]>;
   parsePorcelainStatus: (porcelain: string) => GitChangedFile[];
   countChangedFiles: (porcelain: string) => number;
   commitAll: (targetDir: string, message: string) => Promise<string>;
@@ -228,22 +226,6 @@ export function createGitService(options: {
     }
   }
 
-  async function getTrackedFiles(targetDir: string): Promise<string[]> {
-    try {
-      const { stdout } = await execFileAsyncImpl('git', ['ls-files'], {
-        cwd: targetDir,
-        timeout: 60000,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-        },
-      });
-      return stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-    } catch {
-      return [];
-    }
-  }
-
   function countChangedFiles(porcelain: string): number {
     if (!porcelain) {
       return 0;
@@ -415,7 +397,6 @@ export function createGitService(options: {
     fetchAndCheckoutBranch,
     getPorcelainStatus,
     getDiffStat,
-    getTrackedFiles,
     parsePorcelainStatus,
     countChangedFiles,
     commitAll,
