@@ -9,6 +9,7 @@ export function buildReviewBackground(
   agent: Agent,
   repoPromptOverrides: RepoPromptOverrides | null,
   parentContext?: string | null,
+  parentTask?: string | null,
 ): string {
   let bg = '';
 
@@ -24,8 +25,8 @@ export function buildReviewBackground(
   if (agent.parentAgentId) {
     if (parentContext?.trim()) {
       bg += `Previous Activity Summary:\n${parentContext.trim()}\n\n`;
-    } else if (!callerBackground && agent.prompt?.trim()) {
-      bg += `Parent Agent Task: ${agent.prompt.trim()}\n\n`;
+    } else if (!callerBackground && parentTask?.trim()) {
+      bg += `Parent Agent Task: ${parentTask.trim()}\n\n`;
     }
   }
 

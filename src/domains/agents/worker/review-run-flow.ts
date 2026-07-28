@@ -65,10 +65,13 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
 
   const agentRecord = readAgentRecord(agentsStore, job.agentId);
   const repoPromptOverrides = loadRepoConfig(job.workspaceDir);
-  const parentContext =
+  const parentAgent =
     agentRecord?.parentAgentId && !agentRecord.review?.background
-      ? loadParentTranscript(job.dataDir, agentRecord.parentAgentId)
+      ? readAgentRecord(agentsStore, agentRecord.parentAgentId)
       : null;
+  const parentContext = parentAgent
+    ? loadParentTranscript(job.dataDir, parentAgent.agentId)
+    : null;
 
   const background = buildReviewBackground(
     agentRecord || {
@@ -103,6 +106,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     },
     repoPromptOverrides,
     parentContext,
+    parentAgent?.prompt,
   );
 
   writeOcrConfig(config, job.workspaceDir);

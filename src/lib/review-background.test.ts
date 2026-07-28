@@ -54,6 +54,16 @@ describe('buildReviewBackground', () => {
     assert.match(result, /Previous Activity Summary/);
     assert.match(result, /assistant: done/);
   });
+
+  it('falls back to parent task when transcript is missing', () => {
+    const result = buildReviewBackground(
+      { ...baseAgent, prompt: '', review: { ...baseAgent.review!, background: null } },
+      null,
+      null,
+      'Implement feature',
+    );
+    assert.match(result, /Parent Agent Task: Implement feature/);
+  });
 });
 
 describe('buildAutoSpawnReviewBackground', () => {
