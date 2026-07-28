@@ -1,11 +1,20 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { normalizeOpenCodeBaseUrl } from '../../services/opencode-config';
 import type { AppConfig, SpawnFn } from '../../types';
 
 export interface OcrConfig {
-  ollamaBaseUrl: string;
-  model: string;
+  llm: {
+    url: string;
+    auth_token: string;
+    model: string;
+    use_anthropic: boolean;
+  };
+}
+
+export function getOcrConfigPath(workspaceDir: string): string {
+  return path.join(workspaceDir, '.ocr', 'config.json');
 }
 
 export function getOcrBinary(): string {
@@ -14,15 +23,19 @@ export function getOcrBinary(): string {
 
 export function writeOcrConfig(config: AppConfig, workspaceDir: string): void {
   const effectiveModel = config.reviewModel || config.opencodeModel;
+  const baseUrl = normalizeOpenCodeBaseUrl(config.ollamaBaseUrl);
   const ocrCfg: OcrConfig = {
-    ollamaBaseUrl: config.ollamaBaseUrl,
-    model: effectiveModel,
+    llm: {
+      url: `${baseUrl}/chat/completions`,
+      auth_token: 'ollama',
+      model: effectiveModel,
+      use_anthropic: false,
+    },
   };
 
   const ocrDir = path.join(workspaceDir, '.ocr');
   fs.mkdirSync(ocrDir, { recursive: true });
-  const ocrConfigPath = path.join(ocrDir, 'config.json');
-  fs.writeFileSync(ocrConfigPath, JSON.stringify(ocrCfg, null, 2), 'utf8');
+  fs.writeFileSync(getOcrConfigPath(workspaceDir), JSON.stringify(ocrCfg, null, 2), 'utf8');
 }
 
 export interface OcrReviewResult {
@@ -51,10 +64,16 @@ export function runOcrReview(options: {
     args.push('-b', options.background);
   }
 
+  const ocrConfigPath = getOcrConfigPath(options.workspaceDir);
+
   return new Promise((resolve, reject) => {
     const proc = (options.spawnFn || spawn)(ocrBin, args, {
       cwd: options.workspaceDir,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        OCR_CONFIG_PATH: ocrConfigPath,
+      },
     });
 
     let stdout = '';

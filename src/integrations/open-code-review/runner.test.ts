@@ -36,9 +36,13 @@ describe('writeOcrConfig', () => {
       dir,
     );
     const raw = fs.readFileSync(path.join(dir, '.ocr', 'config.json'), 'utf8');
-    const parsed = JSON.parse(raw) as { model: string; ollamaBaseUrl: string };
-    assert.equal(parsed.model, 'llama3.2');
-    assert.equal(parsed.ollamaBaseUrl, 'http://localhost:11434');
+    const parsed = JSON.parse(raw) as {
+      llm: { model: string; url: string; auth_token: string; use_anthropic: boolean };
+    };
+    assert.equal(parsed.llm.model, 'llama3.2');
+    assert.equal(parsed.llm.url, 'http://localhost:11434/v1/chat/completions');
+    assert.equal(parsed.llm.auth_token, 'ollama');
+    assert.equal(parsed.llm.use_anthropic, false);
   });
 });
 
@@ -51,5 +55,20 @@ describe('runOcrReview', () => {
       spawnFn: () => mockChildProcess('{"summary":"Looks good"}\n'),
     });
     assert.equal(result.summary, 'Looks good');
+  });
+
+  it('passes OCR_CONFIG_PATH to the spawned process', async () => {
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-review-'));
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    await runOcrReview({
+      workspaceDir,
+      baseBranch: 'main',
+      headBranch: 'feature/foo',
+      spawnFn: (_cmd, _args, options) => {
+        capturedEnv = options?.env;
+        return mockChildProcess('{"summary":"ok"}\n');
+      },
+    });
+    assert.equal(capturedEnv?.OCR_CONFIG_PATH, path.join(workspaceDir, '.ocr', 'config.json'));
   });
 });
