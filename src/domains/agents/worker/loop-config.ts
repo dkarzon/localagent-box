@@ -33,8 +33,6 @@ export interface InterpolateVars {
   goal: string;
   iteration: number;
   completionMarker: string;
-  /** Optional repo map prepended to INITIAL_PLAN (§4.2). */
-  repoMap?: string;
 }
 
 const bundledDefaultPath = path.join(__dirname, '..', '..', '..', '..', 'config', 'loop.default.json');
@@ -144,8 +142,7 @@ export function interpolateStepPrompt(template: string, vars: InterpolateVars): 
   return template
     .replaceAll('{{goal}}', vars.goal)
     .replaceAll('{{iteration}}', String(vars.iteration))
-    .replaceAll('{{completionMarker}}', vars.completionMarker)
-    .replaceAll('{{repoMap}}', vars.repoMap ?? '');
+    .replaceAll('{{completionMarker}}', vars.completionMarker);
 }
 
 function normalizeForEchoComparison(text: string): string {

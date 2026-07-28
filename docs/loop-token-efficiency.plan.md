@@ -1,6 +1,6 @@
 # Loop mode — token efficiency improvements
 
-Reduce input/output token spend per loop run against small local models (llama3.2-class, modest context windows). Two themes: **shrink what each turn has to read** (fewer steps, less repeated framing, bounded handoffs) and **move deterministic work from the model to the host** (repo map, diffstat, check command, plan-file verification).
+Reduce input/output token spend per loop run against small local models (llama3.2-class, modest context windows). Two themes: **shrink what each turn has to read** (fewer steps, less repeated framing, bounded handoffs) and **move deterministic work from the model to the host** (diffstat, check command, plan-file verification).
 
 **Status:** Plan (not implemented)
 
@@ -132,21 +132,11 @@ After the INITIAL_PLAN step in `runLoopJob`:
 
 All downstream prompts can then drop the "when present" hedging.
 
-### 4.2 Host-generated repo map in the INITIAL_PLAN prompt
-
-Prepend deterministic context (a few hundred tokens replacing dozens of exploratory tool calls):
-
-- `git ls-files` truncated/tree-formatted (~100 entries max)
-- First ~40 lines of `README.md` (when present)
-- `package.json` scripts (or equivalent manifest section) when present
-
-Implement as a helper in `workspace-setup.ts` or a new `repo-map.ts`; interpolate via a new `{{repoMap}}` template variable in `loop-config.ts`.
-
-### 4.3 Bound the plan to the iteration budget
+### 4.2 Bound the plan to the iteration budget
 
 INITIAL_PLAN prompt: *"Write at most {{maxIterations}} milestones, each completable in one iteration, ordered, as a markdown checklist."* Add `{{maxIterations}}` to `InterpolateVars`.
 
-### 4.4 Trivial-goal escape hatch
+### 4.3 Trivial-goal escape hatch
 
 Fold into the prompt: "If the goal is trivially small, write a one-line plan and note it." Optionally expose a per-agent create flag `skipInitialPlan` later; not required for v1.
 
@@ -157,7 +147,7 @@ Fold into the prompt: "If the goal is trivially small, write a one-line plan and
 | Phase | Items | Touches |
 |-------|-------|---------|
 | 1 | 1.1 merged ORIENT step, 1.2 early exit, 2.1 templated/capped handoff | `loop.default.json`, `runner.ts`, `loop-run-flow.ts` |
-| 2 | 2.3 diffstat injection, 4.1 plan-file verification, 4.2 repo map, 4.3 budgeted plan | `loop-run-flow.ts`, `loop-config.ts`, `git-service.ts`, `workspace-setup.ts` |
+| 2 | 2.3 diffstat injection, 4.1 plan-file verification, 4.2 budgeted plan | `loop-run-flow.ts`, `loop-config.ts`, `git-service.ts`, `workspace-setup.ts` |
 | 3 | 3.1 check command + completion gating, 1.4 stall detection, 1.5 max-iterations softening | `repo-config.ts`, `loop-run-flow.ts` |
 | 4 | 1.3 framing once per session, 3.2 per-step agent, 3.3 num_ctx, 3.4 per-verb telemetry | `runner.ts`, `session-orchestrator.ts`, `opencode-config.ts`, `agent-state-writer.ts` |
 
