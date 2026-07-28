@@ -90,6 +90,7 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
     fs.rmSync(job.workspaceDir, { recursive: true, force: true });
   }
 
+  const isReview = getAgentMode(job) === 'review';
   appendLog(logPath, `Cloning repository @ ${job.baseBranch}…`);
   const repoManager = createRepoService({
     reposStore: createJsonStore<{ repos: Repo[] }>(`${job.dataDir}/repos.json`, { repos: [] }, fs),
@@ -101,6 +102,7 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
     job.repoId,
     job.workspaceDir,
     job.baseBranch,
+    { fullHistory: isReview },
   );
   ctx.repo = cloneResult.repo;
   appendLog(logPath, `Cloned ${ctx.repo.owner}/${ctx.repo.name} @ ${cloneResult.branch}`);
@@ -108,7 +110,9 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   if (job.useExistingBranch) {
     if (job.agentBranch !== job.baseBranch) {
       appendLog(logPath, `Fetching and checking out ${job.agentBranch}…`);
-      await gitService.fetchAndCheckoutBranch(job.workspaceDir, job.agentBranch);
+      await gitService.fetchAndCheckoutBranch(job.workspaceDir, job.agentBranch, {
+        shallow: !isReview,
+      });
     }
     appendLog(logPath, `Checked out existing branch ${job.agentBranch}`);
   } else {

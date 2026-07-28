@@ -308,6 +308,7 @@ export function canReviewBranches(
   if (
     isReviewAgent(agent) ||
     agent.status !== 'completed' ||
+    agent.pushed !== true ||
     !(agent.agentBranch || agent.branch)
   ) {
     return false;

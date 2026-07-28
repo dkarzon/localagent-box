@@ -37,6 +37,7 @@ export interface RepoService {
     repoId: string,
     workspaceDir: string,
     branch?: unknown,
+    options?: { fullHistory?: boolean },
   ) => Promise<{ repo: Repo; branch: string; workspaceDir: string }>;
   validateRepoId: (repoId: unknown) => string;
 }
@@ -134,6 +135,7 @@ export function createRepoService({
     repoId: string,
     workspaceDir: string,
     branch?: unknown,
+    options?: { fullHistory?: boolean },
   ) {
     const repo = getRepo(repoId);
     const branchToUse = branch ? validateBranchName(branch) : repo.defaultBranch;
@@ -145,6 +147,7 @@ export function createRepoService({
       branch: branchToUse,
       targetDir: workspaceDir,
       token,
+      fullHistory: options?.fullHistory,
     });
 
     return {

@@ -19,13 +19,18 @@ export interface GitService {
     branch: string;
     targetDir: string;
     token: string;
+    fullHistory?: boolean;
   }) => Promise<void>;
   verifyClone: (
     config: AppConfig,
     params: { owner: string; name: string; branch: string },
   ) => Promise<{ ok: boolean; owner: string; name: string; branch: string; message: string }>;
   createBranch: (targetDir: string, branchName: string) => Promise<void>;
-  fetchAndCheckoutBranch: (targetDir: string, branchName: string) => Promise<void>;
+  fetchAndCheckoutBranch: (
+    targetDir: string,
+    branchName: string,
+    options?: { shallow?: boolean },
+  ) => Promise<void>;
   getPorcelainStatus: (targetDir: string) => Promise<string>;
   /** `git diff --stat <baseRef>` (default HEAD) — deterministic working-tree change summary; '' on failure. */
   getDiffStat: (targetDir: string, baseRef?: string) => Promise<string>;
@@ -84,24 +89,20 @@ export function createGitService(options: {
     branch,
     targetDir,
     token,
+    fullHistory = false,
   }: {
     owner: string;
     name: string;
     branch: string;
     targetDir: string;
     token: string;
+    fullHistory?: boolean;
   }): Promise<void> {
     const cloneUrl = githubApp.buildAuthenticatedCloneUrl(owner, name, token);
-    const args = [
-      'clone',
-      '--depth',
-      '1',
-      '--single-branch',
-      '--branch',
-      branch,
-      cloneUrl,
-      targetDir,
-    ];
+    const args = ['clone', '--branch', branch, cloneUrl, targetDir];
+    if (!fullHistory) {
+      args.splice(1, 0, '--depth', '1', '--single-branch');
+    }
 
     try {
       await execFileAsyncImpl('git', args, {
@@ -169,15 +170,23 @@ export function createGitService(options: {
     }
   }
 
-  async function fetchAndCheckoutBranch(targetDir: string, branchName: string): Promise<void> {
+  async function fetchAndCheckoutBranch(
+    targetDir: string,
+    branchName: string,
+    options?: { shallow?: boolean },
+  ): Promise<void> {
     const gitEnv = {
       ...process.env,
       GIT_TERMINAL_PROMPT: '0',
     };
+    const fetchArgs = ['fetch', 'origin', `${branchName}:refs/heads/${branchName}`];
+    if (options?.shallow !== false) {
+      fetchArgs.push('--depth', '1');
+    }
     try {
       await execFileAsyncImpl(
         'git',
-        ['fetch', 'origin', `${branchName}:refs/heads/${branchName}`, '--depth', '1'],
+        fetchArgs,
         {
           cwd: targetDir,
           timeout: CLONE_TIMEOUT_MS,
