@@ -38,3 +38,28 @@ export function isDuplicateReview(
     r.headSha === headSha
   );
 }
+
+/** Block duplicate manual review requests for the same parent and branch pair. */
+export function isDuplicateBranchReview(
+  existingAgent: {
+    mode?: string;
+    status?: string;
+    parentAgentId?: string | null;
+    review?: { baseBranch?: string | null; headBranch?: string | null } | null;
+  },
+  parentAgentId: string,
+  baseBranch: string,
+  headBranch: string,
+): boolean {
+  if (existingAgent.mode !== 'review' || existingAgent.parentAgentId !== parentAgentId) {
+    return false;
+  }
+  if (existingAgent.status === 'failed' || existingAgent.status === 'cancelled') {
+    return false;
+  }
+  const review = existingAgent.review;
+  if (!review) {
+    return false;
+  }
+  return review.baseBranch === baseBranch && review.headBranch === headBranch;
+}

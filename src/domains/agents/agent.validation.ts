@@ -1,4 +1,5 @@
-import { validateBranchName } from '../../lib/validation';
+import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
+import { validateBranchName, validatePrompt } from '../../lib/validation';
 import type { AgentMode } from '../../types';
 
 export interface CreateAgentPayload {
@@ -49,16 +50,20 @@ export function parseCreateAgentPayload(
 
   const model = typeof body.model === 'string' ? body.model : undefined;
 
-  const loopVerbModels =
-    typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
-      ? (body.loopVerbModels as Record<string, string>)
-      : undefined;
-
   const headBranch = typeof body.headBranch === 'string' ? body.headBranch.trim() : undefined;
   const background = typeof body.background === 'string' ? body.background : undefined;
   const parentAgentId = typeof body.parentAgentId === 'string' ? body.parentAgentId.trim() : undefined;
 
   const isReview = mode === 'review';
+
+  const prompt = isReview
+    ? String(typeof body.prompt === 'string' ? body.prompt : '')
+    : validatePrompt(body.prompt);
+
+  const loopVerbModels =
+    mode === 'loop' && typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
+      ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
+      : undefined;
   const resolvedUseExistingBranch =
     typeof body.useExistingBranch === 'boolean'
       ? body.useExistingBranch
@@ -79,7 +84,7 @@ export function parseCreateAgentPayload(
 
   return {
     repoId: String(body.repoId || ''),
-    prompt: String(typeof body.prompt === 'string' ? body.prompt : ''),
+    prompt,
     systemPrompt,
     baseBranch,
     agentBranch: resolvedAgentBranch,

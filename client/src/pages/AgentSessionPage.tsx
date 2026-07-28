@@ -255,6 +255,11 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     const headBranch = agent.agentBranch || agent.branch;
     if (!headBranch) return;
 
+    const agentRepo = repos.find((r) => r.repoId === agent.repoId);
+    const baseBranch = agent.useExistingBranch
+      ? agentRepo?.defaultBranch || 'main'
+      : agent.baseBranch || agentRepo?.defaultBranch || 'main';
+
     setReviewBusy(true);
     setPageStatus('Starting branch review…');
     setPageStatusVariant('');
@@ -265,7 +270,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
         body: JSON.stringify({
           mode: 'review',
           repoId: agent.repoId,
-          baseBranch: agent.baseBranch || repo?.defaultBranch || 'main',
+          baseBranch,
           headBranch,
           parentAgentId: agent.agentId,
         }),

@@ -26,7 +26,11 @@ import {
   buildAutoSpawnReviewBackground,
   readParentTranscriptLines,
 } from '../../lib/review-background';
-import { isDuplicateReview, resolveAutoReviewPullRequests } from '../../lib/resolve-auto-review';
+import {
+  isDuplicateBranchReview,
+  isDuplicateReview,
+  resolveAutoReviewPullRequests,
+} from '../../lib/resolve-auto-review';
 import { CodedError, getErrorMessage } from '../../types';
 import type { Agent, AgentJob, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
@@ -371,6 +375,22 @@ export function createAgentService(options: {
     // Validate review-specific fields
     if (mode === 'review' && !payload.headBranch) {
       throw new CodedError('Review mode requires headBranch to be specified', 'VALIDATION_ERROR');
+    }
+    if (mode === 'review' && payload.parentAgentId && payload.headBranch) {
+      const duplicate = repository.findAll().find((entry) =>
+        isDuplicateBranchReview(
+          entry,
+          payload.parentAgentId!,
+          payload.baseBranch,
+          payload.headBranch!,
+        ),
+      );
+      if (duplicate) {
+        throw new CodedError(
+          'A review for these branches is already queued or completed',
+          'DUPLICATE',
+        );
+      }
     }
     const workspaceId = crypto.randomUUID();
     const workspaceDir = repository.getWorkspaceDir(workspaceId);
