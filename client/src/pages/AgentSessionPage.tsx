@@ -123,6 +123,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     () => {
       session.loadAgent();
       loadLogs();
+      void loadRelatedSessions();
       if (!session.messagesLoaded || !session.eventsConnected) {
         void session.loadMessages();
       }
@@ -136,6 +137,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
       try {
         const data = await refreshAgentPullRequest(agentId);
         session.loadAgent();
+        void loadRelatedSessions();
         void data;
       } catch {
         /* ignore refresh errors during polling */
@@ -222,6 +224,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     try {
       const data = await createAgentPullRequest(agentId, token);
       await session.loadAgent();
+      void loadRelatedSessions();
       setPageStatus(`Pull request #${data.pullRequest.number} created.`);
       setPageStatusVariant('success');
     } catch (err) {
