@@ -59,6 +59,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const [reviewBusy, setReviewBusy] = useState(false);
   const [relatedSessions, setRelatedSessions] = useState<Agent[]>([]);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
+  const [allAgentsLoaded, setAllAgentsLoaded] = useState(false);
   const [showDebugLogs, setShowDebugLogs] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [pageStatus, setPageStatus] = useState('');
@@ -100,6 +101,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     try {
       const data = await apiFetch<{ agents: Agent[] }>('/api/v1/agents');
       setAllAgents(data.agents);
+      setAllAgentsLoaded(true);
       const parentAgentId = agent?.parentAgentId;
       const related = data.agents.filter(
         (entry) =>
@@ -112,6 +114,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
       setRelatedSessions(related);
     } catch {
       setAllAgents([]);
+      setAllAgentsLoaded(false);
       setRelatedSessions([]);
     }
   }, [agentId, agent?.parentAgentId]);
@@ -307,8 +310,53 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
       : agent.baseBranch || repos.find((r) => r.repoId === agent.repoId)?.defaultBranch || 'main'
     : 'main';
   const showReviewBranches = agent
-    ? canReviewBranches(agent, { relatedAgents: allAgents, baseBranch: reviewBaseBranch })
+    ? canReviewBranches(agent, {
+        relatedAgents: allAgents,
+        baseBranch: reviewBaseBranch,
+        agentsLoaded: allAgentsLoaded,
+      })
     : false;
+
+  const renderPrAndReviewActions = (compact: boolean) => {
+    const buttonClass = compact ? '!gap-1.5 !px-2.5 !py-1.5 text-xs' : '!gap-2';
+    const reviewButtonClass = compact ? '!px-3 !py-1.5 text-xs' : '!gap-2';
+    const iconClass = compact ? 'size-3.5' : 'size-4';
+
+    return (
+      <>
+        {agent?.pullRequest ? (
+          <Button
+            variant="primary"
+            className={buttonClass}
+            onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
+          >
+            <IconLink className={iconClass} />
+            Open PR
+          </Button>
+        ) : showCreatePr ? (
+          <Button
+            variant="primary"
+            className={buttonClass}
+            disabled={prBusy}
+            onClick={() => createPullRequest()}
+          >
+            <IconGithub className={iconClass} />
+            Create PR
+          </Button>
+        ) : null}
+        {showReviewBranches ? (
+          <Button
+            variant="primary"
+            className={reviewButtonClass}
+            disabled={reviewBusy}
+            onClick={() => startBranchReview()}
+          >
+            Review branches
+          </Button>
+        ) : null}
+      </>
+    );
+  };
 
   const sessionInfoProps = {
     agent,
@@ -339,36 +387,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           Commit and push changes
         </Button>
       ) : null}
-      {agent?.pullRequest ? (
-        <Button
-          variant="primary"
-          className="!gap-2"
-          onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
-        >
-          <IconLink className="size-4" />
-          Open PR
-        </Button>
-      ) : showCreatePr ? (
-        <Button
-          variant="primary"
-          className="!gap-2"
-          disabled={prBusy}
-          onClick={() => createPullRequest()}
-        >
-          <IconGithub className="size-4" />
-          Create PR
-        </Button>
-      ) : null}
-      {showReviewBranches ? (
-        <Button
-          variant="primary"
-          className="!gap-2"
-          disabled={reviewBusy}
-          onClick={() => startBranchReview()}
-        >
-          Review branches
-        </Button>
-      ) : null}
+      {renderPrAndReviewActions(false)}
       {isActive ? (
         <Button variant="ghost" onClick={() => cancelAgent()}>
           Cancel session
@@ -405,36 +424,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           Commit changes
         </Button>
       ) : null}
-      {agent?.pullRequest ? (
-        <Button
-          variant="primary"
-          className="!gap-1.5 !px-2.5 !py-1.5 text-xs"
-          onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
-        >
-          <IconLink className="size-3.5" />
-          Open PR
-        </Button>
-      ) : showCreatePr ? (
-        <Button
-          variant="primary"
-          className="!gap-1.5 !px-2.5 !py-1.5 text-xs"
-          disabled={prBusy}
-          onClick={() => createPullRequest()}
-        >
-          <IconGithub className="size-3.5" />
-          Create PR
-        </Button>
-      ) : null}
-      {showReviewBranches ? (
-        <Button
-          variant="primary"
-          className="!px-3 !py-1.5 text-xs"
-          disabled={reviewBusy}
-          onClick={() => startBranchReview()}
-        >
-          Review branches
-        </Button>
-      ) : null}
+      {renderPrAndReviewActions(true)}
       {isActive ? (
         <Button variant="ghost" className="!px-2.5 !py-1.5 text-xs" onClick={() => cancelAgent()}>
           Cancel

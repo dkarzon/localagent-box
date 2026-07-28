@@ -318,7 +318,7 @@ function isBranchInUse(
 
 export function canReviewBranches(
   agent: Agent,
-  options: { relatedAgents: Agent[]; baseBranch?: string },
+  options: { relatedAgents?: Agent[]; baseBranch?: string; agentsLoaded?: boolean },
 ): boolean {
   if (
     isReviewAgent(agent) ||
@@ -329,23 +329,24 @@ export function canReviewBranches(
     return false;
   }
 
-  const headBranch = agent.agentBranch || agent.branch!;
-
-  // Caller must supply loaded agents; empty list means checks cannot run yet.
-  if (options.relatedAgents.length === 0) {
+  // Wait until the caller has fetched agents; unlike Create PR this needs conflict checks.
+  if (!options.agentsLoaded) {
     return false;
   }
 
+  const headBranch = agent.agentBranch || agent.branch!;
+  const relatedAgents = options.relatedAgents ?? [];
+
   if (
     options.baseBranch &&
-    options.relatedAgents.some((entry) =>
+    relatedAgents.some((entry) =>
       isDuplicateBranchReview(entry, agent.agentId, options.baseBranch!, headBranch),
     )
   ) {
     return false;
   }
 
-  if (isBranchInUse(options.relatedAgents, agent.repoId, headBranch, agent.agentId)) {
+  if (isBranchInUse(relatedAgents, agent.repoId, headBranch, agent.agentId)) {
     return false;
   }
 
