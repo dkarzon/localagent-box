@@ -318,7 +318,7 @@ function isBranchInUse(
 
 export function canReviewBranches(
   agent: Agent,
-  options?: { relatedAgents?: Agent[]; baseBranch?: string },
+  options: { relatedAgents: Agent[]; baseBranch?: string },
 ): boolean {
   if (
     isReviewAgent(agent) ||
@@ -329,9 +329,11 @@ export function canReviewBranches(
     return false;
   }
 
-  const headBranch = agent.agentBranch || agent.branch;
-  if (!headBranch || !options?.relatedAgents) {
-    return true;
+  const headBranch = agent.agentBranch || agent.branch!;
+
+  // Caller must supply loaded agents; empty list means checks cannot run yet.
+  if (options.relatedAgents.length === 0) {
+    return false;
   }
 
   if (
