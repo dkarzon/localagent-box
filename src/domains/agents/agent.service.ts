@@ -387,7 +387,7 @@ export function createAgentService(options: {
       );
       if (duplicate) {
         throw new CodedError(
-          'A review for these branches is already queued or completed',
+          'A review for these branches is already in progress',
           'DUPLICATE',
         );
       }

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isDuplicateReview, resolveAutoReviewPullRequests } from './resolve-auto-review';
+import {
+  isDuplicateBranchReview,
+  isDuplicateReview,
+  resolveAutoReviewPullRequests,
+} from './resolve-auto-review';
 import type { AppConfig, Repo } from '../types';
 
 const repo: Repo = {
@@ -64,5 +68,56 @@ describe('isDuplicateReview', () => {
 
   it('returns false when review metadata missing', () => {
     assert.equal(isDuplicateReview({}, 42, 'abc123'), false);
+  });
+});
+
+describe('isDuplicateBranchReview', () => {
+  const parentAgentId = 'parent-1';
+  const baseBranch = 'main';
+  const headBranch = 'feature/review';
+
+  it('blocks only active reviews for the same parent and branch pair', () => {
+    const active = {
+      mode: 'review',
+      status: 'queued',
+      parentAgentId,
+      review: { baseBranch, headBranch },
+    };
+    assert.equal(isDuplicateBranchReview(active, parentAgentId, baseBranch, headBranch), true);
+    assert.equal(
+      isDuplicateBranchReview({ ...active, status: 'running' }, parentAgentId, baseBranch, headBranch),
+      true,
+    );
+    assert.equal(
+      isDuplicateBranchReview({ ...active, status: 'completed' }, parentAgentId, baseBranch, headBranch),
+      false,
+    );
+    assert.equal(
+      isDuplicateBranchReview({ ...active, status: 'failed' }, parentAgentId, baseBranch, headBranch),
+      false,
+    );
+    assert.equal(
+      isDuplicateBranchReview({ ...active, status: 'cancelled' }, parentAgentId, baseBranch, headBranch),
+      false,
+    );
+  });
+
+  it('ignores reviews for other parents or branches', () => {
+    const active = {
+      mode: 'review',
+      status: 'queued',
+      parentAgentId,
+      review: { baseBranch, headBranch },
+    };
+    assert.equal(isDuplicateBranchReview(active, 'other-parent', baseBranch, headBranch), false);
+    assert.equal(
+      isDuplicateBranchReview(
+        { ...active, review: { baseBranch, headBranch: 'other-branch' } },
+        parentAgentId,
+        baseBranch,
+        headBranch,
+      ),
+      false,
+    );
   });
 });

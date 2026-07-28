@@ -39,7 +39,9 @@ export function isDuplicateReview(
   );
 }
 
-/** Block duplicate manual review requests for the same parent and branch pair. */
+const ACTIVE_REVIEW_STATUSES = new Set(['queued', 'running', 'processing', 'completing']);
+
+/** Block duplicate review requests only while one is still in flight for the same parent and branch pair. */
 export function isDuplicateBranchReview(
   existingAgent: {
     mode?: string;
@@ -54,7 +56,7 @@ export function isDuplicateBranchReview(
   if (existingAgent.mode !== 'review' || existingAgent.parentAgentId !== parentAgentId) {
     return false;
   }
-  if (existingAgent.status === 'failed' || existingAgent.status === 'cancelled') {
+  if (!existingAgent.status || !ACTIVE_REVIEW_STATUSES.has(existingAgent.status)) {
     return false;
   }
   const review = existingAgent.review;

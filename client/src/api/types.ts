@@ -291,7 +291,7 @@ function isDuplicateBranchReview(
   if (existingAgent.mode !== 'review' || existingAgent.parentAgentId !== parentAgentId) {
     return false;
   }
-  if (existingAgent.status === 'failed' || existingAgent.status === 'cancelled') {
+  if (!ACTIVE_AGENT_STATUSES.has(existingAgent.status as AgentStatus)) {
     return false;
   }
   const review = existingAgent.review;
