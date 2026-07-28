@@ -255,7 +255,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     prNumber: number,
     input: { body: string; event?: 'COMMENT' },
   ): Promise<{ id: string; html_url: string }> {
-    return githubApiRequest<Record<string, unknown>>(
+    const result = await githubApiRequest<Record<string, unknown>>(
       config,
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/reviews`,
       {
@@ -266,6 +266,10 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
         }),
       },
     );
+    return {
+      id: String(result.id ?? ''),
+      html_url: String(result.html_url ?? ''),
+    };
   }
 
   function redactSecrets(text: string | undefined | null): string | undefined | null {

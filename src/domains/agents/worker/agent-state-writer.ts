@@ -65,6 +65,14 @@ export function readAgentStatus(
   return agent?.status ?? null;
 }
 
+export function readAgentRecord(
+  agentsStore: JsonStore<{ agents: Agent[] }>,
+  agentId: string,
+): Agent | null {
+  const agent = (agentsStore.load().agents || []).find((entry) => entry.agentId === agentId);
+  return agent ?? null;
+}
+
 export function appendConversation(job: AgentJob, role: 'user' | 'assistant', text: string): void {
   const conversationPath = getConversationPath(job);
   fs.mkdirSync(path.dirname(conversationPath), { recursive: true });

@@ -275,17 +275,8 @@ export async function finalizeGitChanges({
   return { commitSha, pushed, filesChanged };
 }
 
-const MAX_REPO_MAP_FILE_LINES = 100;
-
-/**
- * Deterministic repo map prepended to the INITIAL_PLAN prompt (§4.2).
- * Returns a markdown section with:
- *   - `git ls-files` formatted as a compact tree (~100 lines max)
- *   - First ~40 lines of README.md (when present)
- *   - `package.json` scripts section (when present)
- */
 export async function buildRepoMap(
-  gitService: GitService,
+  _gitService: GitService,
   workspaceDir: string,
 ): Promise<string> {
   // Tracked files as a compact list

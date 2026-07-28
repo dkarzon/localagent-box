@@ -5,6 +5,7 @@ import {
   isAgentActive,
   isInteractiveAgent,
   isLoopAgent,
+  isReviewAgent,
   LOOP_VERB_LABELS,
   LOOP_VERBS,
 } from '../../api/types';
@@ -13,6 +14,7 @@ import { IconLink, IconLogs, IconRefresh } from '../icons';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Form';
 import { AgentGitStatus } from './AgentGitStatus';
+import { Link } from 'react-router-dom';
 
 function pullRequestStateVariant(state: string): 'running' | 'completed' | 'failed' | 'neutral' {
   switch (state) {
@@ -36,6 +38,7 @@ export interface AgentSessionInfoProps {
   eventsConnected: boolean;
   loadError: string | null;
   prBusy: boolean;
+  relatedSessions?: Agent[];
   onRefreshPullRequest: () => void;
 }
 
@@ -48,10 +51,12 @@ export function AgentSessionInfo({
   eventsConnected,
   loadError,
   prBusy,
+  relatedSessions = [],
   onRefreshPullRequest,
 }: AgentSessionInfoProps) {
   const interactive = agent ? isInteractiveAgent(agent) : false;
   const loop = agent ? isLoopAgent(agent) : false;
+  const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
   const showCreatePr = agent ? canCreatePullRequest(agent) : false;
 
@@ -78,7 +83,15 @@ export function AgentSessionInfo({
                   ? agent.model || 'Settings / global default'
                   : agent.model || defaultModel || '—',
               ],
-              ...(agent.useExistingBranch
+              ...(review
+                ? ([
+                    ['Base branch', agent.review?.baseBranch || agent.baseBranch || '—'] as const,
+                    ['Head branch', agent.review?.headBranch || agent.agentBranch || '—'] as const,
+                    ...(agent.review?.prNumber
+                      ? ([['Linked PR', `#${agent.review.prNumber}`] as const] as const)
+                      : []),
+                  ] as const)
+                : agent.useExistingBranch
                 ? ([
                     ['Branch mode', 'Existing branch (push directly)'] as const,
                     [
@@ -136,6 +149,34 @@ export function AgentSessionInfo({
                   </div>
                 ) : null}
               </dl>
+            </div>
+          ) : null}
+
+          {agent.review?.background ? (
+            <div>
+              <p className="mb-2 text-sm text-on-surface-variant">Review context</p>
+              <p className="rounded bg-background p-3 text-sm text-on-surface whitespace-pre-wrap">
+                {agent.review.background}
+              </p>
+            </div>
+          ) : null}
+
+          {relatedSessions.length > 0 ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <p className="mb-2 text-sm font-medium text-on-surface">Related sessions</p>
+              <ul className="space-y-2 text-sm">
+                {relatedSessions.map((entry) => (
+                  <li key={entry.agentId}>
+                    <Link
+                      to={`/agents/${entry.agentId}`}
+                      className="text-primary hover:text-primary-container"
+                    >
+                      {isReviewAgent(entry) ? 'Review' : getAgentMode(entry)} #{entry.agentId.slice(0, 8)}
+                    </Link>
+                    <span className="ml-2 text-xs text-muted">{entry.status}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
 
@@ -254,6 +295,11 @@ export function AgentSessionInfo({
             <p className="text-sm text-on-surface-variant">
               OpenCode completed but the branch was not pushed. Enable push on future sessions to
               create a pull request.
+            </p>
+          ) : review && agent.status === 'completed' ? (
+            <p className="text-sm text-on-surface-variant">
+              Review completed. Check logs for OCR output
+              {agent.review?.prNumber ? ` and PR #${agent.review.prNumber} on GitHub` : ''}.
             </p>
           ) : loop && isActive ? (
             <p className="text-sm text-on-surface-variant">

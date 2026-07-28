@@ -9,6 +9,7 @@ import { apiFetch, authHeaders } from '../api/client';
 import {
   agentModeBadgeVariant,
   canCreatePullRequest,
+  canReviewBranches,
   getAgentMode,
   isAgentActive,
   type Agent,
@@ -55,6 +56,8 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const [defaultModel, setDefaultModel] = useState('');
   const [followTail, setFollowTail] = useState(true);
   const [prBusy, setPrBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [relatedSessions, setRelatedSessions] = useState<Agent[]>([]);
   const [showDebugLogs, setShowDebugLogs] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [pageStatus, setPageStatus] = useState('');
@@ -92,10 +95,29 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     }
   }, []);
 
+  const loadRelatedSessions = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ agents: Agent[] }>('/api/v1/agents');
+      const parentAgentId = agent?.parentAgentId;
+      const related = data.agents.filter(
+        (entry) =>
+          entry.parentAgentId === agentId ||
+          (parentAgentId && entry.agentId === parentAgentId) ||
+          (parentAgentId &&
+            entry.parentAgentId === parentAgentId &&
+            entry.agentId !== agentId),
+      );
+      setRelatedSessions(related);
+    } catch {
+      setRelatedSessions([]);
+    }
+  }, [agentId, agent?.parentAgentId]);
+
   useEffect(() => {
     loadLogs();
     loadConfig();
-  }, [loadLogs, loadConfig]);
+    void loadRelatedSessions();
+  }, [loadLogs, loadConfig, loadRelatedSessions]);
 
   usePolling(
     () => {
@@ -228,6 +250,35 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     }
   };
 
+  const startBranchReview = async () => {
+    if (!agent) return;
+    const headBranch = agent.agentBranch || agent.branch;
+    if (!headBranch) return;
+
+    setReviewBusy(true);
+    setPageStatus('Starting branch review…');
+    setPageStatusVariant('');
+    try {
+      const result = await apiFetch<{ agentId: string }>('/api/v1/agents', {
+        method: 'POST',
+        headers: authHeaders(token, true),
+        body: JSON.stringify({
+          mode: 'review',
+          repoId: agent.repoId,
+          baseBranch: agent.baseBranch || repo?.defaultBranch || 'main',
+          headBranch,
+          parentAgentId: agent.agentId,
+        }),
+      });
+      navigate(`/agents/${result.agentId}`);
+    } catch (err) {
+      setPageStatus(err instanceof Error ? err.message : 'Failed to start review');
+      setPageStatusVariant('error');
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   const repo = agent ? repos.find((r) => r.repoId === agent.repoId) : null;
   const repoLabel = repo ? `${repo.owner}/${repo.name}` : agent?.repoId ?? '—';
   const statusMessage = session.status || pageStatus;
@@ -239,6 +290,8 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const agentMode = agent ? getAgentMode(agent) : 'batch';
   const sessionShortId = agentId.slice(0, 8).toUpperCase();
 
+  const showReviewBranches = agent ? canReviewBranches(agent) : false;
+
   const sessionInfoProps = {
     agent,
     agentId,
@@ -248,6 +301,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     eventsConnected: session.eventsConnected,
     loadError: session.loadError,
     prBusy,
+    relatedSessions,
     onRefreshPullRequest: refreshPullRequest,
   };
 
@@ -285,6 +339,15 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
         >
           <IconGithub className="size-4" />
           Create PR
+        </Button>
+      ) : showReviewBranches ? (
+        <Button
+          variant="primary"
+          className="!gap-2"
+          disabled={reviewBusy}
+          onClick={() => startBranchReview()}
+        >
+          Review branches
         </Button>
       ) : null}
       {isActive ? (
@@ -341,6 +404,15 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
         >
           <IconGithub className="size-3.5" />
           Create PR
+        </Button>
+      ) : showReviewBranches ? (
+        <Button
+          variant="primary"
+          className="!px-3 !py-1.5 text-xs"
+          disabled={reviewBusy}
+          onClick={() => startBranchReview()}
+        >
+          Review branches
         </Button>
       ) : null}
       {isActive ? (

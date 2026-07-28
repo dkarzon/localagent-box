@@ -48,9 +48,13 @@ const handleDeleteRepo = withErrorHandling(
 
 const handleUpdateRepo = withErrorHandling(async (req, res, ctx, repoId) => {
   const body = await readJsonBody(req);
-  const updates: { autoReviewPullRequests?: boolean } = {};
-  if (body.autoReviewPullRequests !== undefined && typeof body.autoReviewPullRequests === 'boolean') {
-    updates.autoReviewPullRequests = body.autoReviewPullRequests;
+  const updates: { autoReviewPullRequests?: boolean | null } = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'autoReviewPullRequests')) {
+    if (body.autoReviewPullRequests === null) {
+      updates.autoReviewPullRequests = null;
+    } else if (typeof body.autoReviewPullRequests === 'boolean') {
+      updates.autoReviewPullRequests = body.autoReviewPullRequests;
+    }
   }
   const repo = ctx.repoManager.updateRepo(repoId, updates);
   sendJson(res, 200, { repo });

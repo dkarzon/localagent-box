@@ -104,6 +104,7 @@ export function createWorkerSpawner(options: {
         ? { background: agent.review.background as unknown as string | undefined }
         : {}),
       agentTimeoutMs: options.agentTimeoutMs,
+      dataDir: options.dataDir,
       workspaceRoot: options.workspaceRoot,
       workspaceDir: options.repository.getWorkspaceDir(agent.workspaceId),
       logPath,

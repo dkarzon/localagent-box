@@ -6,6 +6,7 @@ import {
   hasNonEmptyLoopVerbModel,
   hasResolvableLoopModel,
   isAgentActive,
+  isReviewAgent,
   LOOP_VERB_LABELS,
   LOOP_VERB_MODELS_DEFAULT,
   LOOP_VERBS,
@@ -89,6 +90,8 @@ export function AgentSessionsPage({
   const [loopRunVerbModels, setLoopRunVerbModels] =
     useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
   const [loopOverridesOpen, setLoopOverridesOpen] = useState(false);
+  const [reviewHeadBranch, setReviewHeadBranch] = useState('');
+  const [reviewBackground, setReviewBackground] = useState('');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [availableBranches, setAvailableBranches] = useState<string[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
@@ -299,8 +302,9 @@ export function AgentSessionsPage({
   const startDisabled =
     !repos.length ||
     !configLoaded ||
-    !availableModels.length ||
-    (mode === 'loop' ? !loopCanStart : !model.trim());
+    (mode === 'review'
+      ? !reviewHeadBranch.trim()
+      : !availableModels.length || (mode === 'loop' ? !loopCanStart : !model.trim()));
 
   const startAgent = async (event: FormEvent) => {
     event.preventDefault();
@@ -336,26 +340,38 @@ export function AgentSessionsPage({
       const result = await apiFetch<{ agentId: string; workspaceId?: string }>('/api/v1/agents', {
         method: 'POST',
         headers: authHeaders(token, true),
-        body: JSON.stringify({
-          repoId: effectiveRepoId,
-          ...(mode !== 'batch' ? { mode } : {}),
-          prompt: prompt.trim(),
-          baseBranch: baseBranch.trim() || 'main',
-          ...(agentBranch.trim() ? { agentBranch: agentBranch.trim() } : {}),
-          ...(useExistingBranch ? { useExistingBranch: true } : {}),
-          commitMessage: commitMessage.trim(),
-          ...(model.trim() ? { model: model.trim() } : {}),
-          ...(runLoopVerbModels ? { loopVerbModels: runLoopVerbModels } : {}),
-          push,
-          pushOnFailure,
-          ...(autoApproveExplicit ? { autoApprovePermissions } : {}),
-        }),
+        body: JSON.stringify(
+          mode === 'review'
+            ? {
+                repoId: effectiveRepoId,
+                mode: 'review',
+                baseBranch: baseBranch.trim() || 'main',
+                headBranch: reviewHeadBranch.trim(),
+                ...(reviewBackground.trim() ? { background: reviewBackground.trim() } : {}),
+              }
+            : {
+                repoId: effectiveRepoId,
+                ...(mode !== 'batch' ? { mode } : {}),
+                prompt: prompt.trim(),
+                baseBranch: baseBranch.trim() || 'main',
+                ...(agentBranch.trim() ? { agentBranch: agentBranch.trim() } : {}),
+                ...(useExistingBranch ? { useExistingBranch: true } : {}),
+                commitMessage: commitMessage.trim(),
+                ...(model.trim() ? { model: model.trim() } : {}),
+                ...(runLoopVerbModels ? { loopVerbModels: runLoopVerbModels } : {}),
+                push,
+                pushOnFailure,
+                ...(autoApproveExplicit ? { autoApprovePermissions } : {}),
+              },
+        ),
       });
       setStatus(`Agent ${result.agentId} queued.`);
       setStatusVariant('success');
       setPrompt('');
       setAgentBranch('');
       setUseExistingBranch(false);
+      setReviewHeadBranch('');
+      setReviewBackground('');
       setCustomRepo('');
       resetLoopRunVerbModels();
       setAutoApproveExplicit(false);
@@ -535,7 +551,12 @@ export function AgentSessionsPage({
                         <p className="mt-0.5 code-md text-xs text-muted">
                           {agent.agentBranch || agent.branch || '—'}
                         </p>
-                        <p className="mt-0.5 text-xs capitalize text-muted">{getAgentMode(agent)}</p>
+                        <p className="mt-0.5 text-xs capitalize text-muted">
+                          {getAgentMode(agent)}
+                          {isReviewAgent(agent) && agent.review?.headBranch
+                            ? ` · ${agent.review.headBranch}`
+                            : ''}
+                        </p>
                       </td>
                       <td className="px-6 py-4">
                         <Badge variant={agentStatusVariant(agent.status)} pulse={agentStatusPulse(agent.status)}>
@@ -616,7 +637,7 @@ export function AgentSessionsPage({
           resetLoopRunVerbModels();
           setAutoApproveExplicit(false);
         }}
-        title="New Agent"
+        title={mode === 'review' ? 'New Review' : 'New Agent'}
         className="sm:max-w-2xl"
       >
         <form onSubmit={startAgent}>
@@ -641,6 +662,79 @@ export function AgentSessionsPage({
                 </Select>
               </Field>
             </div>
+            <Field label="Mode">
+              <Select
+                value={mode}
+                onChange={(e) => {
+                  const nextMode = e.target.value as AgentMode;
+                  setMode(nextMode);
+                  if (!autoApproveExplicit) {
+                    setAutoApprovePermissions(
+                      nextMode === 'batch'
+                        ? batchAutoApproveDefault
+                        : nextMode === 'loop'
+                          ? loopAutoApproveDefault
+                          : interactiveAutoApproveDefault,
+                    );
+                  }
+                }}
+              >
+                <option value="batch">Batch — run once and auto-commit</option>
+                <option value="interactive">Interactive — multi-turn with Finish</option>
+                <option value="loop">Loop — config-driven observe/plan/act/reflect</option>
+                <option value="review">Review — OCR branch diff review</option>
+              </Select>
+            </Field>
+            {mode === 'review' ? (
+              <>
+                <Field label="Base branch">
+                  <Select
+                    required
+                    value={baseBranch}
+                    onChange={(e) => setBaseBranch(e.target.value)}
+                    disabled={!repoId || branchesLoading || !availableBranches.length}
+                  >
+                    {!repoId ? (
+                      <option value="">Select a repository first</option>
+                    ) : branchesLoading ? (
+                      <option value="">Loading branches…</option>
+                    ) : availableBranches.length > 0 ? (
+                      availableBranches.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No branches found</option>
+                    )}
+                  </Select>
+                </Field>
+                <Field label="Head branch">
+                  <Select
+                    required
+                    value={reviewHeadBranch}
+                    onChange={(e) => setReviewHeadBranch(e.target.value)}
+                    disabled={!repoId || branchesLoading || !availableBranches.length}
+                  >
+                    <option value="">Select head branch</option>
+                    {availableBranches.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Background context (optional)">
+                  <TextArea
+                    rows={3}
+                    placeholder="Extra review requirements or focus areas…"
+                    value={reviewBackground}
+                    onChange={(e) => setReviewBackground(e.target.value)}
+                  />
+                </Field>
+              </>
+            ) : (
+              <>
             <Field label={useExistingBranch ? 'Branch' : 'Base branch'}>
               <Select
                 required
@@ -683,28 +777,8 @@ export function AgentSessionsPage({
                 />
               </Field>
             ) : null}
-            <Field label="Mode">
-              <Select
-                value={mode}
-                onChange={(e) => {
-                  const nextMode = e.target.value as AgentMode;
-                  setMode(nextMode);
-                  if (!autoApproveExplicit) {
-                    setAutoApprovePermissions(
-                      nextMode === 'batch'
-                        ? batchAutoApproveDefault
-                        : nextMode === 'loop'
-                          ? loopAutoApproveDefault
-                          : interactiveAutoApproveDefault,
-                    );
-                  }
-                }}
-              >
-                <option value="batch">Batch — run once and auto-commit</option>
-                <option value="interactive">Interactive — multi-turn with Finish</option>
-                <option value="loop">Loop — config-driven observe/plan/act/reflect</option>
-              </Select>
-            </Field>
+              </>
+            )}
             {mode === 'loop' ? (
               <div className="space-y-4">
                 <Field label="Fallback model (unset steps)">
@@ -809,7 +883,7 @@ export function AgentSessionsPage({
                   ) : null}
                 </div>
               </div>
-            ) : (
+            ) : mode !== 'review' ? (
               <Field label="Model">
                 <Select
                   required
@@ -833,7 +907,9 @@ export function AgentSessionsPage({
                   )}
                 </Select>
               </Field>
-            )}
+            ) : null}
+            {mode !== 'review' ? (
+              <>
             <Field label="Commit message">
               <TextInput
                 placeholder="Agent: task description"
@@ -882,6 +958,8 @@ export function AgentSessionsPage({
                 onChange={(e) => setPrompt(e.target.value)}
               />
             </Field>
+              </>
+            ) : null}
             <FormActions className="justify-end">
               <Button
                 type="button"
@@ -898,7 +976,7 @@ export function AgentSessionsPage({
                 variant="primary"
                 disabled={startDisabled}
               >
-                Start agent
+                {mode === 'review' ? 'Start review' : 'Start agent'}
               </Button>
             </FormActions>
           </FormGrid>

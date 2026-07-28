@@ -22,6 +22,11 @@ import {
 } from '../../lib/pr-content-generator';
 import { getLogger } from '../../lib/logger';
 import { parsePositiveInt } from '../../lib/parse';
+import {
+  buildAutoSpawnReviewBackground,
+  readParentTranscriptLines,
+} from '../../lib/review-background';
+import { isDuplicateReview, resolveAutoReviewPullRequests } from '../../lib/resolve-auto-review';
 import { CodedError, getErrorMessage } from '../../types';
 import type { Agent, AgentJob, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
@@ -389,7 +394,7 @@ export function createAgentService(options: {
       push: payload.push,
       pushOnFailure: payload.pushOnFailure,
       autoApprovePermissions: payload.autoApprovePermissions,
-      model: payload.model,
+      model: payload.model || null,
       ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
       status: 'queued',
       commitSha: null,
@@ -939,7 +944,73 @@ export function createAgentService(options: {
     if (!updated) {
       throw new CodedError('Agent not found', 'NOT_FOUND');
     }
+
+    const headSha = githubPr.head?.sha || agent.commitSha || '';
+    if (headSha) {
+      maybeSpawnReviewAgent(updated, pullRequest, headSha);
+    }
+
     return updated;
+  }
+
+  function maybeSpawnReviewAgent(
+    parentAgent: Agent,
+    pullRequest: NonNullable<Agent['pullRequest']>,
+    headSha: string,
+  ): void {
+    const repo = repoManager.getRepo(parentAgent.repoId);
+    const config = configRepository.load();
+
+    if (!resolveAutoReviewPullRequests(undefined, repo, config)) {
+      return;
+    }
+
+    const headBranch = parentAgent.agentBranch || parentAgent.branch;
+    if (!headBranch) {
+      return;
+    }
+
+    const duplicate = repository.findAll().find(
+      (entry) =>
+        entry.mode === 'review' &&
+        entry.parentAgentId === parentAgent.agentId &&
+        isDuplicateReview(entry, pullRequest.number, headSha),
+    );
+    if (duplicate) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — PR #${pullRequest.number} @ ${headSha.slice(0, 7)} already reviewed`,
+      );
+      return;
+    }
+
+    const conversationPath = repository.getConversationPath(parentAgent.agentId);
+    let transcript = '';
+    if (fsImpl.existsSync(conversationPath)) {
+      const lines = fsImpl.readFileSync(conversationPath, 'utf8').trim().split('\n');
+      transcript = readParentTranscriptLines(lines);
+    }
+
+    const background = buildAutoSpawnReviewBackground(parentAgent, transcript);
+    const base = parentAgent.useExistingBranch
+      ? repo.defaultBranch || 'main'
+      : parentAgent.baseBranch || repo.defaultBranch || 'main';
+
+    const reviewAgent = createAgent({
+      repoId: parentAgent.repoId,
+      mode: 'review',
+      prompt: '',
+      baseBranch: base,
+      headBranch,
+      useExistingBranch: true,
+      parentAgentId: parentAgent.agentId,
+      background,
+    } as CreateAgentRequest);
+
+    appendLog(
+      repository.getLogPath(parentAgent.agentId),
+      `Auto-spawned review agent ${reviewAgent.agentId} for PR #${pullRequest.number}`,
+    );
   }
 
   async function refreshPullRequest(agentId: string): Promise<Agent> {

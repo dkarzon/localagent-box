@@ -1,6 +1,4 @@
-import type { Repo } from '../../../types';
-import type { AppConfig } from '../../../services/config-store';
-
+import type { AppConfig, Repo } from '../types';
 /**
  * Resolve autoReviewPullRequests using tri-state precedence:
  * agent override → repo setting → global config default
@@ -13,11 +11,13 @@ export function resolveAutoReviewPullRequests(
   if (agentOverride !== null && agentOverride !== undefined) {
     return Boolean(agentOverride);
   }
-  if (repo?.autoReviewPullRequests !== null && repo.autoReviewPullRequests !== undefined) {
-    return Boolean(repo.autoReviewPullRequests);
+  const repoSetting = repo?.autoReviewPullRequests;
+  if (repoSetting !== null && repoSetting !== undefined) {
+    return Boolean(repoSetting);
   }
-  if (globalConfig?.autoReviewPullRequests !== null && globalConfig.autoReviewPullRequests !== undefined) {
-    return Boolean(globalConfig.autoReviewPullRequests);
+  const globalSetting = globalConfig?.autoReviewPullRequests;
+  if (globalSetting !== null && globalSetting !== undefined) {
+    return Boolean(globalSetting);
   }
   return false;
 }
@@ -35,6 +35,6 @@ export function isDuplicateReview(
   return (
     typeof r.prNumber === 'number' &&
     Number(r.prNumber) === Number(prNumber) &&
-    r.headShaString === headSha
+    r.headSha === headSha
   );
 }

@@ -8,6 +8,7 @@ export interface GitHubPullRequestResponse {
   created_at: string;
   merged_at: string | null;
   updated_at: string;
+  head?: { sha?: string; ref?: string };
 }
 
 export function mapGitHubPullRequest(pr: GitHubPullRequestResponse): AgentPullRequest {

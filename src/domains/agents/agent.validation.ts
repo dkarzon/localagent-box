@@ -14,6 +14,7 @@ export interface CreateAgentPayload {
   model?: string;
   loopVerbModels?: Record<string, string>;
   mode: AgentMode;
+  autoCreatePullRequest?: boolean;
   // Review-specific fields (mode: 'review')
   headBranch?: string;
   background?: string;
@@ -64,21 +65,37 @@ export function parseCreateAgentPayload(
   const background = typeof body.background === 'string' ? body.background : undefined;
   const parentAgentId = typeof body.parentAgentId === 'string' ? body.parentAgentId.trim() : undefined;
 
+  const isReview = mode === 'review';
+  const resolvedUseExistingBranch =
+    typeof body.useExistingBranch === 'boolean'
+      ? body.useExistingBranch
+      : isReview
+        ? true
+        : false;
+  const resolvedAgentBranch =
+    isReview && headBranch
+      ? headBranch
+      : resolvedUseExistingBranch
+        ? baseBranch
+        : agentBranch;
+
   return {
     repoId: String(body.repoId || ''),
     prompt: String(typeof body.prompt === 'string' ? body.prompt : ''),
     systemPrompt,
     baseBranch,
-    agentBranch,
-    useExistingBranch: typeof body.useExistingBranch === 'boolean' ? body.useExistingBranch : undefined,
-    commitMessage,
-    push: typeof body.push === 'boolean' ? body.push : true,
+    agentBranch: resolvedAgentBranch,
+    useExistingBranch: resolvedUseExistingBranch,
+    commitMessage: isReview ? '' : commitMessage,
+    push: typeof body.push === 'boolean' ? body.push : isReview ? false : true,
     pushOnFailure: typeof body.pushOnFailure === 'boolean' ? body.pushOnFailure : false,
     autoApprovePermissions:
       typeof body.autoApprovePermissions === 'boolean' ? body.autoApprovePermissions : undefined,
     model,
     loopVerbModels,
     mode,
+    autoCreatePullRequest:
+      typeof body.autoCreatePullRequest === 'boolean' ? body.autoCreatePullRequest : undefined,
     headBranch,
     background,
     parentAgentId,

@@ -133,6 +133,7 @@ export interface RepoPromptOverrides {
   batchContextPrompt?: string;
   interactiveContextPrompt?: string;
   loopContextPrompt?: string;
+  reviewBackground?: string;
 }
 
 export interface AgentLoopState {
