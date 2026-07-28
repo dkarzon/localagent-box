@@ -295,7 +295,14 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const agentMode = agent ? getAgentMode(agent) : 'batch';
   const sessionShortId = agentId.slice(0, 8).toUpperCase();
 
-  const showReviewBranches = agent ? canReviewBranches(agent) : false;
+  const reviewBaseBranch = agent
+    ? agent.useExistingBranch
+      ? repos.find((r) => r.repoId === agent.repoId)?.defaultBranch || 'main'
+      : agent.baseBranch || repos.find((r) => r.repoId === agent.repoId)?.defaultBranch || 'main'
+    : 'main';
+  const showReviewBranches = agent
+    ? canReviewBranches(agent, { relatedAgents: relatedSessions, baseBranch: reviewBaseBranch })
+    : false;
 
   const sessionInfoProps = {
     agent,

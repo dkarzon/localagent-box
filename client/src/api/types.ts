@@ -282,12 +282,50 @@ export function isReviewAgent(agent: Agent): boolean {
   return getAgentMode(agent) === 'review';
 }
 
-export function canReviewBranches(agent: Agent): boolean {
-  return (
-    !isReviewAgent(agent) &&
-    agent.status === 'completed' &&
-    Boolean(agent.agentBranch || agent.branch)
-  );
+function isDuplicateBranchReview(
+  existingAgent: Agent,
+  parentAgentId: string,
+  baseBranch: string,
+  headBranch: string,
+): boolean {
+  if (existingAgent.mode !== 'review' || existingAgent.parentAgentId !== parentAgentId) {
+    return false;
+  }
+  if (existingAgent.status === 'failed' || existingAgent.status === 'cancelled') {
+    return false;
+  }
+  const review = existingAgent.review;
+  if (!review) {
+    return false;
+  }
+  return review.baseBranch === baseBranch && review.headBranch === headBranch;
+}
+
+export function canReviewBranches(
+  agent: Agent,
+  options?: { relatedAgents?: Agent[]; baseBranch?: string },
+): boolean {
+  if (
+    isReviewAgent(agent) ||
+    agent.status !== 'completed' ||
+    !(agent.agentBranch || agent.branch)
+  ) {
+    return false;
+  }
+
+  const headBranch = agent.agentBranch || agent.branch;
+  if (
+    headBranch &&
+    options?.relatedAgents &&
+    options.baseBranch &&
+    options.relatedAgents.some((entry) =>
+      isDuplicateBranchReview(entry, agent.agentId, options.baseBranch!, headBranch),
+    )
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export function formatLoopProgress(loop: AgentLoopState, stepModel?: string | null): string {

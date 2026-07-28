@@ -1,5 +1,10 @@
 import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
-import { validateBranchName, validatePrompt } from '../../lib/validation';
+import {
+  validateAgentMode,
+  validateBranchName,
+  validateMessageText,
+  validatePrompt,
+} from '../../lib/validation';
 import type { AgentMode } from '../../types';
 
 export interface CreateAgentPayload {
@@ -28,13 +33,7 @@ export function parseCreateAgentPayload(
   repoContext: { defaultBranch?: string | null },
   agentId: string,
 ): CreateAgentPayload {
-  const mode = (() => {
-    const raw = typeof body.mode === 'string' ? (body.mode as AgentMode) : undefined;
-    if (raw && ['batch', 'interactive', 'loop', 'review'].includes(raw)) {
-      return raw;
-    }
-    return 'batch';
-  })();
+  const mode = validateAgentMode(body.mode);
 
   const baseBranch = (() => {
     const val = typeof body.baseBranch === 'string' ? body.baseBranch : repoContext.defaultBranch || 'main';
@@ -106,12 +105,5 @@ export function parseCreateAgentPayload(
 }
 
 export function parseMessageText(text: unknown): string {
-  if (typeof text !== 'string') {
-    throw new Error('text must be a string');
-  }
-  const trimmed = text.trim();
-  if (!trimmed) {
-    throw new Error('text cannot be empty');
-  }
-  return trimmed;
+  return validateMessageText(text);
 }
