@@ -990,16 +990,34 @@ export function createAgentService(options: {
       return;
     }
 
-    const duplicate = repository.findAll().find(
+    const base = parentAgent.useExistingBranch
+      ? repo.defaultBranch || 'main'
+      : parentAgent.baseBranch || repo.defaultBranch || 'main';
+
+    const existingReviews = repository.findAll();
+    const shaDuplicate = existingReviews.find(
       (entry) =>
         entry.mode === 'review' &&
         entry.parentAgentId === parentAgent.agentId &&
         isDuplicateReview(entry, pullRequest.number, headSha),
     );
-    if (duplicate) {
+    if (shaDuplicate) {
       appendLog(
         repository.getLogPath(parentAgent.agentId),
         `Skipping auto-review — PR #${pullRequest.number} @ ${headSha.slice(0, 7)} already reviewed`,
+      );
+      return;
+    }
+
+    // Same branch-pair guard as createAgent — skip instead of throwing DUPLICATE
+    // after the GitHub PR has already been created and saved.
+    const branchDuplicate = existingReviews.find((entry) =>
+      isDuplicateBranchReview(entry, parentAgent.agentId, base, headBranch),
+    );
+    if (branchDuplicate) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — review for ${base}...${headBranch} already exists (${branchDuplicate.agentId})`,
       );
       return;
     }
@@ -1012,25 +1030,29 @@ export function createAgentService(options: {
     }
 
     const background = buildAutoSpawnReviewBackground(parentAgent, transcript);
-    const base = parentAgent.useExistingBranch
-      ? repo.defaultBranch || 'main'
-      : parentAgent.baseBranch || repo.defaultBranch || 'main';
 
-    const reviewAgent = createAgent({
-      repoId: parentAgent.repoId,
-      mode: 'review',
-      prompt: '',
-      baseBranch: base,
-      headBranch,
-      useExistingBranch: true,
-      parentAgentId: parentAgent.agentId,
-      background,
-    } as CreateAgentRequest);
+    try {
+      const reviewAgent = createAgent({
+        repoId: parentAgent.repoId,
+        mode: 'review',
+        prompt: '',
+        baseBranch: base,
+        headBranch,
+        useExistingBranch: true,
+        parentAgentId: parentAgent.agentId,
+        background,
+      } as CreateAgentRequest);
 
-    appendLog(
-      repository.getLogPath(parentAgent.agentId),
-      `Auto-spawned review agent ${reviewAgent.agentId} for PR #${pullRequest.number}`,
-    );
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Auto-spawned review agent ${reviewAgent.agentId} for PR #${pullRequest.number}`,
+      );
+    } catch (err) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — failed to spawn: ${getErrorMessage(err)}`,
+      );
+    }
   }
 
   async function refreshPullRequest(agentId: string): Promise<Agent> {

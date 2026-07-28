@@ -934,4 +934,61 @@ describe('createPullRequest', () => {
       .filter((entry) => entry.mode === 'review' && entry.parentAgentId === agentId);
     assert.equal(reviewAgents.length, 1);
   });
+
+  it('skips auto-review when a child branch-pair review already exists', async () => {
+    const agentId = 'completedreview3';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'localagent/retry-webhook',
+        branch: 'localagent/retry-webhook',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent/retry-webhook',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    // Manual review for the same parent/branches — no PR/sha metadata yet,
+    // so isDuplicateReview would miss it and createAgent would throw DUPLICATE.
+    repository.save({
+      ...baseAgentFields({
+        agentId: 'reviewexisting2',
+        mode: 'review',
+        status: 'queued',
+        parentAgentId: agentId,
+      }),
+      review: {
+        baseBranch: 'main',
+        headBranch: 'localagent/retry-webhook',
+      },
+    });
+
+    const updated = await service.createPullRequest(agentId);
+
+    assert.ok(updated.pullRequest);
+    assert.equal(updated.pullRequest?.number, 42);
+
+    const reviewAgents = repository
+      .findAll()
+      .filter((entry) => entry.mode === 'review' && entry.parentAgentId === agentId);
+    assert.equal(reviewAgents.length, 1);
+    assert.equal(reviewAgents[0].agentId, 'reviewexisting2');
+  });
 });
