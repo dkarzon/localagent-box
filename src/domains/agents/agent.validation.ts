@@ -1,3 +1,4 @@
+import { validateBranchName } from '../../lib/validation';
 import type { AgentMode } from '../../types';
 
 export interface CreateAgentPayload {
@@ -39,15 +40,7 @@ export function parseCreateAgentPayload(
     return val.trim() || 'main';
   })();
 
-  const agentBranch =
-    typeof body.agentBranch === 'string' && body.agentBranch.trim()
-      ? body.agentBranch.trim()
-      : `agent/${agentId}`;
-
-  const commitMessage =
-    typeof body.commitMessage === 'string' && body.commitMessage.trim()
-      ? body.commitMessage.trim()
-      : '';
+  const agentBranch = validateBranchName(body.agentBranch, agentId);
 
   const systemPrompt =
     typeof body.systemPrompt === 'string' && body.systemPrompt.trim()
@@ -78,6 +71,11 @@ export function parseCreateAgentPayload(
       : resolvedUseExistingBranch
         ? baseBranch
         : agentBranch;
+
+  const commitMessage =
+    typeof body.commitMessage === 'string' && body.commitMessage.trim()
+      ? body.commitMessage.trim()
+      : `Agent: ${resolvedAgentBranch}`;
 
   return {
     repoId: String(body.repoId || ''),

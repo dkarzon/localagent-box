@@ -103,7 +103,12 @@ export function createWorkerSpawner(options: {
       ...(mode === 'review' && agent.review?.background
         ? { background: agent.review.background as unknown as string | undefined }
         : {}),
-      agentTimeoutMs: options.agentTimeoutMs,
+      agentTimeoutMs:
+        mode === 'interactive'
+          ? options.getInteractiveAgentTimeoutMs()
+          : mode === 'loop'
+            ? options.getLoopAgentTimeoutMs()
+            : options.agentTimeoutMs,
       dataDir: options.dataDir,
       workspaceRoot: options.workspaceRoot,
       workspaceDir: options.repository.getWorkspaceDir(agent.workspaceId),

@@ -9,7 +9,7 @@ export interface OcrConfig {
 }
 
 export function getOcrBinary(): string {
-  return process.env.OCR_BIN || 'open-code-review';
+  return process.env.OCR_BIN || 'ocr';
 }
 
 export function writeOcrConfig(config: AppConfig, workspaceDir: string): void {
