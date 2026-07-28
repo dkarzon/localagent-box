@@ -301,6 +301,21 @@ function isDuplicateBranchReview(
   return review.baseBranch === baseBranch && review.headBranch === headBranch;
 }
 
+function isBranchInUse(
+  agents: Agent[],
+  repoId: string,
+  branch: string,
+  excludeAgentId?: string,
+): boolean {
+  return agents.some(
+    (entry) =>
+      entry.agentId !== excludeAgentId &&
+      entry.repoId === repoId &&
+      ACTIVE_AGENT_STATUSES.has(entry.status as AgentStatus) &&
+      entry.agentBranch === branch,
+  );
+}
+
 export function canReviewBranches(
   agent: Agent,
   options?: { relatedAgents?: Agent[]; baseBranch?: string },
@@ -315,14 +330,20 @@ export function canReviewBranches(
   }
 
   const headBranch = agent.agentBranch || agent.branch;
+  if (!headBranch || !options?.relatedAgents) {
+    return true;
+  }
+
   if (
-    headBranch &&
-    options?.relatedAgents &&
     options.baseBranch &&
     options.relatedAgents.some((entry) =>
       isDuplicateBranchReview(entry, agent.agentId, options.baseBranch!, headBranch),
     )
   ) {
+    return false;
+  }
+
+  if (isBranchInUse(options.relatedAgents, agent.repoId, headBranch, agent.agentId)) {
     return false;
   }
 

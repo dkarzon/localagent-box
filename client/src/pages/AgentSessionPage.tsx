@@ -58,6 +58,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const [prBusy, setPrBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [relatedSessions, setRelatedSessions] = useState<Agent[]>([]);
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [showDebugLogs, setShowDebugLogs] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [pageStatus, setPageStatus] = useState('');
@@ -98,6 +99,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const loadRelatedSessions = useCallback(async () => {
     try {
       const data = await apiFetch<{ agents: Agent[] }>('/api/v1/agents');
+      setAllAgents(data.agents);
       const parentAgentId = agent?.parentAgentId;
       const related = data.agents.filter(
         (entry) =>
@@ -109,6 +111,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
       );
       setRelatedSessions(related);
     } catch {
+      setAllAgents([]);
       setRelatedSessions([]);
     }
   }, [agentId, agent?.parentAgentId]);
@@ -304,7 +307,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
       : agent.baseBranch || repos.find((r) => r.repoId === agent.repoId)?.defaultBranch || 'main'
     : 'main';
   const showReviewBranches = agent
-    ? canReviewBranches(agent, { relatedAgents: relatedSessions, baseBranch: reviewBaseBranch })
+    ? canReviewBranches(agent, { relatedAgents: allAgents, baseBranch: reviewBaseBranch })
     : false;
 
   const sessionInfoProps = {
