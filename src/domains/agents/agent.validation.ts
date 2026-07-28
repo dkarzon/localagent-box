@@ -1,4 +1,5 @@
 import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
+import { validateRepoId } from '../repos/repo.repository';
 import {
   validateAgentMode,
   validateBranchName,
@@ -82,7 +83,7 @@ export function parseCreateAgentPayload(
       : `Agent: ${resolvedAgentBranch}`;
 
   return {
-    repoId: String(body.repoId || ''),
+    repoId: validateRepoId(body.repoId),
     prompt,
     systemPrompt,
     baseBranch,
