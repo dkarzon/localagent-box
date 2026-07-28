@@ -355,7 +355,8 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           <IconGithub className="size-4" />
           Create PR
         </Button>
-      ) : showReviewBranches ? (
+      ) : null}
+      {showReviewBranches ? (
         <Button
           variant="primary"
           className="!gap-2"
@@ -420,7 +421,8 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           <IconGithub className="size-3.5" />
           Create PR
         </Button>
-      ) : showReviewBranches ? (
+      ) : null}
+      {showReviewBranches ? (
         <Button
           variant="primary"
           className="!px-3 !py-1.5 text-xs"
