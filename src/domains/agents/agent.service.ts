@@ -966,9 +966,7 @@ export function createAgentService(options: {
     }
 
     const headSha = githubPr.head?.sha || agent.commitSha || '';
-    if (headSha) {
-      maybeSpawnReviewAgent(updated, pullRequest, headSha);
-    }
+    maybeSpawnReviewAgent(updated, pullRequest, headSha);
 
     return updated;
   }
@@ -982,6 +980,14 @@ export function createAgentService(options: {
     const config = configRepository.load();
 
     if (!resolveAutoReviewPullRequests(undefined, repo, config)) {
+      return;
+    }
+
+    if (!headSha) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — PR #${pullRequest.number} has no head SHA`,
+      );
       return;
     }
 

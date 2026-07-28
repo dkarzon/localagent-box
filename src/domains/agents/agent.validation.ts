@@ -64,12 +64,11 @@ export function parseCreateAgentPayload(
     mode === 'loop' && typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
       ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
       : undefined;
-  const resolvedUseExistingBranch =
-    typeof body.useExistingBranch === 'boolean'
+  const resolvedUseExistingBranch = isReview
+    ? true
+    : typeof body.useExistingBranch === 'boolean'
       ? body.useExistingBranch
-      : isReview
-        ? true
-        : false;
+      : false;
   const resolvedAgentBranch =
     isReview && headBranch
       ? headBranch
