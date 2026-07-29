@@ -1,21 +1,44 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  canCreatePullRequest,
-  canReviewBranches,
-  type Agent,
-} from '../../client/src/api/types.ts';
+import { canCreatePullRequest } from './agent-pull-request';
+import { canReviewBranches } from './agent-review-gating';
+import type { Agent } from '../types';
 
 function completedAgent(overrides: Partial<Agent> = {}): Agent {
   return {
     agentId: 'agent-parent',
+    workspaceId: '',
     repoId: 'repo-1',
-    status: 'completed',
-    pushed: true,
+    mode: undefined,
+    prompt: '',
+    systemPrompt: null,
+    baseBranch: 'main',
     agentBranch: 'localagent-feature',
-    result: { opencodeSuccess: true },
+    commitMessage: '',
+    push: false,
+    pushOnFailure: false,
+    model: null,
+    status: 'completed' as const,
+    filesChanged: 0,
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: new Date().toISOString(),
+    branch: null,
+    error: null,
+    pushed: true,
+    result: {
+      branch: 'localagent-feature',
+      baseBranch: 'main',
+      workspaceId: 'ws',
+      commitSha: null,
+      pushed: true,
+      filesChanged: 0,
+      warning: null,
+      opencodeSuccess: true,
+    },
+    autoCreatePullRequest: false,
     ...overrides,
-  };
+  } as Agent;
 }
 
 describe('canReviewBranches with canCreatePullRequest', () => {
@@ -53,6 +76,7 @@ describe('canReviewBranches with canCreatePullRequest', () => {
         state: 'open',
         title: 'Agent changes',
         createdAt: '2026-01-01T00:00:00.000Z',
+        mergedAt: null,
         updatedAt: '2026-01-01T00:00:00.000Z',
       },
     });
