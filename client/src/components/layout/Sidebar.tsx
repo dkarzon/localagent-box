@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import logoUrl from '../../assets/logo.svg';
 import { IconAgents, IconPlus, IconRepo, IconSettings } from '../icons';
 import type { NavPage } from '../../navigation';
 import { navPages, PAGE_LABELS } from '../../navigation';
@@ -20,9 +21,7 @@ export function Sidebar({ active, onNewOrchestration }: SidebarProps) {
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-surface-container-highest bg-surface-low md:flex">
       <div className="pl-2 py-10">
         <div className="flex items-center gap-3">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded bg-primary">
-            <IconAgents className="size-4 text-on-primary" />
-          </div>
+          <img src={logoUrl} alt="" className="size-8 shrink-0 rounded" />
           <div>
             <p className="text-2xl font-normal leading-tight text-primary">LocalAgentBox</p>
             <p className="label-md text-on-surface-variant">v0.1.0</p>
