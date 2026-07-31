@@ -65,27 +65,27 @@ Loop agents run in iterative cycles (ORIENT → ACT → REFLECT). This file over
 }
 ```
 
-### `version` *(number, required)*  
+### `version` *(number, required)*
 Must be `1`. Schema version — rejects other values.
 
-### `maxIterations` *(number, required)*  
+### `maxIterations` *(number, required)*
 Maximum number of ORIENT/ACT/REFLECT cycles before the run stops. Must be ≥ 1. Replaces server default (5).
 
-### `completionMarker` *(string, required)*  
+### `completionMarker` *(string, required)*
 Token string agents emit to signal the task is done (`"LOOP_COMPLETE"` etc.). The runner watches model output for `{marker}: true`.
 
-### `failOnMaxIterations` *(boolean, optional, default false)*  
+### `failOnMaxIterations` *(boolean, optional, default false)*
 When `true`, reaching max iterations or stalling without a completion marker **fails** the run. When `false` (default): partial file changes are committed with a warning instead of discarded.
 
-### `initialPlanPrompt` *(string | null, optional)*  
+### `initialPlanPrompt` *(string | null, optional)*
 Optional one-time prompt sent before iteration 1. Typically asks the model to survey the repo then write `.localagent-box/loop-plan.md`. Set to `null` or omit to skip planning entirely. Default is a pre-defined planning prompt in `config/loop.default.json`.
 
-### `steps` *(array, required)*  
+### `steps` *(array, required)*
 The ORIENT → ACT → REFLECT cycle definitions. At least one step required. Each entry:
 - **verb** (`"ORIENT"` | `"ACT"` | `"REFLECT"`) — which phase. Legacy aliases `"OBSERVE"` and `"PLAN"` map to `"ORIENT"`.
 - **prompt** (string) — template sent for that verb.
 
-### Prompt template variables  
+### Prompt template variables
 
 Loop step prompts support these templates (replaced at runtime):
 

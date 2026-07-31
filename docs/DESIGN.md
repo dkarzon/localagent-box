@@ -112,13 +112,13 @@ spacing:
 
 ## Brand & Style
 
-This design system is built for the high-stakes environment of AI agent orchestration. The visual language balances extreme technical precision with sophisticated clarity. The goal is to evoke a sense of "controlled intelligence"—the UI should feel like a high-performance instrument rather than a decorative interface. 
+This design system is built for the high-stakes environment of AI agent orchestration. The visual language balances extreme technical precision with sophisticated clarity. The goal is to evoke a sense of "controlled intelligence"—the UI should feel like a high-performance instrument rather than a decorative interface.
 
 The style utilizes **Technical Minimalism**: a focus on high information density, clear hierarchies, and utilitarian beauty. It leverages deep purples to signify power and cognitive depth, while the overall light-mode aesthetic ensures the workspace remains focused and accessible for long periods of intense work.
 
 ## Colors
 
-The palette is rooted in a structured hierarchy of purples. 
+The palette is rooted in a structured hierarchy of purples.
 - **Primary (Deep Violet):** Used for critical actions, active states, and brand-defining markers.
 - **Secondary (Vibrant Purple):** Used for highlighting agent status and secondary interactive elements.
 - **Background (Soft Lavender):** Replaces traditional neutrals to create a cohesive, branded environment that reduces eye strain.
@@ -133,12 +133,12 @@ Headlines should use tighter letter-spacing and heavier weights to command atten
 
 ## Layout & Spacing
 
-The design system employs a **Fixed-Fluid Hybrid** grid. The primary dashboard uses a 12-column grid for the main content area, with a fixed 240px navigation sidebar. 
+The design system employs a **Fixed-Fluid Hybrid** grid. The primary dashboard uses a 12-column grid for the main content area, with a fixed 240px navigation sidebar.
 
-The spacing rhythm is strictly mathematical, based on a 4px atomic unit. 
+The spacing rhythm is strictly mathematical, based on a 4px atomic unit.
 - **Desktop:** 24px margins with 20px gutters. Elements should snap to the grid to emphasize the "orchestration" theme.
 - **Tablet:** 16px margins; content reflows to 8 columns.
-- **Mobile:** 16px margins; content reflows to a single column stack. 
+- **Mobile:** 16px margins; content reflows to a single column stack.
 
 Layouts should favor vertical stacks for agent logs and horizontal alignment for status dashboards.
 
@@ -147,7 +147,7 @@ Layouts should favor vertical stacks for agent logs and horizontal alignment for
 This design system avoids heavy drop shadows in favor of **Tonal Layering** and **Low-Contrast Outlines**.
 
 1.  **Level 0 (Base):** Soft Lavender (`#F5F3FF`) background.
-2.  **Level 1 (Surface):** Sharp White (`#FFFFFF`) containers with a 1px border (`#E9E4FF`). 
+2.  **Level 1 (Surface):** Sharp White (`#FFFFFF`) containers with a 1px border (`#E9E4FF`).
 3.  **Level 2 (Active/Hover):** A subtle, diffused shadow (4px blur, 2% opacity) is used only to indicate interactivity.
 4.  **Level 3 (Overlay):** Modals and dropdowns use a crisp 1px border in a slightly darker violet to define boundaries without adding visual bulk.
 
@@ -173,7 +173,7 @@ The shape language is disciplined and subtle. We utilize a **Soft (0.25rem)** ro
 - **Technical Inputs:** Use the `code-md` typography style for parameter entries.
 
 ### Cards & Containers
-- White background, no shadow. 
+- White background, no shadow.
 - Header areas within cards should be separated by a 1px horizontal rule (`#F5F3FF`).
 
 ### Status Chips

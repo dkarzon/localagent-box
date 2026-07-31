@@ -2,7 +2,7 @@
 
 Review of **localagent-box** ahead of open-sourcing and public discussion. Identifies areas to fix or clean up before release. Does not include implemented changes — use this as a checklist.
 
-**Status key:** Open · Partial · Done  
+**Status key:** Open · Partial · Done
 **Last verified:** 2026-07-10 against current `main`
 
 ---

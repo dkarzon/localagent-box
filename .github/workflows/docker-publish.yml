@@ -15,7 +15,6 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-  
 env:
   REGISTRY: ghcr.io
   PACKAGE_VERSION: 0.1.${{github.run_number}}
