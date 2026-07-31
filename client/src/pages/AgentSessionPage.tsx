@@ -274,17 +274,17 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
         >
           <IconLink className="size-4" />
-          Open PR
-        </Button>
-      ) : showCreatePr ? (
-        <Button
-          variant="primary"
-          className="!gap-2"
-          disabled={prBusy}
-          onClick={() => createPullRequest()}
-        >
-          <IconGithub className="size-4" />
-          Create PR
+           View PR
+         </Button>
+       ) : showCreatePr ? (
+         <Button
+           variant="primary"
+           className="!gap-2"
+           disabled={prBusy}
+           onClick={() => createPullRequest()}
+         >
+           <IconGithub className="size-4" />
+           Create PR
         </Button>
       ) : null}
       {isActive ? (
@@ -329,8 +329,8 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           className="!gap-1.5 !px-2.5 !py-1.5 text-xs"
           onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
         >
-          <IconLink className="size-3.5" />
-          Open PR
+           <IconLink className="size-3.5" />
+          View PR
         </Button>
       ) : showCreatePr ? (
         <Button
