@@ -82,10 +82,10 @@ function ToolTranscriptBody({ entry }: { entry: TranscriptEntry }) {
           }}
         >
           <span className="code-md block truncate font-medium text-on-surface">
-            {tool.title || tool.name}
+            {tool.name}
           </span>
-          {tool.title && tool.title !== tool.name ? (
-            <span className="mt-0.5 block text-xs text-muted">{tool.name}</span>
+          {tool.title ? (
+            <span className="mt-0.5 block text-xs text-muted">{tool.title}</span>
           ) : null}
         </button>
         <span className={`shrink-0 text-xs ${toolStatusClass(tool.status)}`}>{tool.status}</span>
