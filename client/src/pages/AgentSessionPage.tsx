@@ -274,7 +274,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
         >
           <IconLink className="size-4" />
-          Open PR
+          View PR
         </Button>
       ) : showCreatePr ? (
         <Button
@@ -330,7 +330,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
         >
           <IconLink className="size-3.5" />
-          Open PR
+          View PR
         </Button>
       ) : showCreatePr ? (
         <Button
