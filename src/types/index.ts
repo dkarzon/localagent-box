@@ -115,9 +115,13 @@ export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
   REFLECT: '',
 };
 
+export type LoopOpenCodeAgent = 'build' | 'plan';
+
 export interface LoopStepConfig {
   verb: LoopVerb;
   prompt: string;
+  /** OpenCode agent profile. Defaults: ORIENT/REFLECT → plan (read-only), ACT → build. */
+  agent?: LoopOpenCodeAgent;
 }
 
 export interface RepoPromptOverrides {
@@ -125,6 +129,18 @@ export interface RepoPromptOverrides {
   batchContextPrompt?: string;
   interactiveContextPrompt?: string;
   loopContextPrompt?: string;
+  /** Shell command the host runs after each ACT step in loop mode (e.g. `npm test`). */
+  checkCommand?: string;
+}
+
+/** Milestone progress mirrored from loop handoff state for API/UI. */
+export interface AgentLoopHandoffState {
+  next: string | null;
+  remaining: string | null;
+  milestonesTotal: number;
+  milestonesDone: number;
+  currentMilestone: string | null;
+  lastFiles: string[];
 }
 
 export interface AgentLoopState {
@@ -140,6 +156,8 @@ export interface AgentLoopState {
   finishRequested: boolean;
   configSource: 'server-default' | 'repo-override';
   effectiveSteps: LoopStepConfig[];
+  /** Host-maintained handoff slice for milestone progress (loop mode only). */
+  handoff?: AgentLoopHandoffState;
 }
 
 export type AgentStatus =

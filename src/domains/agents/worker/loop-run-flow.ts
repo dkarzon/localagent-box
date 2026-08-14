@@ -4,12 +4,13 @@ import {
   type OpenCodeLoopSessionHandle,
 } from '../../../integrations/opencode/session-orchestrator';
 import { buildLoopState } from '../../../lib/loop-state';
-import type { AgentLoopState, AgentStatus, LoopVerb } from '../../../types';
+import type { AgentLoopState, AgentStatus, LoopOpenCodeAgent, LoopVerb } from '../../../types';
 import {
   appendLog,
   emitLoopIterationEnd,
   emitLoopStepEnd,
   emitLoopStepStart,
+  ensureAgentDir,
   getInboxPath,
   InboxReader,
   readAgentLoopFinishRequested,
@@ -21,6 +22,7 @@ import {
   parseCompletionSignal,
 } from './loop-config';
 import { resolveLoopStepModel } from './loop-model';
+import { formatLoopStepAgentsSummary, resolveLoopStepOpenCodeAgent } from './loop-agent';
 import { loadRepoConfig } from './repo-config';
 import type { RepoPromptOverrides } from '../../../types';
 import {
@@ -30,14 +32,22 @@ import {
   resolveBatchFailureMessage,
   resolveRunConfig,
 } from './batch-run-flow';
+import {
+  applyLedgerUpdateFromReflect,
+  assistantTextHasChecklist,
+  buildAgentLoopHandoffSnapshot,
+  buildIterationHandoffBlock,
+  importLoopHandoffFromWorkspace,
+  INITIAL_PLAN_RETRY_PROMPT,
+  isLoopPlanFilePresent,
+  readLoopState,
+  seedLoopPlanFromAssistantText,
+  syncLoopStateFromPlanFile,
+  type ParsedReflectOutput,
+} from './loop-handoff';
+import { formatCheckResultBlock, runLoopCheckCommand, type LoopCheckResult } from './loop-check';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
-
-/**
- * Cap for the REFLECT summary injected into the next iteration's first step (§2.1).
- * Durable state lives in the plan-file ledger; the injected summary is only a hint.
- */
-const MAX_INJECTED_SUMMARY_CHARS = 2000;
 
 function isFinishRequested(
   agentsStore: WorkerContext['agentsStore'],
@@ -69,6 +79,8 @@ type LoopStepExit =
 interface RunLoopStepParams {
     session: OpenCodeLoopSessionHandle;
   loopState: AgentLoopState;
+  /** Agent data directory for loop handoff state (plan + loop-state.json). */
+  handoffDir: string;
   loopConfig: { completionMarker: string };
   job: WorkerContext['job'];
   config: WorkerContext['config'];
@@ -80,15 +92,24 @@ interface RunLoopStepParams {
   stepIndex: number;
   verb: LoopVerb;
   promptTemplate: string;
+  /** Per-step OpenCode agent override from loop.json (optional). */
+  stepAgent?: LoopOpenCodeAgent;
   repoPromptOverrides?: RepoPromptOverrides;
   /** REFLECT output from the previous iteration, injected into the first step of a rotated session. */
   previousIterationSummary?: string;
+  /** Parsed NEXT from the previous REFLECT step (host-maintained ledger). */
+  previousReflectNext?: string;
+  /** Host-run check result from ACT in the current iteration (injected into REFLECT). */
+  iterationCheckResult?: LoopCheckResult | null;
+  /** Prior iteration check result; blocks completion on ORIENT when it failed. */
+  blockingCheckResult?: LoopCheckResult | null;
 }
 
 async function runLoopStep(params: RunLoopStepParams): Promise<{
   exit: LoopStepExit;
   loopState: AgentLoopState;
   resolvedModel: string | null;
+  assistantText: string | null;
 }> {
   const {
     session,
@@ -103,9 +124,11 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     stepIndex,
     verb,
     promptTemplate,
+    stepAgent,
     repoPromptOverrides,
   } = params;
 
+  const openCodeAgent = resolveLoopStepOpenCodeAgent(verb, stepAgent);
 
   let loopState = patchLoopState('processing', baseLoopState, {
     iteration,
@@ -117,14 +140,14 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   const modelId = resolveLoopStepModel(verb, config, job);
   emitLoopStepStart(
     session.eventWriter,
-    { iteration, stepIndex, verb, model: modelId },
+    { iteration, stepIndex, verb, model: modelId, openCodeAgent },
     session.sessionId,
   );
 
   const stepModelRef = buildModelRefFromId(config, modelId);
   appendLog(
     logPath,
-    `Loop step start: iteration=${iteration} step=${stepIndex} verb=${verb} model=${modelId ?? 'default'}`,
+    `Loop step start: iteration=${iteration} step=${stepIndex} verb=${verb} agent=${openCodeAgent} model=${modelId ?? 'default'}`,
   );
 
   const interpolated = interpolateStepPrompt(promptTemplate, {
@@ -148,11 +171,18 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   if (hostChangeSummary) {
     conversationParts.push(hostChangeSummary);
   }
-  if (params.previousIterationSummary) {
-    // §2.1 safety net: the REFLECT ledger lives in the plan file; keep the injected
-    // handoff bounded even if the model ignores the word cap in the prompt.
-    const summary = params.previousIterationSummary.slice(0, MAX_INJECTED_SUMMARY_CHARS);
-    conversationParts.push(`## Previous iteration summary\n${summary}`);
+  if (stepIndex === 0 && verb !== 'INITIAL_PLAN') {
+    const handoffBlock = buildIterationHandoffBlock({
+      agentDir: params.handoffDir,
+      previousReflectText: params.previousIterationSummary,
+      previousReflectNext: params.previousReflectNext,
+    });
+    if (handoffBlock) {
+      conversationParts.push(handoffBlock);
+    }
+  }
+  if (verb === 'REFLECT' && params.iterationCheckResult) {
+    conversationParts.push(formatCheckResultBlock(params.iterationCheckResult));
   }
   const conversationText = conversationParts.join('\n\n');
   const promptText = buildOpenCodePrompt(
@@ -170,6 +200,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   const turnResult = await session.runTurn({
     conversationText,
     promptText,
+    agent: openCodeAgent,
     ...(stepModelRef ? { model: stepModelRef } : {}),
   });
 
@@ -185,13 +216,13 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   if (turnResult.outcome === 'cancelled') {
     await checkpointGitStatus();
     emitLoopStepEnd(session.eventWriter, { iteration, stepIndex, verb }, session.sessionId);
-    return { exit: { kind: 'cancelled' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'cancelled' }, loopState, resolvedModel: modelId, assistantText: null };
   }
 
   if (turnResult.outcome === 'timeout') {
     await checkpointGitStatus();
     emitLoopStepEnd(session.eventWriter, { iteration, stepIndex, verb }, session.sessionId);
-    return { exit: { kind: 'timeout' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'timeout' }, loopState, resolvedModel: modelId, assistantText: null };
   }
 
   if (turnResult.outcome === 'failed') {
@@ -205,12 +236,25 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
       },
       loopState,
       resolvedModel: modelId,
+      assistantText: null,
     };
   }
 
-  const completionSignal =
+  const assistantText = turnResult.assistantText ?? null;
+
+  let completionSignal =
     (verb === 'REFLECT' || verb === 'ORIENT') &&
     parseCompletionSignal(turnResult.assistantText, loopConfig.completionMarker, interpolated);
+
+  const blockingCheckResult =
+    verb === 'REFLECT' ? params.iterationCheckResult : params.blockingCheckResult;
+  if (completionSignal && blockingCheckResult && !blockingCheckResult.success) {
+    appendLog(
+      logPath,
+      `Ignoring completion signal — check command failed (exit=${blockingCheckResult.exitCode})`,
+    );
+    completionSignal = false;
+  }
 
   const reflectText = verb === 'REFLECT' ? turnResult.assistantText : null;
 
@@ -226,15 +270,15 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     loopState = patchLoopState('processing', loopState, { finishRequested: true });
     updateAgentRecord(agentsStore, job.agentId, { loop: loopState });
     appendLog(logPath, 'Finish requested — completing after current step');
-    return { exit: { kind: 'finish' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'finish' }, loopState, resolvedModel: modelId, assistantText };
   }
 
   if (completionSignal) {
     appendLog(logPath, `Loop completion signal detected on iteration ${iteration}`);
-    return { exit: { kind: 'complete' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'complete' }, loopState, resolvedModel: modelId, assistantText };
   }
 
-  return { exit: { kind: 'continue', reflectText }, loopState, resolvedModel: modelId };
+  return { exit: { kind: 'continue', reflectText }, loopState, resolvedModel: modelId, assistantText };
 }
 
 export async function runLoopJob(ctx: WorkerContext): Promise<void> {
@@ -257,10 +301,11 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
 
   const { config: loopConfig, configSource } = loadedConfig;
   const repoPromptOverrides = loadRepoConfig(job.workspaceDir);
+  const loopCheckCommand = repoPromptOverrides?.checkCommand?.trim() || null;
   const hasInitialPlan = Boolean(loopConfig.initialPlanPrompt?.trim());
   appendLog(
     logPath,
-    `Loop config: source=${configSource}, maxIterations=${loopConfig.maxIterations}, steps=${loopConfig.steps.length}, initialPlan=${hasInitialPlan}`,
+    `Loop config: source=${configSource}, maxIterations=${loopConfig.maxIterations}, steps=${loopConfig.steps.length}, initialPlan=${hasInitialPlan}, checkCommand=${loopCheckCommand ? 'set' : 'unset'}, agents=${formatLoopStepAgentsSummary(loopConfig.steps)}`,
   );
   const initialLoopState = buildLoopState('processing', {
     iteration: hasInitialPlan ? 0 : 1,
@@ -279,6 +324,8 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     status: 'processing',
     loop: initialLoopState,
   });
+
+  const handoffDir = ensureAgentDir(job);
 
   const autoApprovePermissions = resolveAutoApprovePermissions(config, job, 'loop');
   appendLog(
@@ -309,6 +356,8 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   const modelsUsed = new Set<string>();
   let opencodeSuccess = false;
   let lastReflectText: string | null = null;
+  let lastReflectNext: string | null = null;
+  let lastCheckResult: LoopCheckResult | null = null;
   // Reached the iteration cap or stalled without a completion signal — commit partial
   // work instead of discarding it (unless loopConfig.failOnMaxIterations).
   let reachedCapWithoutCompletion = false;
@@ -322,12 +371,22 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     session,
     loopConfig,
     job,
+    handoffDir,
     config,
     agentsStore,
     gitService,
     logPath,
     inboxReader,
     repoPromptOverrides: repoPromptOverrides ?? undefined,
+  };
+
+  const mirrorHandoffToAgent = (parsed?: ParsedReflectOutput | null) => {
+    const snapshot = buildAgentLoopHandoffSnapshot(readLoopState(handoffDir), parsed);
+    if (!snapshot) {
+      return;
+    }
+    loopState = patchLoopState('processing', loopState, { handoff: snapshot });
+    updateAgentRecord(agentsStore, job.agentId, { loop: loopState });
   };
 
   const applyStepExit = (
@@ -389,6 +448,67 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
       if (initialExit.action === 'break') {
         harnessDone = true;
       }
+
+      if (initialExit.action === 'continue') {
+        const initialPlanAssistantTexts: string[] = [];
+        if (initialResult.assistantText?.trim()) {
+          initialPlanAssistantTexts.push(initialResult.assistantText);
+        }
+
+        if (importLoopHandoffFromWorkspace(handoffDir, job.workspaceDir)) {
+          appendLog(logPath, 'Loop handoff imported from workspace .localagent-box/ into agent data dir');
+        }
+
+        if (
+          !isLoopPlanFilePresent(handoffDir) &&
+          initialResult.assistantText &&
+          assistantTextHasChecklist(initialResult.assistantText)
+        ) {
+          seedLoopPlanFromAssistantText(handoffDir, initialResult.assistantText, job.prompt);
+          appendLog(logPath, 'Loop plan seeded from INITIAL_PLAN checklist');
+        }
+
+        if (!isLoopPlanFilePresent(handoffDir)) {
+          appendLog(
+            logPath,
+            'Loop plan missing after INITIAL_PLAN — retrying with pointed prompt',
+          );
+          const retryResult = await runStepAndTrack({
+            ...sharedStepParams,
+            loopState,
+            iteration: 0,
+            stepIndex: 0,
+            verb: 'INITIAL_PLAN',
+            promptTemplate: INITIAL_PLAN_RETRY_PROMPT,
+          });
+          loopState = retryResult.loopState;
+          const retryExit = applyStepExit(retryResult.exit);
+          if (retryResult.assistantText?.trim()) {
+            initialPlanAssistantTexts.push(retryResult.assistantText);
+          }
+          if (retryExit.action === 'return') {
+            return;
+          }
+          if (retryExit.action === 'break') {
+            harnessDone = true;
+          }
+        }
+
+        if (!harnessDone && !isLoopPlanFilePresent(handoffDir)) {
+          appendLog(logPath, 'Loop plan still missing — host seeding from assistant output');
+          seedLoopPlanFromAssistantText(
+            handoffDir,
+            initialPlanAssistantTexts.join('\n\n'),
+            job.prompt,
+          );
+        }
+
+        if (!harnessDone && isLoopPlanFilePresent(handoffDir)) {
+          syncLoopStateFromPlanFile(handoffDir, job.prompt, { iteration: 0 });
+          mirrorHandoffToAgent();
+          appendLog(logPath, 'Loop state synced from plan after INITIAL_PLAN');
+        }
+      }
     }
 
     if (!harnessDone) {
@@ -402,6 +522,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
         }
 
         let iterationCompleted = false;
+        let iterationCheckResult: LoopCheckResult | null = null;
 
         for (let stepIndex = 0; stepIndex < loopConfig.steps.length; stepIndex += 1) {
           const step = loopConfig.steps[stepIndex];
@@ -412,13 +533,41 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             stepIndex,
             verb: step.verb,
             promptTemplate: step.prompt,
-            previousIterationSummary: stepIndex === 0 && iteration > 1 ? lastReflectText ?? undefined : undefined,
+            stepAgent: step.agent,
+            previousIterationSummary:
+              stepIndex === 0 && iteration > 1 ? (lastReflectText ?? undefined) : undefined,
+            previousReflectNext:
+              stepIndex === 0 && iteration > 1 ? (lastReflectNext ?? undefined) : undefined,
+            iterationCheckResult: step.verb === 'REFLECT' ? iterationCheckResult : undefined,
+            blockingCheckResult: step.verb === 'ORIENT' ? lastCheckResult : undefined,
           });
           loopState = stepResult.loopState;
+
+          if (
+            step.verb === 'ACT' &&
+            loopCheckCommand &&
+            stepResult.exit.kind === 'continue'
+          ) {
+            iterationCheckResult = await runLoopCheckCommand(job.workspaceDir, loopCheckCommand);
+            lastCheckResult = iterationCheckResult;
+            appendLog(
+              logPath,
+              `Loop check command finished: exit=${iterationCheckResult.exitCode} timedOut=${iterationCheckResult.timedOut}`,
+            );
+          }
 
           const stepExit = applyStepExit(stepResult.exit);
           if (stepExit.reflectText) {
             lastReflectText = stepExit.reflectText;
+            const ledger = applyLedgerUpdateFromReflect(handoffDir, stepExit.reflectText, {
+              goal: job.prompt,
+              iteration,
+            });
+            lastReflectNext = ledger.parsed.next;
+            if (ledger.ledgerUpdated) {
+              appendLog(logPath, 'Loop plan ledger updated from REFLECT output');
+            }
+            mirrorHandoffToAgent(ledger.parsed);
           }
           if (stepExit.action === 'return') {
             return;

@@ -23,6 +23,8 @@ import {
 } from '../../domains/agents/worker/agent-state-writer';
 import { logOpenCodeRunContext, resolveRunConfig } from '../../domains/agents/worker/batch-run-flow';
 import { resolveLoopStepModel } from '../../domains/agents/worker/loop-model';
+import { formatLoopStepAgentsSummary } from '../../domains/agents/worker/loop-agent';
+import { loadLoopConfig } from '../../domains/agents/worker/loop-config';
 import { captureGitStatusCheckpoint } from '../../domains/agents/worker/workspace-setup';
 import { loadRepoConfig } from '../../domains/agents/worker/repo-config';
 import type { WorkerContext } from '../../domains/agents/worker/worker-context';
@@ -686,6 +688,7 @@ export interface OpenCodeLoopSessionHandle {
     conversationText: string;
     promptText: string;
     model?: OpenCodeModelRef;
+    agent?: string;
   }) => Promise<LoopTurnResult>;
   /** Create a fresh OpenCode session in the running process, discarding accumulated conversation history. */
   rotateSession: () => Promise<void>;
@@ -746,6 +749,12 @@ export async function startOpenCodeLoopSession(options: {
       .map((verb) => `${verb}=${resolveLoopStepModel(verb, runConfig, job) ?? 'default'}`)
       .join(', ')}`,
   );
+  try {
+    const { config: loopConfig } = loadLoopConfig(job.workspaceDir);
+    appendLog(logPath, `Loop step agents: ${formatLoopStepAgentsSummary(loopConfig.steps)}`);
+  } catch {
+    /* loop config logged from runLoopJob when load fails */
+  }
 
   appendLog(logPath, 'Starting OpenCode loop session…');
   logOpenCodeRunContext(logPath, {
@@ -923,6 +932,7 @@ export async function startOpenCodeLoopSession(options: {
     conversationText: string;
     promptText: string;
     model?: OpenCodeModelRef;
+    agent?: string;
   }): Promise<LoopTurnResult> {
     turnState.seenBusySinceProcessing = false;
     turnState.batchPromptBusySeen = false;
@@ -948,7 +958,7 @@ export async function startOpenCodeLoopSession(options: {
     appendConversation(job, 'user', options.conversationText);
     await sessionRunner.sendPromptAsync(sessionId, {
       parts: [{ type: 'text', text: options.promptText }],
-      agent: 'build',
+      agent: options.agent ?? 'build',
       ...(turnModelRef ? { model: turnModelRef } : {}),
     });
     turnCount += 1;

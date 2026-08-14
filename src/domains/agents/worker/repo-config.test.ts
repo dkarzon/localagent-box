@@ -62,6 +62,18 @@ describe('validateRepoConfig', () => {
       /systemPrompt must be a non-empty string/,
     );
   });
+
+  it('accepts optional checkCommand for loop host checks', () => {
+    const result = validateRepoConfig({ checkCommand: 'npm test' });
+    assert.equal(result.checkCommand, 'npm test');
+  });
+
+  it('rejects empty checkCommand', () => {
+    assert.throws(
+      () => validateRepoConfig({ checkCommand: '   ' }),
+      /checkCommand must be a non-empty string/,
+    );
+  });
 });
 
 describe('loadRepoConfig', () => {

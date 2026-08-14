@@ -9,6 +9,13 @@ export function getAgentDir(job: AgentJob): string {
   return path.join(job.dataDir, 'agents', job.agentId);
 }
 
+/** Ensure the agent runtime directory exists (logs, handoff state, inbox, etc.). */
+export function ensureAgentDir(job: AgentJob): string {
+  const dir = getAgentDir(job);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 export function getInboxPath(job: AgentJob): string {
   return path.join(getAgentDir(job), 'inbox.jsonl');
 }
@@ -110,7 +117,13 @@ export function readAgentLoopFinishRequested(
 
 export function emitLoopStepStart(
   eventWriter: EventWriter,
-  payload: { iteration: number; stepIndex: number; verb: LoopVerb; model: string | null },
+  payload: {
+    iteration: number;
+    stepIndex: number;
+    verb: LoopVerb;
+    model: string | null;
+    openCodeAgent?: string;
+  },
   sessionId?: string,
 ): AgentEvent {
   return eventWriter.write('loop.step.start', payload, sessionId);
