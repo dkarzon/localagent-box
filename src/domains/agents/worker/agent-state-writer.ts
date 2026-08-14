@@ -117,7 +117,13 @@ export function readAgentLoopFinishRequested(
 
 export function emitLoopStepStart(
   eventWriter: EventWriter,
-  payload: { iteration: number; stepIndex: number; verb: LoopVerb; model: string | null },
+  payload: {
+    iteration: number;
+    stepIndex: number;
+    verb: LoopVerb;
+    model: string | null;
+    openCodeAgent?: string;
+  },
   sessionId?: string,
 ): AgentEvent {
   return eventWriter.write('loop.step.start', payload, sessionId);

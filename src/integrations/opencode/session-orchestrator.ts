@@ -23,6 +23,8 @@ import {
 } from '../../domains/agents/worker/agent-state-writer';
 import { logOpenCodeRunContext, resolveRunConfig } from '../../domains/agents/worker/batch-run-flow';
 import { resolveLoopStepModel } from '../../domains/agents/worker/loop-model';
+import { formatLoopStepAgentsSummary } from '../../domains/agents/worker/loop-agent';
+import { loadLoopConfig } from '../../domains/agents/worker/loop-config';
 import { captureGitStatusCheckpoint } from '../../domains/agents/worker/workspace-setup';
 import { loadRepoConfig } from '../../domains/agents/worker/repo-config';
 import type { WorkerContext } from '../../domains/agents/worker/worker-context';
@@ -747,6 +749,12 @@ export async function startOpenCodeLoopSession(options: {
       .map((verb) => `${verb}=${resolveLoopStepModel(verb, runConfig, job) ?? 'default'}`)
       .join(', ')}`,
   );
+  try {
+    const { config: loopConfig } = loadLoopConfig(job.workspaceDir);
+    appendLog(logPath, `Loop step agents: ${formatLoopStepAgentsSummary(loopConfig.steps)}`);
+  } catch {
+    /* loop config logged from runLoopJob when load fails */
+  }
 
   appendLog(logPath, 'Starting OpenCode loop session…');
   logOpenCodeRunContext(logPath, {

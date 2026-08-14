@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { LoopStepConfig, LoopVerb } from '../../../types';
+import type { LoopOpenCodeAgent, LoopStepConfig, LoopVerb } from '../../../types';
 
 export const LOOP_VERBS: readonly LoopVerb[] = ['ORIENT', 'ACT', 'REFLECT'];
 
@@ -34,6 +34,8 @@ export interface InterpolateVars {
   iteration: number;
   completionMarker: string;
 }
+
+const LOOP_OPEN_CODE_AGENTS: readonly LoopOpenCodeAgent[] = ['build', 'plan'];
 
 const bundledDefaultPath = path.join(__dirname, '..', '..', '..', '..', 'config', 'loop.default.json');
 const repoConfigRelative = path.join('.localagent-box', 'loop.json');
@@ -98,7 +100,18 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     if (typeof step.prompt !== 'string' || !step.prompt.trim()) {
       throw new Error(`loop.json steps[${index}].prompt must be a non-empty string`);
     }
-    return { verb: verb as LoopVerb, prompt: step.prompt };
+    let agent: LoopOpenCodeAgent | undefined;
+    if (step.agent !== undefined) {
+      if (typeof step.agent !== 'string' || !LOOP_OPEN_CODE_AGENTS.includes(step.agent as LoopOpenCodeAgent)) {
+        throw new Error(`loop.json steps[${index}].agent must be "build" or "plan" when provided`);
+      }
+      agent = step.agent as LoopOpenCodeAgent;
+    }
+    return {
+      verb: verb as LoopVerb,
+      prompt: step.prompt,
+      ...(agent ? { agent } : {}),
+    };
   });
 
   return {

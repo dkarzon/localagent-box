@@ -47,9 +47,12 @@ export function hasResolvableLoopModel(options: {
   return false;
 }
 
+export type LoopOpenCodeAgent = 'build' | 'plan';
+
 export interface LoopStepConfig {
   verb: LoopVerb;
   prompt: string;
+  agent?: LoopOpenCodeAgent;
 }
 
 export interface AgentLoopHandoffState {

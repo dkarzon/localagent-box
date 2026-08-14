@@ -115,9 +115,13 @@ export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
   REFLECT: '',
 };
 
+export type LoopOpenCodeAgent = 'build' | 'plan';
+
 export interface LoopStepConfig {
   verb: LoopVerb;
   prompt: string;
+  /** OpenCode agent profile. Defaults: ORIENT/REFLECT → plan (read-only), ACT → build. */
+  agent?: LoopOpenCodeAgent;
 }
 
 export interface RepoPromptOverrides {

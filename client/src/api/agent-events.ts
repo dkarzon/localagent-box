@@ -19,6 +19,7 @@ export interface LoopStepEventPayload {
   stepIndex: number;
   verb: string;
   model?: string | null;
+  openCodeAgent?: string;
   completionSignal?: boolean;
 }
 

@@ -6,14 +6,17 @@
   "steps": [
     {
       "verb": "ORIENT",
+      "agent": "plan",
       "prompt": "Use the host-injected milestone below. Inspect only files relevant to that milestone, then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {
       "verb": "ACT",
+      "agent": "build",
       "prompt": "Implement the change identified in the previous step. Edit repository files and run focused checks.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {
       "verb": "REFLECT",
+      "agent": "plan",
       "prompt": "Evaluate progress. Do not edit any files — the host updates the plan checklist from your DONE line. If the goal is fully achieved, output a line exactly: `{{completionMarker}}: true`\nOtherwise reply in at most 150 words using exactly this shape:\nDONE: <what changed this iteration>\nREMAINING: <what is left>\nNEXT: <the single next change>\nFILES TOUCHED: <comma-separated paths>\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     }
   ]

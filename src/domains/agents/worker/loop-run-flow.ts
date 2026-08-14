@@ -4,7 +4,7 @@ import {
   type OpenCodeLoopSessionHandle,
 } from '../../../integrations/opencode/session-orchestrator';
 import { buildLoopState } from '../../../lib/loop-state';
-import type { AgentLoopState, AgentStatus, LoopVerb } from '../../../types';
+import type { AgentLoopState, AgentStatus, LoopOpenCodeAgent, LoopVerb } from '../../../types';
 import {
   appendLog,
   emitLoopIterationEnd,
@@ -22,6 +22,7 @@ import {
   parseCompletionSignal,
 } from './loop-config';
 import { resolveLoopStepModel } from './loop-model';
+import { formatLoopStepAgentsSummary, resolveLoopStepOpenCodeAgent } from './loop-agent';
 import { loadRepoConfig } from './repo-config';
 import type { RepoPromptOverrides } from '../../../types';
 import {
@@ -46,11 +47,6 @@ import {
 import { formatCheckResultBlock, runLoopCheckCommand, type LoopCheckResult } from './loop-check';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
-
-/** OpenCode agent profile: read-only for orient/reflect, full build for planning and act. */
-function resolveLoopStepOpenCodeAgent(verb: LoopVerb): 'build' | 'plan' {
-  return verb === 'ACT' || verb === 'INITIAL_PLAN' ? 'build' : 'plan';
-}
 
 function isFinishRequested(
   agentsStore: WorkerContext['agentsStore'],
@@ -95,6 +91,8 @@ interface RunLoopStepParams {
   stepIndex: number;
   verb: LoopVerb;
   promptTemplate: string;
+  /** Per-step OpenCode agent override from loop.json (optional). */
+  stepAgent?: LoopOpenCodeAgent;
   repoPromptOverrides?: RepoPromptOverrides;
   /** REFLECT output from the previous iteration, injected into the first step of a rotated session. */
   previousIterationSummary?: string;
@@ -123,9 +121,11 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     stepIndex,
     verb,
     promptTemplate,
+    stepAgent,
     repoPromptOverrides,
   } = params;
 
+  const openCodeAgent = resolveLoopStepOpenCodeAgent(verb, stepAgent);
 
   let loopState = patchLoopState('processing', baseLoopState, {
     iteration,
@@ -137,14 +137,14 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   const modelId = resolveLoopStepModel(verb, config, job);
   emitLoopStepStart(
     session.eventWriter,
-    { iteration, stepIndex, verb, model: modelId },
+    { iteration, stepIndex, verb, model: modelId, openCodeAgent },
     session.sessionId,
   );
 
   const stepModelRef = buildModelRefFromId(config, modelId);
   appendLog(
     logPath,
-    `Loop step start: iteration=${iteration} step=${stepIndex} verb=${verb} model=${modelId ?? 'default'}`,
+    `Loop step start: iteration=${iteration} step=${stepIndex} verb=${verb} agent=${openCodeAgent} model=${modelId ?? 'default'}`,
   );
 
   const interpolated = interpolateStepPrompt(promptTemplate, {
@@ -197,7 +197,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   const turnResult = await session.runTurn({
     conversationText,
     promptText,
-    agent: resolveLoopStepOpenCodeAgent(verb),
+    agent: openCodeAgent,
     ...(stepModelRef ? { model: stepModelRef } : {}),
   });
 
@@ -305,7 +305,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   const hasInitialPlan = Boolean(loopConfig.initialPlanPrompt?.trim());
   appendLog(
     logPath,
-    `Loop config: source=${configSource}, maxIterations=${loopConfig.maxIterations}, steps=${loopConfig.steps.length}, initialPlan=${hasInitialPlan}, checkCommand=${loopCheckCommand ? 'set' : 'unset'}`,
+    `Loop config: source=${configSource}, maxIterations=${loopConfig.maxIterations}, steps=${loopConfig.steps.length}, initialPlan=${hasInitialPlan}, checkCommand=${loopCheckCommand ? 'set' : 'unset'}, agents=${formatLoopStepAgentsSummary(loopConfig.steps)}`,
   );
   const initialLoopState = buildLoopState('processing', {
     iteration: hasInitialPlan ? 0 : 1,
@@ -523,6 +523,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             stepIndex,
             verb: step.verb,
             promptTemplate: step.prompt,
+            stepAgent: step.agent,
             previousIterationSummary:
               stepIndex === 0 && iteration > 1 ? (lastReflectText ?? undefined) : undefined,
             previousReflectNext:
