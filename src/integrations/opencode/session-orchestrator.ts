@@ -686,6 +686,7 @@ export interface OpenCodeLoopSessionHandle {
     conversationText: string;
     promptText: string;
     model?: OpenCodeModelRef;
+    agent?: string;
   }) => Promise<LoopTurnResult>;
   /** Create a fresh OpenCode session in the running process, discarding accumulated conversation history. */
   rotateSession: () => Promise<void>;
@@ -923,6 +924,7 @@ export async function startOpenCodeLoopSession(options: {
     conversationText: string;
     promptText: string;
     model?: OpenCodeModelRef;
+    agent?: string;
   }): Promise<LoopTurnResult> {
     turnState.seenBusySinceProcessing = false;
     turnState.batchPromptBusySeen = false;
@@ -948,7 +950,7 @@ export async function startOpenCodeLoopSession(options: {
     appendConversation(job, 'user', options.conversationText);
     await sessionRunner.sendPromptAsync(sessionId, {
       parts: [{ type: 'text', text: options.promptText }],
-      agent: 'build',
+      agent: options.agent ?? 'build',
       ...(turnModelRef ? { model: turnModelRef } : {}),
     });
     turnCount += 1;

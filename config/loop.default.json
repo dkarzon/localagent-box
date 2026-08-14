@@ -2,7 +2,7 @@
   "version": 1,
   "maxIterations": 5,
   "completionMarker": "LOOP_COMPLETE",
-  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration and noting how to verify it. Planning only — no implementation. This file is the shared ledger: each later cycle reads it and ticks items, so keep it the source of truth for progress.\n\nGoal: {{goal}}",
+  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration and noting how to verify it. Planning only — no implementation. The host injects and maintains this ledger across iterations.\n\nGoal: {{goal}}",
   "steps": [
     {
       "verb": "ORIENT",
@@ -14,7 +14,7 @@
     },
     {
       "verb": "REFLECT",
-      "prompt": "First update `.localagent-box/loop-plan.md`, ticking (`- [x]`) every item completed this iteration.\nThen evaluate progress. If the goal is fully achieved, output a line exactly: `{{completionMarker}}: true`\nOtherwise reply in at most 150 words using exactly this shape:\nDONE: <what changed this iteration>\nREMAINING: <what is left>\nNEXT: <the single next change>\nFILES TOUCHED: <comma-separated paths>\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+      "prompt": "Evaluate progress. Do not edit any files — the host updates the plan checklist from your DONE line. If the goal is fully achieved, output a line exactly: `{{completionMarker}}: true`\nOtherwise reply in at most 150 words using exactly this shape:\nDONE: <what changed this iteration>\nREMAINING: <what is left>\nNEXT: <the single next change>\nFILES TOUCHED: <comma-separated paths>\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     }
   ]
 }

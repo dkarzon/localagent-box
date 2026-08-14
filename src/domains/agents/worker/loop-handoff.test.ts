@@ -4,11 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  applyLedgerUpdateFromReflect,
+  applyTicksToPlanContent,
   buildIterationHandoffBlock,
   formatPlanSlice,
   INITIAL_PLAN_RETRY_PROMPT,
   isLoopPlanFilePresent,
   parseReflectNextLine,
+  parseReflectOutput,
   readLoopPlanSlice,
   seedLoopPlanFromAssistantText,
   writeLoopPlanFile,
@@ -32,6 +35,67 @@ describe('parseReflectNextLine', () => {
 
   it('returns null when NEXT is absent', () => {
     assert.equal(parseReflectNextLine('DONE: nothing else here'), null);
+  });
+});
+
+describe('parseReflectOutput', () => {
+  it('parses all structured REFLECT fields', () => {
+    const text = [
+      'DONE: added validation to foo.ts',
+      'REMAINING: wire API route',
+      'NEXT: Add POST handler',
+      'FILES TOUCHED: src/foo.ts, src/bar.ts',
+    ].join('\n');
+    assert.deepEqual(parseReflectOutput(text), {
+      done: 'added validation to foo.ts',
+      remaining: 'wire API route',
+      next: 'Add POST handler',
+      filesTouched: ['src/foo.ts', 'src/bar.ts'],
+    });
+  });
+
+  it('returns null fields when labels are missing', () => {
+    assert.deepEqual(parseReflectOutput('Some unstructured text'), {
+      done: null,
+      remaining: null,
+      next: null,
+      filesTouched: [],
+    });
+  });
+});
+
+describe('applyTicksToPlanContent', () => {
+  it('ticks milestones mentioned in DONE', () => {
+    const updated = applyTicksToPlanContent(
+      '- [ ] Add validation\n- [ ] Wire API',
+      'Added validation to the user model',
+    );
+    assert.equal(updated, '- [x] Add validation\n- [ ] Wire API');
+  });
+
+  it('leaves the plan unchanged when DONE is empty', () => {
+    const plan = '- [ ] Add validation';
+    assert.equal(applyTicksToPlanContent(plan, ''), plan);
+  });
+});
+
+describe('applyLedgerUpdateFromReflect', () => {
+  it('updates loop-plan.md from REFLECT DONE text', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-ledger-update-'));
+    try {
+      writePlan(dir, '- [ ] Add validation\n- [ ] Wire API');
+      const result = applyLedgerUpdateFromReflect(
+        dir,
+        'DONE: completed Add validation\nNEXT: Wire API route',
+      );
+      assert.equal(result.ledgerUpdated, true);
+      assert.equal(result.parsed.next, 'Wire API route');
+      const content = fs.readFileSync(path.join(dir, '.localagent-box', 'loop-plan.md'), 'utf8');
+      assert.match(content, /- \[x\] Add validation/);
+      assert.match(content, /- \[ \] Wire API/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -118,7 +182,7 @@ describe('buildIterationHandoffBlock', () => {
       writePlan(dir, '- [x] m1\n- [ ] m2\n- [ ] m3');
       const block = buildIterationHandoffBlock({
         workspaceDir: dir,
-        previousReflectText: 'DONE: m1\nNEXT: implement m2',
+        previousReflectNext: 'implement m2',
       });
       assert.match(block ?? '', /^## Plan \(host-read\)/);
       assert.match(block ?? '', /- \[x\] m1/);

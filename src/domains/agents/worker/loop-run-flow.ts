@@ -31,6 +31,7 @@ import {
   resolveRunConfig,
 } from './batch-run-flow';
 import {
+  applyLedgerUpdateFromReflect,
   buildIterationHandoffBlock,
   INITIAL_PLAN_RETRY_PROMPT,
   isLoopPlanFilePresent,
@@ -38,6 +39,11 @@ import {
 } from './loop-handoff';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
+
+/** OpenCode agent profile: read-only for orient/reflect, full build for planning and act. */
+function resolveLoopStepOpenCodeAgent(verb: LoopVerb): 'build' | 'plan' {
+  return verb === 'ACT' || verb === 'INITIAL_PLAN' ? 'build' : 'plan';
+}
 
 function isFinishRequested(
   agentsStore: WorkerContext['agentsStore'],
@@ -83,6 +89,8 @@ interface RunLoopStepParams {
   repoPromptOverrides?: RepoPromptOverrides;
   /** REFLECT output from the previous iteration, injected into the first step of a rotated session. */
   previousIterationSummary?: string;
+  /** Parsed NEXT from the previous REFLECT step (host-maintained ledger). */
+  previousReflectNext?: string;
 }
 
 async function runLoopStep(params: RunLoopStepParams): Promise<{
@@ -153,6 +161,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     const handoffBlock = buildIterationHandoffBlock({
       workspaceDir: job.workspaceDir,
       previousReflectText: params.previousIterationSummary,
+      previousReflectNext: params.previousReflectNext,
     });
     if (handoffBlock) {
       conversationParts.push(handoffBlock);
@@ -174,6 +183,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   const turnResult = await session.runTurn({
     conversationText,
     promptText,
+    agent: resolveLoopStepOpenCodeAgent(verb),
     ...(stepModelRef ? { model: stepModelRef } : {}),
   });
 
@@ -316,6 +326,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   const modelsUsed = new Set<string>();
   let opencodeSuccess = false;
   let lastReflectText: string | null = null;
+  let lastReflectNext: string | null = null;
   // Reached the iteration cap or stalled without a completion signal — commit partial
   // work instead of discarding it (unless loopConfig.failOnMaxIterations).
   let reachedCapWithoutCompletion = false;
@@ -463,12 +474,19 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             promptTemplate: step.prompt,
             previousIterationSummary:
               stepIndex === 0 && iteration > 1 ? (lastReflectText ?? undefined) : undefined,
+            previousReflectNext:
+              stepIndex === 0 && iteration > 1 ? (lastReflectNext ?? undefined) : undefined,
           });
           loopState = stepResult.loopState;
 
           const stepExit = applyStepExit(stepResult.exit);
           if (stepExit.reflectText) {
             lastReflectText = stepExit.reflectText;
+            const ledger = applyLedgerUpdateFromReflect(job.workspaceDir, stepExit.reflectText);
+            lastReflectNext = ledger.parsed.next;
+            if (ledger.ledgerUpdated) {
+              appendLog(logPath, 'Loop plan ledger updated from REFLECT output');
+            }
           }
           if (stepExit.action === 'return') {
             return;

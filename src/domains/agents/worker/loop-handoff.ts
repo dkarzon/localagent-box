@@ -15,6 +15,7 @@ export const INITIAL_PLAN_RETRY_PROMPT =
   'You did not write `.localagent-box/loop-plan.md`. Write it now as a markdown checklist (`- [ ] …`) of ordered milestones for the goal. Output nothing except creating that file. Planning only — no implementation.\n\nGoal: {{goal}}';
 
 const CHECKBOX_LINE_RE = /^(\s*[-*+]\s+)\[([ xX])\]\s+(.*)$/;
+const REFLECT_FIELD_LINE_RE = /^(DONE|REMAINING|NEXT|FILES TOUCHED):\s*(.*)$/i;
 
 interface ChecklistItem {
   checked: boolean;
@@ -158,19 +159,134 @@ export function readLoopPlanSlice(
  * Parse the `NEXT:` line from a REFLECT step's structured output.
  */
 export function parseReflectNextLine(reflectText: string): string | null {
+  return parseReflectOutput(reflectText).next;
+}
+
+export interface ParsedReflectOutput {
+  done: string | null;
+  remaining: string | null;
+  next: string | null;
+  filesTouched: string[];
+}
+
+/**
+ * Parse structured REFLECT template fields from assistant output.
+ */
+export function parseReflectOutput(reflectText: string): ParsedReflectOutput {
+  let done: string | null = null;
+  let remaining: string | null = null;
+  let next: string | null = null;
+  let filesTouched: string[] = [];
+
   for (const line of reflectText.split(/\r?\n/)) {
-    const match = line.match(/^NEXT:\s*(.+)$/i);
-    if (match) {
-      const value = match[1].trim();
-      return value || null;
+    const match = line.match(REFLECT_FIELD_LINE_RE);
+    if (!match) {
+      continue;
+    }
+    const label = match[1].toUpperCase();
+    const value = match[2].trim();
+    if (label === 'DONE') {
+      done = value || null;
+    } else if (label === 'REMAINING') {
+      remaining = value || null;
+    } else if (label === 'NEXT') {
+      next = value || null;
+    } else if (label === 'FILES TOUCHED') {
+      filesTouched = value
+        ? value
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        : [];
     }
   }
-  return null;
+
+  return { done, remaining, next, filesTouched };
+}
+
+function normalizeMatchText(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function shouldTickMilestone(label: string, done: string): boolean {
+  const labelNorm = normalizeMatchText(label);
+  const doneNorm = normalizeMatchText(done);
+  if (!labelNorm || !doneNorm) {
+    return false;
+  }
+  if (doneNorm.includes(labelNorm)) {
+    return true;
+  }
+  const prefix = labelNorm.slice(0, Math.min(32, labelNorm.length));
+  if (prefix.length >= 8 && doneNorm.includes(prefix)) {
+    return true;
+  }
+  const significantWords = labelNorm.split(' ').filter((word) => word.length >= 4);
+  return significantWords.length > 0 && significantWords.every((word) => doneNorm.includes(word));
+}
+
+/**
+ * Tick checklist items in plan content when their label appears in the REFLECT `DONE` line.
+ */
+export function applyTicksToPlanContent(content: string, done: string): string {
+  if (!done.trim()) {
+    return content;
+  }
+
+  return content
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = line.match(CHECKBOX_LINE_RE);
+      if (!match || match[2].toLowerCase() === 'x') {
+        return line;
+      }
+      const label = match[3];
+      if (!shouldTickMilestone(label, done)) {
+        return line;
+      }
+      return `${match[1]}[x] ${label}`;
+    })
+    .join('\n');
+}
+
+export interface ApplyLedgerUpdateResult {
+  parsed: ParsedReflectOutput;
+  ledgerUpdated: boolean;
+}
+
+/**
+ * Host-maintained ledger: parse REFLECT output and tick matching milestones in loop-plan.md.
+ */
+export function applyLedgerUpdateFromReflect(
+  workspaceDir: string,
+  reflectText: string,
+  fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync' | 'mkdirSync' | 'writeFileSync'> = fs,
+): ApplyLedgerUpdateResult {
+  const parsed = parseReflectOutput(reflectText);
+  if (!parsed.done?.trim() || !isLoopPlanFilePresent(workspaceDir, fsImpl)) {
+    return { parsed, ledgerUpdated: false };
+  }
+
+  const filePath = getLoopPlanFilePath(workspaceDir);
+  const content = fsImpl.readFileSync(filePath, 'utf8');
+  const updated = applyTicksToPlanContent(content, parsed.done);
+  if (updated === content) {
+    return { parsed, ledgerUpdated: false };
+  }
+
+  writeLoopPlanFile(workspaceDir, updated, fsImpl);
+  return { parsed, ledgerUpdated: true };
 }
 
 export interface BuildIterationHandoffParams {
   workspaceDir: string;
   previousReflectText?: string | null;
+  /** Parsed NEXT from the previous REFLECT step (preferred over re-parsing prose). */
+  previousReflectNext?: string | null;
   maxFallbackSummaryChars?: number;
   fsImpl?: Pick<typeof fs, 'existsSync' | 'readFileSync'>;
 }
@@ -201,9 +317,9 @@ function resolvePlanInjectionBody(
 
 export function buildIterationHandoffBlock(params: BuildIterationHandoffParams): string | null {
   const planBody = resolvePlanInjectionBody(params.workspaceDir, params.fsImpl);
-  const nextLine = params.previousReflectText
-    ? parseReflectNextLine(params.previousReflectText)
-    : null;
+  const nextLine =
+    params.previousReflectNext ??
+    (params.previousReflectText ? parseReflectNextLine(params.previousReflectText) : null);
 
   if (planBody) {
     const parts = ['## Plan (host-read)', planBody];
