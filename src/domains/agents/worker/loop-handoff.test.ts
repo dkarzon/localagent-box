@@ -84,6 +84,14 @@ describe('applyTicksToPlanContent', () => {
     const plan = '- [ ] Add validation';
     assert.equal(applyTicksToPlanContent(plan, ''), plan);
   });
+
+  it('ticks milestones when the plan label includes a verify suffix', () => {
+    const updated = applyTicksToPlanContent(
+      '- [ ] Add validation — verify: npm test\n- [ ] Wire API',
+      'Added validation to the user model',
+    );
+    assert.equal(updated, '- [x] Add validation — verify: npm test\n- [ ] Wire API');
+  });
 });
 
 describe('applyLedgerUpdateFromReflect', () => {

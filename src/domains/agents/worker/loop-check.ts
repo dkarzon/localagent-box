@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 
 export const DEFAULT_CHECK_COMMAND_TIMEOUT_MS = 120_000;
 export const MAX_CHECK_OUTPUT_LINES = 50;
+const KILL_GRACE_MS = 5_000;
 
 export interface LoopCheckResult {
   command: string;
@@ -52,27 +53,73 @@ export function runLoopCheckCommand(
     const child = spawnImpl(isWin ? 'cmd.exe' : 'sh', isWin ? ['/c', command] : ['-c', command], {
       cwd: workspaceDir,
       env: process.env,
+      detached: !isWin,
     });
 
     let combined = '';
     let timedOut = false;
+    let settled = false;
+
+    const trimCombined = () => {
+      const lines = combined.split(/\r?\n/);
+      if (lines.length > maxOutputLines + 1) {
+        combined = lines.slice(-(maxOutputLines + 1)).join('\n');
+      }
+    };
 
     const appendChunk = (chunk: Buffer | string) => {
       combined += chunk.toString();
+      trimCombined();
+    };
+
+    const finish = (result: LoopCheckResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(killGraceTimer);
+      resolve(result);
+    };
+
+    const killProcessTree = (signal: NodeJS.Signals = 'SIGTERM') => {
+      if (!child.pid) {
+        child.kill(signal);
+        return;
+      }
+      if (isWin) {
+        child.kill(signal);
+        return;
+      }
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
     };
 
     child.stdout?.on('data', appendChunk);
     child.stderr?.on('data', appendChunk);
 
+    let killGraceTimer: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      killProcessTree('SIGTERM');
+      killGraceTimer = setTimeout(() => {
+        killProcessTree('SIGKILL');
+        finish({
+          command,
+          exitCode: 124,
+          outputTail: tailOutputLines(combined, maxOutputLines),
+          timedOut: true,
+          success: false,
+        });
+      }, KILL_GRACE_MS);
     }, timeoutMs);
 
     child.on('error', (err) => {
-      clearTimeout(timer);
       const message = err instanceof Error ? err.message : String(err);
-      resolve({
+      finish({
         command,
         exitCode: 1,
         outputTail: tailOutputLines(message, maxOutputLines),
@@ -82,9 +129,8 @@ export function runLoopCheckCommand(
     });
 
     child.on('close', (code) => {
-      clearTimeout(timer);
       const exitCode = timedOut ? 124 : (code ?? 1);
-      resolve({
+      finish({
         command,
         exitCode,
         outputTail: tailOutputLines(combined, maxOutputLines),

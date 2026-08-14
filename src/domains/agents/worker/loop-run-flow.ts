@@ -34,6 +34,7 @@ import {
 } from './batch-run-flow';
 import {
   applyLedgerUpdateFromReflect,
+  assistantTextHasChecklist,
   buildAgentLoopHandoffSnapshot,
   buildIterationHandoffBlock,
   importLoopHandoffFromWorkspace,
@@ -100,6 +101,8 @@ interface RunLoopStepParams {
   previousReflectNext?: string;
   /** Host-run check result from ACT in the current iteration (injected into REFLECT). */
   iterationCheckResult?: LoopCheckResult | null;
+  /** Prior iteration check result; blocks completion on ORIENT when it failed. */
+  blockingCheckResult?: LoopCheckResult | null;
 }
 
 async function runLoopStep(params: RunLoopStepParams): Promise<{
@@ -243,15 +246,12 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     (verb === 'REFLECT' || verb === 'ORIENT') &&
     parseCompletionSignal(turnResult.assistantText, loopConfig.completionMarker, interpolated);
 
-  if (
-    verb === 'REFLECT' &&
-    completionSignal &&
-    params.iterationCheckResult &&
-    !params.iterationCheckResult.success
-  ) {
+  const blockingCheckResult =
+    verb === 'REFLECT' ? params.iterationCheckResult : params.blockingCheckResult;
+  if (completionSignal && blockingCheckResult && !blockingCheckResult.success) {
     appendLog(
       logPath,
-      `Ignoring completion signal — check command failed (exit=${params.iterationCheckResult.exitCode})`,
+      `Ignoring completion signal — check command failed (exit=${blockingCheckResult.exitCode})`,
     );
     completionSignal = false;
   }
@@ -357,6 +357,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
   let opencodeSuccess = false;
   let lastReflectText: string | null = null;
   let lastReflectNext: string | null = null;
+  let lastCheckResult: LoopCheckResult | null = null;
   // Reached the iteration cap or stalled without a completion signal — commit partial
   // work instead of discarding it (unless loopConfig.failOnMaxIterations).
   let reachedCapWithoutCompletion = false;
@@ -458,6 +459,15 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
           appendLog(logPath, 'Loop handoff imported from workspace .localagent-box/ into agent data dir');
         }
 
+        if (
+          !isLoopPlanFilePresent(handoffDir) &&
+          initialResult.assistantText &&
+          assistantTextHasChecklist(initialResult.assistantText)
+        ) {
+          seedLoopPlanFromAssistantText(handoffDir, initialResult.assistantText, job.prompt);
+          appendLog(logPath, 'Loop plan seeded from INITIAL_PLAN checklist');
+        }
+
         if (!isLoopPlanFilePresent(handoffDir)) {
           appendLog(
             logPath,
@@ -529,6 +539,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             previousReflectNext:
               stepIndex === 0 && iteration > 1 ? (lastReflectNext ?? undefined) : undefined,
             iterationCheckResult: step.verb === 'REFLECT' ? iterationCheckResult : undefined,
+            blockingCheckResult: step.verb === 'ORIENT' ? lastCheckResult : undefined,
           });
           loopState = stepResult.loopState;
 
@@ -538,6 +549,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             stepResult.exit.kind === 'continue'
           ) {
             iterationCheckResult = await runLoopCheckCommand(job.workspaceDir, loopCheckCommand);
+            lastCheckResult = iterationCheckResult;
             appendLog(
               logPath,
               `Loop check command finished: exit=${iterationCheckResult.exitCode} timedOut=${iterationCheckResult.timedOut}`,

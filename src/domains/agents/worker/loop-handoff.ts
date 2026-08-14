@@ -539,6 +539,10 @@ function shouldTickMilestone(label: string, done: string): boolean {
 /**
  * Tick checklist items in plan content when their label appears in the REFLECT `DONE` line.
  */
+export function assistantTextHasChecklist(assistantText: string): boolean {
+  return parseChecklistItems(assistantText).length > 0;
+}
+
 export function applyTicksToPlanContent(content: string, done: string): string {
   if (!done.trim()) {
     return content;
@@ -551,11 +555,11 @@ export function applyTicksToPlanContent(content: string, done: string): string {
       if (!match || match[2].toLowerCase() === 'x') {
         return line;
       }
-      const label = match[3];
-      if (!shouldTickMilestone(label, done)) {
+      const { text: labelText } = parseMilestoneVerify(match[3]);
+      if (!shouldTickMilestone(labelText, done)) {
         return line;
       }
-      return `${match[1]}[x] ${label}`;
+      return `${match[1]}[x] ${match[3]}`;
     })
     .join('\n');
 }
