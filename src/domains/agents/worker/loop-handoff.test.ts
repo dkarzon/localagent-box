@@ -6,9 +6,11 @@ import { describe, it } from 'node:test';
 import {
   applyLedgerUpdateFromReflect,
   applyTicksToPlanContent,
+  buildAgentLoopHandoffSnapshot,
   buildIterationHandoffBlock,
   formatPlanSlice,
   formatLoopStateInjectionSlice,
+  importLoopHandoffFromWorkspace,
   INITIAL_PLAN_RETRY_PROMPT,
   isLoopPlanFilePresent,
   parseReflectNextLine,
@@ -86,33 +88,33 @@ describe('applyTicksToPlanContent', () => {
 
 describe('applyLedgerUpdateFromReflect', () => {
   it('updates loop-plan.md from REFLECT DONE text', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-ledger-update-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-ledger-update-'));
     try {
-      writePlan(dir, '- [ ] Add validation\n- [ ] Wire API');
+      writePlan(agentDir, '- [ ] Add validation\n- [ ] Wire API');
       const result = applyLedgerUpdateFromReflect(
-        dir,
+        agentDir,
         'DONE: completed Add validation\nNEXT: Wire API route',
         { goal: 'Ship feature', iteration: 1 },
       );
       assert.equal(result.ledgerUpdated, true);
       assert.equal(result.parsed.next, 'Wire API route');
-      const content = fs.readFileSync(path.join(dir, '.localagent-box', 'loop-plan.md'), 'utf8');
+      const content = fs.readFileSync(planPath(agentDir), 'utf8');
       assert.match(content, /- \[x\] Add validation/);
       assert.match(content, /- \[ \] Wire API/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('syncs loop-state.json when goal is provided', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-ledger-state-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-ledger-state-'));
     try {
-      writePlan(dir, '- [x] Add validation\n- [ ] Wire API');
-      applyLedgerUpdateFromReflect(dir, 'NEXT: Wire API route\nFILES TOUCHED: src/a.ts', {
+      writePlan(agentDir, '- [x] Add validation\n- [ ] Wire API');
+      applyLedgerUpdateFromReflect(agentDir, 'NEXT: Wire API route\nFILES TOUCHED: src/a.ts', {
         goal: 'Ship feature',
         iteration: 2,
       });
-      const state = readLoopState(dir);
+      const state = readLoopState(agentDir);
       assert.ok(state);
       assert.equal(state.goal, 'Ship feature');
       assert.equal(state.iteration, 2);
@@ -120,7 +122,7 @@ describe('applyLedgerUpdateFromReflect', () => {
       assert.deepEqual(state.lastFiles, ['src/a.ts']);
       assert.equal(state.milestones[1]?.done, false);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 });
@@ -139,16 +141,16 @@ describe('loop-state.json', () => {
   });
 
   it('syncs milestones from the markdown plan file', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-state-sync-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-state-sync-'));
     try {
-      writePlan(dir, '- [ ] Add validation — verify: npm test\n- [ ] Wire API');
-      const state = syncLoopStateFromPlanFile(dir, 'Ship feature', { iteration: 0 });
+      writePlan(agentDir, '- [ ] Add validation — verify: npm test\n- [ ] Wire API');
+      const state = syncLoopStateFromPlanFile(agentDir, 'Ship feature', { iteration: 0 });
       assert.ok(state);
       assert.equal(state.milestones.length, 2);
       assert.equal(state.milestones[0]?.verify, 'npm test');
-      assert.equal(readLoopState(dir)?.goal, 'Ship feature');
+      assert.equal(readLoopState(agentDir)?.goal, 'Ship feature');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
@@ -168,10 +170,10 @@ describe('loop-state.json', () => {
   });
 
   it('prefers loop-state injection over the markdown plan slice', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-state-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-state-'));
     try {
-      writePlan(dir, '- [ ] m1\n- [ ] m2\n- [ ] m3');
-      writeLoopState(dir, {
+      writePlan(agentDir, '- [ ] m1\n- [ ] m2\n- [ ] m3');
+      writeLoopState(agentDir, {
         version: 1,
         goal: 'Goal',
         milestones: [
@@ -182,12 +184,73 @@ describe('loop-state.json', () => {
         lastFiles: [],
         iteration: 1,
       });
-      const block = buildIterationHandoffBlock({ workspaceDir: dir });
+      const block = buildIterationHandoffBlock({ agentDir });
       assert.match(block ?? '', /Milestone: m2/);
       assert.match(block ?? '', /NEXT: do m2/);
       assert.doesNotMatch(block ?? '', /- \[ \] m3/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildAgentLoopHandoffSnapshot', () => {
+  it('mirrors milestone progress for the agent record', () => {
+    const snapshot = buildAgentLoopHandoffSnapshot(
+      {
+        version: 1,
+        goal: 'Ship',
+        milestones: [
+          { id: 'm1', text: 'Add validation', done: true },
+          { id: 'm2', text: 'Wire API', done: false },
+        ],
+        next: 'Add route',
+        lastFiles: ['src/a.ts'],
+        iteration: 2,
+      },
+      parseReflectOutput('REMAINING: one milestone left'),
+    );
+    assert.deepEqual(snapshot, {
+      next: 'Add route',
+      remaining: 'one milestone left',
+      milestonesTotal: 2,
+      milestonesDone: 1,
+      currentMilestone: 'Wire API',
+      lastFiles: ['src/a.ts'],
+    });
+  });
+});
+
+describe('importLoopHandoffFromWorkspace', () => {
+  it('imports legacy workspace plan and state into the agent data directory', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-import-'));
+    const agentDir = path.join(root, 'agent');
+    const workspaceDir = path.join(root, 'workspace');
+    try {
+      fs.mkdirSync(path.join(workspaceDir, '.localagent-box'), { recursive: true });
+      fs.writeFileSync(
+        path.join(workspaceDir, '.localagent-box', 'loop-plan.md'),
+        '- [ ] legacy milestone\n',
+        'utf8',
+      );
+      fs.writeFileSync(
+        path.join(workspaceDir, '.localagent-box', 'loop-state.json'),
+        JSON.stringify({
+          version: 1,
+          goal: 'Legacy goal',
+          milestones: [{ id: 'm1', text: 'legacy milestone', done: false }],
+          next: null,
+          lastFiles: [],
+          iteration: 0,
+        }),
+        'utf8',
+      );
+
+      assert.equal(importLoopHandoffFromWorkspace(agentDir, workspaceDir), true);
+      assert.equal(isLoopPlanFilePresent(agentDir), true);
+      assert.equal(readLoopState(agentDir)?.goal, 'Legacy goal');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });
@@ -224,57 +287,43 @@ describe('formatPlanSlice', () => {
 });
 
 describe('readLoopPlanSlice', () => {
-  it('reads and slices a plan file from the workspace', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-read-'));
+  it('reads and slices a plan file from the agent data directory', () => {
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-read-'));
     try {
-      const planDir = path.join(dir, '.localagent-box');
-      fs.mkdirSync(planDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(planDir, 'loop-plan.md'),
-        ['# Plan', '- [x] done', '- [ ] todo'].join('\n'),
-        'utf8',
-      );
-      assert.equal(readLoopPlanSlice(dir), '- [x] done\n- [ ] todo');
+      writePlan(agentDir, ['# Plan', '- [x] done', '- [ ] todo'].join('\n'));
+      assert.equal(readLoopPlanSlice(agentDir), '- [x] done\n- [ ] todo');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('returns null when the plan file is missing', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-missing-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-missing-'));
     try {
-      assert.equal(readLoopPlanSlice(dir), null);
+      assert.equal(readLoopPlanSlice(agentDir), null);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('returns null when the plan has no checklist items', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-prose-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-prose-'));
     try {
-      const planDir = path.join(dir, '.localagent-box');
-      fs.mkdirSync(planDir, { recursive: true });
-      fs.writeFileSync(path.join(planDir, 'loop-plan.md'), 'Just some prose.', 'utf8');
-      assert.equal(readLoopPlanSlice(dir), null);
+      writePlan(agentDir, 'Just some prose.');
+      assert.equal(readLoopPlanSlice(agentDir), null);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 });
 
 describe('buildIterationHandoffBlock', () => {
-  function writePlan(dir: string, content: string): void {
-    const planDir = path.join(dir, '.localagent-box');
-    fs.mkdirSync(planDir, { recursive: true });
-    fs.writeFileSync(path.join(planDir, 'loop-plan.md'), content, 'utf8');
-  }
-
   it('injects host-read plan slice and NEXT line when plan exists', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-plan-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-plan-'));
     try {
-      writePlan(dir, '- [x] m1\n- [ ] m2\n- [ ] m3');
+      writePlan(agentDir, '- [x] m1\n- [ ] m2\n- [ ] m3');
       const block = buildIterationHandoffBlock({
-        workspaceDir: dir,
+        agentDir,
         previousReflectNext: 'implement m2',
       });
       assert.match(block ?? '', /^## Plan \(host-read\)/);
@@ -283,15 +332,15 @@ describe('buildIterationHandoffBlock', () => {
       assert.match(block ?? '', /NEXT \(from last iteration\): implement m2/);
       assert.doesNotMatch(block ?? '', /## Previous iteration summary/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('does not duplicate NEXT when loop-state already includes it', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-state-next-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-state-next-'));
     try {
-      writePlan(dir, '- [ ] m1');
-      writeLoopState(dir, {
+      writePlan(agentDir, '- [ ] m1');
+      writeLoopState(agentDir, {
         version: 1,
         goal: 'Goal',
         milestones: [{ id: 'm1', text: 'm1', done: false }],
@@ -300,139 +349,132 @@ describe('buildIterationHandoffBlock', () => {
         iteration: 1,
       });
       const block = buildIterationHandoffBlock({
-        workspaceDir: dir,
+        agentDir,
         previousReflectNext: 'from reflect',
       });
       assert.match(block ?? '', /NEXT: from state/);
       assert.doesNotMatch(block ?? '', /NEXT \(from last iteration\)/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('injects plan slice without NEXT on the first iteration after INITIAL_PLAN', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-first-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-first-'));
     try {
-      writePlan(dir, '- [ ] m1\n- [ ] m2');
-      const block = buildIterationHandoffBlock({ workspaceDir: dir });
+      writePlan(agentDir, '- [ ] m1\n- [ ] m2');
+      const block = buildIterationHandoffBlock({ agentDir });
       assert.equal(block, '## Plan (host-read)\n- [ ] m1\n- [ ] m2');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('falls back to capped REFLECT replay when no plan file exists', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-fallback-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-fallback-'));
     try {
       const reflect = 'DONE: something\n'.repeat(300);
       const block = buildIterationHandoffBlock({
-        workspaceDir: dir,
+        agentDir,
         previousReflectText: reflect,
         maxFallbackSummaryChars: 100,
       });
       assert.match(block ?? '', /^## Previous iteration summary/);
       assert.equal(block?.length, '## Previous iteration summary\n'.length + 100);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('returns null when there is no plan and no previous REFLECT output', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-empty-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-empty-'));
     try {
-      assert.equal(buildIterationHandoffBlock({ workspaceDir: dir }), null);
+      assert.equal(buildIterationHandoffBlock({ agentDir }), null);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('injects raw plan prose when the file has no checklist items', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-prose-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-prose-'));
     try {
-      writePlan(dir, 'High-level plan without checkboxes.');
-      const block = buildIterationHandoffBlock({ workspaceDir: dir });
+      writePlan(agentDir, 'High-level plan without checkboxes.');
+      const block = buildIterationHandoffBlock({ agentDir });
       assert.equal(block, '## Plan (host-read)\nHigh-level plan without checkboxes.');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 });
 
 describe('isLoopPlanFilePresent', () => {
   it('returns true for a non-empty plan file', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-present-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-present-'));
     try {
-      writePlan(dir, '- [ ] todo');
-      assert.equal(isLoopPlanFilePresent(dir), true);
+      writePlan(agentDir, '- [ ] todo');
+      assert.equal(isLoopPlanFilePresent(agentDir), true);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('returns false when missing or whitespace-only', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-absent-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-absent-'));
     try {
-      assert.equal(isLoopPlanFilePresent(dir), false);
-      writePlan(dir, '   \n');
-      assert.equal(isLoopPlanFilePresent(dir), false);
+      assert.equal(isLoopPlanFilePresent(agentDir), false);
+      writePlan(agentDir, '   \n');
+      assert.equal(isLoopPlanFilePresent(agentDir), false);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 });
 
 describe('seedLoopPlanFromAssistantText', () => {
-  function planPath(dir: string): string {
-    return path.join(dir, '.localagent-box', 'loop-plan.md');
-  }
-
   it('extracts checklist lines from assistant output', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-checklist-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-checklist-'));
     try {
       seedLoopPlanFromAssistantText(
-        dir,
+        agentDir,
         'Here is the plan:\n- [ ] first\n- [ ] second\nDone.',
         'ignored',
       );
-      const content = fs.readFileSync(planPath(dir), 'utf8');
+      const content = fs.readFileSync(planPath(agentDir), 'utf8');
       assert.equal(content, '- [ ] first\n- [ ] second\n');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('writes raw assistant text when no checklist lines exist', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-raw-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-raw-'));
     try {
-      seedLoopPlanFromAssistantText(dir, 'Step one: do the thing.', 'goal');
-      assert.equal(fs.readFileSync(planPath(dir), 'utf8'), 'Step one: do the thing.\n');
+      seedLoopPlanFromAssistantText(agentDir, 'Step one: do the thing.', 'goal');
+      assert.equal(fs.readFileSync(planPath(agentDir), 'utf8'), 'Step one: do the thing.\n');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 
   it('falls back to a single goal milestone when assistant output is empty', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-goal-'));
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-goal-'));
     try {
-      seedLoopPlanFromAssistantText(dir, '   ', 'Ship feature X');
-      assert.equal(fs.readFileSync(planPath(dir), 'utf8'), '- [ ] Ship feature X\n');
+      seedLoopPlanFromAssistantText(agentDir, '   ', 'Ship feature X');
+      assert.equal(fs.readFileSync(planPath(agentDir), 'utf8'), '- [ ] Ship feature X\n');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 });
 
 describe('writeLoopPlanFile', () => {
-  it('creates .localagent-box and writes the plan file', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-write-plan-'));
+  it('creates the agent directory and writes the plan file', () => {
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-write-plan-'));
     try {
-      writeLoopPlanFile(dir, '- [ ] one');
-      assert.equal(
-        fs.readFileSync(path.join(dir, '.localagent-box', 'loop-plan.md'), 'utf8'),
-        '- [ ] one\n',
-      );
+      writeLoopPlanFile(agentDir, '- [ ] one');
+      assert.equal(fs.readFileSync(planPath(agentDir), 'utf8'), '- [ ] one\n');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });
 });
@@ -445,12 +487,15 @@ describe('INITIAL_PLAN_RETRY_PROMPT', () => {
       completionMarker: 'LOOP_COMPLETE',
     });
     assert.match(prompt, /Add caching/);
-    assert.match(prompt, /loop-plan\.md/);
+    assert.match(prompt, /checklist/);
   });
 });
 
-function writePlan(dir: string, content: string): void {
-  const planDir = path.join(dir, '.localagent-box');
-  fs.mkdirSync(planDir, { recursive: true });
-  fs.writeFileSync(path.join(planDir, 'loop-plan.md'), content, 'utf8');
+function planPath(agentDir: string): string {
+  return path.join(agentDir, 'loop-plan.md');
+}
+
+function writePlan(agentDir: string, content: string): void {
+  fs.mkdirSync(agentDir, { recursive: true });
+  fs.writeFileSync(planPath(agentDir), content, 'utf8');
 }

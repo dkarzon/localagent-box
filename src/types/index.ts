@@ -129,6 +129,16 @@ export interface RepoPromptOverrides {
   checkCommand?: string;
 }
 
+/** Milestone progress mirrored from loop handoff state for API/UI. */
+export interface AgentLoopHandoffState {
+  next: string | null;
+  remaining: string | null;
+  milestonesTotal: number;
+  milestonesDone: number;
+  currentMilestone: string | null;
+  lastFiles: string[];
+}
+
 export interface AgentLoopState {
   iteration: number;
   stepIndex: number;
@@ -142,6 +152,8 @@ export interface AgentLoopState {
   finishRequested: boolean;
   configSource: 'server-default' | 'repo-override';
   effectiveSteps: LoopStepConfig[];
+  /** Host-maintained handoff slice for milestone progress (loop mode only). */
+  handoff?: AgentLoopHandoffState;
 }
 
 export type AgentStatus =

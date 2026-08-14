@@ -52,6 +52,15 @@ export interface LoopStepConfig {
   prompt: string;
 }
 
+export interface AgentLoopHandoffState {
+  next: string | null;
+  remaining: string | null;
+  milestonesTotal: number;
+  milestonesDone: number;
+  currentMilestone: string | null;
+  lastFiles: string[];
+}
+
 export interface AgentLoopState {
   iteration: number;
   stepIndex: number;
@@ -64,6 +73,7 @@ export interface AgentLoopState {
   finishRequested: boolean;
   configSource: 'server-default' | 'repo-override';
   effectiveSteps: LoopStepConfig[];
+  handoff?: AgentLoopHandoffState;
 }
 
 export type AgentStatus =

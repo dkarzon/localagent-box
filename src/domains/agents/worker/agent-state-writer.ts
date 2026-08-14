@@ -9,6 +9,13 @@ export function getAgentDir(job: AgentJob): string {
   return path.join(job.dataDir, 'agents', job.agentId);
 }
 
+/** Ensure the agent runtime directory exists (logs, handoff state, inbox, etc.). */
+export function ensureAgentDir(job: AgentJob): string {
+  const dir = getAgentDir(job);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 export function getInboxPath(job: AgentJob): string {
   return path.join(getAgentDir(job), 'inbox.jsonl');
 }

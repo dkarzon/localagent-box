@@ -1,11 +1,24 @@
 import fs from 'fs';
 import path from 'path';
+import type { AgentLoopHandoffState } from '../../../types';
 
-/** Repo-relative path to the loop plan ledger (gitignored under `.localagent-box/`). */
-export const LOOP_PLAN_RELATIVE_PATH = path.join('.localagent-box', 'loop-plan.md');
+/** Filename for the markdown plan ledger under the agent data directory. */
+export const LOOP_PLAN_FILENAME = 'loop-plan.md';
 
-/** Structured loop handoff state (gitignored under `.localagent-box/`). */
-export const LOOP_STATE_RELATIVE_PATH = path.join('.localagent-box', 'loop-state.json');
+/** Filename for structured loop handoff state under the agent data directory. */
+export const LOOP_STATE_FILENAME = 'loop-state.json';
+
+/**
+ * Legacy repo-relative plan path. INITIAL_PLAN may still write here; the host
+ * imports into the agent data directory after planning.
+ */
+export const LEGACY_LOOP_PLAN_RELATIVE_PATH = path.join('.localagent-box', 'loop-plan.md');
+
+/** @deprecated Use agent data dir paths via {@link getLoopPlanFilePath}. */
+export const LOOP_PLAN_RELATIVE_PATH = LEGACY_LOOP_PLAN_RELATIVE_PATH;
+
+/** @deprecated Handoff state lives in the agent data directory. */
+export const LOOP_STATE_RELATIVE_PATH = path.join('.localagent-box', LOOP_STATE_FILENAME);
 
 export const LOOP_STATE_VERSION = 1 as const;
 
@@ -34,9 +47,9 @@ export const MAX_INJECTED_SUMMARY_CHARS = 2000;
 /** Max chars of a non-checklist plan file to inject when slice parsing finds no items. */
 export const MAX_RAW_PLAN_INJECTION_CHARS = 1500;
 
-/** Retry prompt when INITIAL_PLAN did not produce `.localagent-box/loop-plan.md`. */
+/** Retry prompt when INITIAL_PLAN did not produce a usable checklist. */
 export const INITIAL_PLAN_RETRY_PROMPT =
-  'You did not write `.localagent-box/loop-plan.md`. Write it now as a markdown checklist (`- [ ] …`) of ordered milestones for the goal. Output nothing except creating that file. Planning only — no implementation.\n\nGoal: {{goal}}';
+  'You did not provide a plan checklist. Reply with a markdown checklist (`- [ ] …`) of ordered milestones for the goal. Planning only — no implementation.\n\nGoal: {{goal}}';
 
 const CHECKBOX_LINE_RE = /^(\s*[-*+]\s+)\[([ xX])\]\s+(.*)$/;
 const REFLECT_FIELD_LINE_RE = /^(DONE|REMAINING|NEXT|FILES TOUCHED):\s*(.*)$/i;
@@ -88,16 +101,24 @@ export function formatPlanSlice(items: ChecklistItem[]): string | null {
   return lines.length > 0 ? lines.join('\n') : null;
 }
 
-export function getLoopPlanFilePath(workspaceDir: string): string {
-  return path.join(workspaceDir, LOOP_PLAN_RELATIVE_PATH);
+export function getLoopPlanFilePath(agentDir: string): string {
+  return path.join(agentDir, LOOP_PLAN_FILENAME);
+}
+
+export function getLegacyWorkspacePlanPath(workspaceDir: string): string {
+  return path.join(workspaceDir, LEGACY_LOOP_PLAN_RELATIVE_PATH);
+}
+
+function getLegacyWorkspaceStatePath(workspaceDir: string): string {
+  return path.join(workspaceDir, '.localagent-box', LOOP_STATE_FILENAME);
 }
 
 /** True when the plan file exists and has non-whitespace content. */
 export function isLoopPlanFilePresent(
-  workspaceDir: string,
+  agentDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync'> = fs,
 ): boolean {
-  const filePath = getLoopPlanFilePath(workspaceDir);
+  const filePath = getLoopPlanFilePath(agentDir);
   if (!fsImpl.existsSync(filePath)) {
     return false;
   }
@@ -105,17 +126,14 @@ export function isLoopPlanFilePresent(
 }
 
 export function writeLoopPlanFile(
-  workspaceDir: string,
+  agentDir: string,
   content: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'mkdirSync' | 'writeFileSync'> = fs,
 ): void {
-  const dir = path.join(workspaceDir, '.localagent-box');
-  if (!fsImpl.existsSync(dir)) {
-    fsImpl.mkdirSync(dir, { recursive: true });
-  }
+  ensureAgentDir(agentDir, fsImpl);
   const normalized = content.trim();
   const body = normalized.endsWith('\n') ? normalized : `${normalized}\n`;
-  fsImpl.writeFileSync(getLoopPlanFilePath(workspaceDir), body, 'utf8');
+  fsImpl.writeFileSync(getLoopPlanFilePath(agentDir), body, 'utf8');
 }
 
 /**
@@ -123,7 +141,7 @@ export function writeLoopPlanFile(
  * Prefers checklist lines from assistant output, then raw text, then a single goal milestone.
  */
 export function seedLoopPlanFromAssistantText(
-  workspaceDir: string,
+  agentDir: string,
   assistantText: string,
   goal: string,
   fsImpl: LoopFsWrite = fs,
@@ -143,22 +161,55 @@ export function seedLoopPlanFromAssistantText(
     content = `- [ ] ${trimmedGoal}`;
   }
 
-  writeLoopPlanFile(workspaceDir, content, fsImpl);
-  syncLoopStateFromPlanFile(workspaceDir, goal, { fsImpl });
+  writeLoopPlanFile(agentDir, content, fsImpl);
+  syncLoopStateFromPlanFile(agentDir, goal, { fsImpl });
 }
 
-export function getLoopStateFilePath(workspaceDir: string): string {
-  return path.join(workspaceDir, LOOP_STATE_RELATIVE_PATH);
+export function getLoopStateFilePath(agentDir: string): string {
+  return path.join(agentDir, LOOP_STATE_FILENAME);
 }
 
-function ensureLocalagentBoxDir(
-  workspaceDir: string,
+function ensureAgentDir(
+  agentDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'mkdirSync'>,
 ): void {
-  const dir = path.join(workspaceDir, '.localagent-box');
-  if (!fsImpl.existsSync(dir)) {
-    fsImpl.mkdirSync(dir, { recursive: true });
+  if (!fsImpl.existsSync(agentDir)) {
+    fsImpl.mkdirSync(agentDir, { recursive: true });
   }
+}
+
+/**
+ * Import handoff artifacts written under `.localagent-box/` in the workspace clone
+ * into the agent data directory (one-time migration for legacy runs).
+ */
+export function importLoopHandoffFromWorkspace(
+  agentDir: string,
+  workspaceDir: string,
+  fsImpl: LoopFsWrite = fs,
+): boolean {
+  let imported = false;
+
+  const legacyPlanPath = getLegacyWorkspacePlanPath(workspaceDir);
+  if (!isLoopPlanFilePresent(agentDir, fsImpl) && fsImpl.existsSync(legacyPlanPath)) {
+    const content = fsImpl.readFileSync(legacyPlanPath, 'utf8').trim();
+    if (content) {
+      writeLoopPlanFile(agentDir, content, fsImpl);
+      imported = true;
+    }
+  }
+
+  const legacyStatePath = getLegacyWorkspaceStatePath(workspaceDir);
+  if (!readLoopState(agentDir, fsImpl) && fsImpl.existsSync(legacyStatePath)) {
+    try {
+      const raw = JSON.parse(fsImpl.readFileSync(legacyStatePath, 'utf8')) as unknown;
+      writeLoopState(agentDir, validateLoopState(raw), fsImpl);
+      imported = true;
+    } catch {
+      // Corrupt legacy state — skip import.
+    }
+  }
+
+  return imported;
 }
 
 export function validateLoopState(raw: unknown): LoopState {
@@ -233,10 +284,10 @@ export function validateLoopState(raw: unknown): LoopState {
 }
 
 export function readLoopState(
-  workspaceDir: string,
+  agentDir: string,
   fsImpl: LoopFsRead = fs,
 ): LoopState | null {
-  const filePath = getLoopStateFilePath(workspaceDir);
+  const filePath = getLoopStateFilePath(agentDir);
   if (!fsImpl.existsSync(filePath)) {
     return null;
   }
@@ -245,13 +296,13 @@ export function readLoopState(
 }
 
 export function writeLoopState(
-  workspaceDir: string,
+  agentDir: string,
   state: LoopState,
   fsImpl: LoopFsWrite = fs,
 ): void {
-  ensureLocalagentBoxDir(workspaceDir, fsImpl);
+  ensureAgentDir(agentDir, fsImpl);
   const body = `${JSON.stringify(validateLoopState(state), null, 2)}\n`;
-  fsImpl.writeFileSync(getLoopStateFilePath(workspaceDir), body, 'utf8');
+  fsImpl.writeFileSync(getLoopStateFilePath(agentDir), body, 'utf8');
 }
 
 function parseMilestoneVerify(text: string): { text: string; verify?: string } {
@@ -283,7 +334,7 @@ function milestonesFromChecklistItems(items: ChecklistItem[]): LoopMilestone[] {
  * Build or refresh loop-state.json from the markdown plan checklist.
  */
 export function syncLoopStateFromPlanFile(
-  workspaceDir: string,
+  agentDir: string,
   goal: string,
   options: {
     iteration?: number;
@@ -293,7 +344,7 @@ export function syncLoopStateFromPlanFile(
   } = {},
 ): LoopState | null {
   const fsImpl = options.fsImpl ?? fs;
-  const raw = readLoopPlanRawContent(workspaceDir, fsImpl);
+  const raw = readLoopPlanRawContent(agentDir, fsImpl);
   if (!raw) {
     return null;
   }
@@ -302,7 +353,7 @@ export function syncLoopStateFromPlanFile(
     return null;
   }
 
-  const existing = readLoopState(workspaceDir, fsImpl);
+  const existing = readLoopState(agentDir, fsImpl);
   const milestones = milestonesFromChecklistItems(items);
   const state: LoopState = {
     version: LOOP_STATE_VERSION,
@@ -312,7 +363,7 @@ export function syncLoopStateFromPlanFile(
     lastFiles: options.lastFiles ?? existing?.lastFiles ?? [],
     iteration: options.iteration ?? existing?.iteration ?? 0,
   };
-  writeLoopState(workspaceDir, state, fsImpl);
+  writeLoopState(agentDir, state, fsImpl);
   return state;
 }
 
@@ -340,14 +391,14 @@ export function formatLoopStateInjectionSlice(state: LoopState): string | null {
 }
 
 function applyReflectToLoopState(
-  workspaceDir: string,
+  agentDir: string,
   parsed: ParsedReflectOutput,
   options: { goal?: string; iteration?: number; fsImpl?: LoopFsWrite },
 ): boolean {
   const fsImpl = options.fsImpl ?? fs;
-  let state = readLoopState(workspaceDir, fsImpl);
+  let state = readLoopState(agentDir, fsImpl);
   if (!state && options.goal) {
-    state = syncLoopStateFromPlanFile(workspaceDir, options.goal, {
+    state = syncLoopStateFromPlanFile(agentDir, options.goal, {
       iteration: options.iteration,
       fsImpl,
     });
@@ -373,16 +424,16 @@ function applyReflectToLoopState(
 
   const changed = JSON.stringify(updated) !== JSON.stringify(state);
   if (changed) {
-    writeLoopState(workspaceDir, updated, fsImpl);
+    writeLoopState(agentDir, updated, fsImpl);
   }
   return changed;
 }
 
 function readLoopPlanRawContent(
-  workspaceDir: string,
+  agentDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync'>,
 ): string | null {
-  const filePath = getLoopPlanFilePath(workspaceDir);
+  const filePath = getLoopPlanFilePath(agentDir);
   if (!fsImpl.existsSync(filePath)) {
     return null;
   }
@@ -391,14 +442,14 @@ function readLoopPlanRawContent(
 }
 
 /**
- * Read `.localagent-box/loop-plan.md` and return a compact slice for injection,
+ * Read the agent plan ledger and return a compact slice for injection,
  * or null when the file is missing, empty, or has no checklist items.
  */
 export function readLoopPlanSlice(
-  workspaceDir: string,
+  agentDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync'> = fs,
 ): string | null {
-  const filePath = path.join(workspaceDir, LOOP_PLAN_RELATIVE_PATH);
+  const filePath = getLoopPlanFilePath(agentDir);
   if (!fsImpl.existsSync(filePath)) {
     return null;
   }
@@ -518,7 +569,7 @@ export interface ApplyLedgerUpdateResult {
  * Host-maintained ledger: parse REFLECT output and tick matching milestones in loop-plan.md.
  */
 export function applyLedgerUpdateFromReflect(
-  workspaceDir: string,
+  agentDir: string,
   reflectText: string,
   options: {
     goal?: string;
@@ -530,25 +581,25 @@ export function applyLedgerUpdateFromReflect(
   const parsed = parseReflectOutput(reflectText);
   let ledgerUpdated = false;
 
-  if (parsed.done?.trim() && isLoopPlanFilePresent(workspaceDir, fsImpl)) {
-    const filePath = getLoopPlanFilePath(workspaceDir);
+  if (parsed.done?.trim() && isLoopPlanFilePresent(agentDir, fsImpl)) {
+    const filePath = getLoopPlanFilePath(agentDir);
     const content = fsImpl.readFileSync(filePath, 'utf8');
     const updated = applyTicksToPlanContent(content, parsed.done);
     if (updated !== content) {
-      writeLoopPlanFile(workspaceDir, updated, fsImpl);
+      writeLoopPlanFile(agentDir, updated, fsImpl);
       ledgerUpdated = true;
     }
   }
 
-  if (options.goal && isLoopPlanFilePresent(workspaceDir, fsImpl)) {
-    syncLoopStateFromPlanFile(workspaceDir, options.goal, {
+  if (options.goal && isLoopPlanFilePresent(agentDir, fsImpl)) {
+    syncLoopStateFromPlanFile(agentDir, options.goal, {
       iteration: options.iteration,
       next: parsed.next,
       lastFiles: parsed.filesTouched.length > 0 ? parsed.filesTouched : undefined,
       fsImpl,
     });
     ledgerUpdated = true;
-  } else if (applyReflectToLoopState(workspaceDir, parsed, options)) {
+  } else if (applyReflectToLoopState(agentDir, parsed, options)) {
     ledgerUpdated = true;
   }
 
@@ -556,7 +607,7 @@ export function applyLedgerUpdateFromReflect(
 }
 
 export interface BuildIterationHandoffParams {
-  workspaceDir: string;
+  agentDir: string;
   previousReflectText?: string | null;
   /** Parsed NEXT from the previous REFLECT step (preferred over re-parsing prose). */
   previousReflectNext?: string | null;
@@ -570,12 +621,12 @@ export interface BuildIterationHandoffParams {
  * of replaying the full REFLECT output.
  */
 function resolvePlanInjectionBody(
-  workspaceDir: string,
+  agentDir: string,
   fsImpl?: LoopFsRead,
 ): string | null {
   const impl = fsImpl ?? fs;
   try {
-    const state = readLoopState(workspaceDir, impl);
+    const state = readLoopState(agentDir, impl);
     if (state) {
       const stateSlice = formatLoopStateInjectionSlice(state);
       if (stateSlice) {
@@ -586,12 +637,12 @@ function resolvePlanInjectionBody(
     // Corrupt state file — fall back to markdown plan slice.
   }
 
-  const planSlice = readLoopPlanSlice(workspaceDir, impl);
+  const planSlice = readLoopPlanSlice(agentDir, impl);
   if (planSlice) {
     return planSlice;
   }
 
-  const raw = readLoopPlanRawContent(workspaceDir, impl);
+  const raw = readLoopPlanRawContent(agentDir, impl);
   if (!raw) {
     return null;
   }
@@ -603,10 +654,10 @@ function resolvePlanInjectionBody(
 
 export function buildIterationHandoffBlock(params: BuildIterationHandoffParams): string | null {
   const impl = params.fsImpl ?? fs;
-  const planBody = resolvePlanInjectionBody(params.workspaceDir, impl);
+  const planBody = resolvePlanInjectionBody(params.agentDir, impl);
   const stateHasNext = (() => {
     try {
-      return Boolean(readLoopState(params.workspaceDir, impl)?.next);
+      return Boolean(readLoopState(params.agentDir, impl)?.next);
     } catch {
       return false;
     }
@@ -631,4 +682,30 @@ export function buildIterationHandoffBlock(params: BuildIterationHandoffParams):
   }
 
   return null;
+}
+
+/** Mirror structured handoff fields onto the agent record for API/UI consumers. */
+export function buildAgentLoopHandoffSnapshot(
+  state: LoopState | null,
+  parsed?: ParsedReflectOutput | null,
+): AgentLoopHandoffState | undefined {
+  if (!state && !parsed) {
+    return undefined;
+  }
+
+  const milestones = state?.milestones ?? [];
+  const milestonesDone = milestones.filter((milestone) => milestone.done).length;
+  const nextMilestone = milestones.find((milestone) => !milestone.done);
+
+  return {
+    next: parsed?.next ?? state?.next ?? null,
+    remaining: parsed?.remaining ?? null,
+    milestonesTotal: milestones.length,
+    milestonesDone,
+    currentMilestone: nextMilestone?.text ?? null,
+    lastFiles:
+      parsed && parsed.filesTouched.length > 0
+        ? parsed.filesTouched
+        : (state?.lastFiles ?? []),
+  };
 }

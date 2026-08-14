@@ -35,5 +35,6 @@ export function buildLoopState(
     finishRequested: existing?.finishRequested ?? false,
     configSource: existing?.configSource ?? 'server-default',
     effectiveSteps: existing?.effectiveSteps ?? [],
+    handoff: existing?.handoff,
   };
 }

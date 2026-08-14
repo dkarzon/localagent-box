@@ -10,6 +10,7 @@ import {
   emitLoopIterationEnd,
   emitLoopStepEnd,
   emitLoopStepStart,
+  ensureAgentDir,
   getInboxPath,
   InboxReader,
   readAgentLoopFinishRequested,
@@ -32,11 +33,15 @@ import {
 } from './batch-run-flow';
 import {
   applyLedgerUpdateFromReflect,
+  buildAgentLoopHandoffSnapshot,
   buildIterationHandoffBlock,
+  importLoopHandoffFromWorkspace,
   INITIAL_PLAN_RETRY_PROMPT,
   isLoopPlanFilePresent,
+  readLoopState,
   seedLoopPlanFromAssistantText,
   syncLoopStateFromPlanFile,
+  type ParsedReflectOutput,
 } from './loop-handoff';
 import { formatCheckResultBlock, runLoopCheckCommand, type LoopCheckResult } from './loop-check';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
@@ -77,6 +82,8 @@ type LoopStepExit =
 interface RunLoopStepParams {
     session: OpenCodeLoopSessionHandle;
   loopState: AgentLoopState;
+  /** Agent data directory for loop handoff state (plan + loop-state.json). */
+  handoffDir: string;
   loopConfig: { completionMarker: string };
   job: WorkerContext['job'];
   config: WorkerContext['config'];
@@ -163,7 +170,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   }
   if (stepIndex === 0 && verb !== 'INITIAL_PLAN') {
     const handoffBlock = buildIterationHandoffBlock({
-      workspaceDir: job.workspaceDir,
+      agentDir: params.handoffDir,
       previousReflectText: params.previousIterationSummary,
       previousReflectNext: params.previousReflectNext,
     });
@@ -318,6 +325,8 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     loop: initialLoopState,
   });
 
+  const handoffDir = ensureAgentDir(job);
+
   const autoApprovePermissions = resolveAutoApprovePermissions(config, job, 'loop');
   appendLog(
     logPath,
@@ -361,12 +370,22 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     session,
     loopConfig,
     job,
+    handoffDir,
     config,
     agentsStore,
     gitService,
     logPath,
     inboxReader,
     repoPromptOverrides: repoPromptOverrides ?? undefined,
+  };
+
+  const mirrorHandoffToAgent = (parsed?: ParsedReflectOutput | null) => {
+    const snapshot = buildAgentLoopHandoffSnapshot(readLoopState(handoffDir), parsed);
+    if (!snapshot) {
+      return;
+    }
+    loopState = patchLoopState('processing', loopState, { handoff: snapshot });
+    updateAgentRecord(agentsStore, job.agentId, { loop: loopState });
   };
 
   const applyStepExit = (
@@ -435,10 +454,14 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
           initialPlanAssistantTexts.push(initialResult.assistantText);
         }
 
-        if (!isLoopPlanFilePresent(job.workspaceDir)) {
+        if (importLoopHandoffFromWorkspace(handoffDir, job.workspaceDir)) {
+          appendLog(logPath, 'Loop handoff imported from workspace .localagent-box/ into agent data dir');
+        }
+
+        if (!isLoopPlanFilePresent(handoffDir)) {
           appendLog(
             logPath,
-            'Loop plan file missing after INITIAL_PLAN — retrying with pointed prompt',
+            'Loop plan missing after INITIAL_PLAN — retrying with pointed prompt',
           );
           const retryResult = await runStepAndTrack({
             ...sharedStepParams,
@@ -461,18 +484,19 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
           }
         }
 
-        if (!harnessDone && !isLoopPlanFilePresent(job.workspaceDir)) {
-          appendLog(logPath, 'Loop plan file still missing — host seeding from assistant output');
+        if (!harnessDone && !isLoopPlanFilePresent(handoffDir)) {
+          appendLog(logPath, 'Loop plan still missing — host seeding from assistant output');
           seedLoopPlanFromAssistantText(
-            job.workspaceDir,
+            handoffDir,
             initialPlanAssistantTexts.join('\n\n'),
             job.prompt,
           );
         }
 
-        if (!harnessDone && isLoopPlanFilePresent(job.workspaceDir)) {
-          syncLoopStateFromPlanFile(job.workspaceDir, job.prompt, { iteration: 0 });
-          appendLog(logPath, 'Loop state synced from plan file after INITIAL_PLAN');
+        if (!harnessDone && isLoopPlanFilePresent(handoffDir)) {
+          syncLoopStateFromPlanFile(handoffDir, job.prompt, { iteration: 0 });
+          mirrorHandoffToAgent();
+          appendLog(logPath, 'Loop state synced from plan after INITIAL_PLAN');
         }
       }
     }
@@ -522,7 +546,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
           const stepExit = applyStepExit(stepResult.exit);
           if (stepExit.reflectText) {
             lastReflectText = stepExit.reflectText;
-            const ledger = applyLedgerUpdateFromReflect(job.workspaceDir, stepExit.reflectText, {
+            const ledger = applyLedgerUpdateFromReflect(handoffDir, stepExit.reflectText, {
               goal: job.prompt,
               iteration,
             });
@@ -530,6 +554,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             if (ledger.ledgerUpdated) {
               appendLog(logPath, 'Loop plan ledger updated from REFLECT output');
             }
+            mirrorHandoffToAgent(ledger.parsed);
           }
           if (stepExit.action === 'return') {
             return;

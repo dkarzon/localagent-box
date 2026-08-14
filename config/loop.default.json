@@ -2,7 +2,7 @@
   "version": 1,
   "maxIterations": 5,
   "completionMarker": "LOOP_COMPLETE",
-  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration. Optional per item: `— verify: <command>`. Planning only — no implementation. The host syncs this to `loop-state.json` and injects the next milestone each iteration.\n\nGoal: {{goal}}",
+  "initialPlanPrompt": "Survey the codebase, then reply with a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration. Optional per item: `— verify: <command>`. Planning only — no implementation. The host stores milestones in agent runtime data and injects the next one each iteration.\n\nGoal: {{goal}}",
   "steps": [
     {
       "verb": "ORIENT",
