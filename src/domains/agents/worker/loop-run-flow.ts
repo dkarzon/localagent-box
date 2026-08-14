@@ -30,14 +30,9 @@ import {
   resolveBatchFailureMessage,
   resolveRunConfig,
 } from './batch-run-flow';
+import { buildIterationHandoffBlock } from './loop-handoff';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
-
-/**
- * Cap for the REFLECT summary injected into the next iteration's first step (§2.1).
- * Durable state lives in the plan-file ledger; the injected summary is only a hint.
- */
-const MAX_INJECTED_SUMMARY_CHARS = 2000;
 
 function isFinishRequested(
   agentsStore: WorkerContext['agentsStore'],
@@ -148,11 +143,14 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   if (hostChangeSummary) {
     conversationParts.push(hostChangeSummary);
   }
-  if (params.previousIterationSummary) {
-    // §2.1 safety net: the REFLECT ledger lives in the plan file; keep the injected
-    // handoff bounded even if the model ignores the word cap in the prompt.
-    const summary = params.previousIterationSummary.slice(0, MAX_INJECTED_SUMMARY_CHARS);
-    conversationParts.push(`## Previous iteration summary\n${summary}`);
+  if (stepIndex === 0 && verb !== 'INITIAL_PLAN') {
+    const handoffBlock = buildIterationHandoffBlock({
+      workspaceDir: job.workspaceDir,
+      previousReflectText: params.previousIterationSummary,
+    });
+    if (handoffBlock) {
+      conversationParts.push(handoffBlock);
+    }
   }
   const conversationText = conversationParts.join('\n\n');
   const promptText = buildOpenCodePrompt(
@@ -412,7 +410,8 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             stepIndex,
             verb: step.verb,
             promptTemplate: step.prompt,
-            previousIterationSummary: stepIndex === 0 && iteration > 1 ? lastReflectText ?? undefined : undefined,
+            previousIterationSummary:
+              stepIndex === 0 && iteration > 1 ? (lastReflectText ?? undefined) : undefined,
           });
           loopState = stepResult.loopState;
 
