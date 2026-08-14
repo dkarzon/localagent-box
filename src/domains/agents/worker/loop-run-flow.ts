@@ -37,6 +37,7 @@ import {
   isLoopPlanFilePresent,
   seedLoopPlanFromAssistantText,
 } from './loop-handoff';
+import { formatCheckResultBlock, runLoopCheckCommand, type LoopCheckResult } from './loop-check';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
 
@@ -91,6 +92,8 @@ interface RunLoopStepParams {
   previousIterationSummary?: string;
   /** Parsed NEXT from the previous REFLECT step (host-maintained ledger). */
   previousReflectNext?: string;
+  /** Host-run check result from ACT in the current iteration (injected into REFLECT). */
+  iterationCheckResult?: LoopCheckResult | null;
 }
 
 async function runLoopStep(params: RunLoopStepParams): Promise<{
@@ -167,6 +170,9 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
       conversationParts.push(handoffBlock);
     }
   }
+  if (verb === 'REFLECT' && params.iterationCheckResult) {
+    conversationParts.push(formatCheckResultBlock(params.iterationCheckResult));
+  }
   const conversationText = conversationParts.join('\n\n');
   const promptText = buildOpenCodePrompt(
     conversationText,
@@ -225,9 +231,22 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
 
   const assistantText = turnResult.assistantText ?? null;
 
-  const completionSignal =
+  let completionSignal =
     (verb === 'REFLECT' || verb === 'ORIENT') &&
     parseCompletionSignal(turnResult.assistantText, loopConfig.completionMarker, interpolated);
+
+  if (
+    verb === 'REFLECT' &&
+    completionSignal &&
+    params.iterationCheckResult &&
+    !params.iterationCheckResult.success
+  ) {
+    appendLog(
+      logPath,
+      `Ignoring completion signal — check command failed (exit=${params.iterationCheckResult.exitCode})`,
+    );
+    completionSignal = false;
+  }
 
   const reflectText = verb === 'REFLECT' ? turnResult.assistantText : null;
 
@@ -274,10 +293,11 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
 
   const { config: loopConfig, configSource } = loadedConfig;
   const repoPromptOverrides = loadRepoConfig(job.workspaceDir);
+  const loopCheckCommand = repoPromptOverrides?.checkCommand?.trim() || null;
   const hasInitialPlan = Boolean(loopConfig.initialPlanPrompt?.trim());
   appendLog(
     logPath,
-    `Loop config: source=${configSource}, maxIterations=${loopConfig.maxIterations}, steps=${loopConfig.steps.length}, initialPlan=${hasInitialPlan}`,
+    `Loop config: source=${configSource}, maxIterations=${loopConfig.maxIterations}, steps=${loopConfig.steps.length}, initialPlan=${hasInitialPlan}, checkCommand=${loopCheckCommand ? 'set' : 'unset'}`,
   );
   const initialLoopState = buildLoopState('processing', {
     iteration: hasInitialPlan ? 0 : 1,
@@ -462,6 +482,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
         }
 
         let iterationCompleted = false;
+        let iterationCheckResult: LoopCheckResult | null = null;
 
         for (let stepIndex = 0; stepIndex < loopConfig.steps.length; stepIndex += 1) {
           const step = loopConfig.steps[stepIndex];
@@ -476,8 +497,21 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
               stepIndex === 0 && iteration > 1 ? (lastReflectText ?? undefined) : undefined,
             previousReflectNext:
               stepIndex === 0 && iteration > 1 ? (lastReflectNext ?? undefined) : undefined,
+            iterationCheckResult: step.verb === 'REFLECT' ? iterationCheckResult : undefined,
           });
           loopState = stepResult.loopState;
+
+          if (
+            step.verb === 'ACT' &&
+            loopCheckCommand &&
+            stepResult.exit.kind === 'continue'
+          ) {
+            iterationCheckResult = await runLoopCheckCommand(job.workspaceDir, loopCheckCommand);
+            appendLog(
+              logPath,
+              `Loop check command finished: exit=${iterationCheckResult.exitCode} timedOut=${iterationCheckResult.timedOut}`,
+            );
+          }
 
           const stepExit = applyStepExit(stepResult.exit);
           if (stepExit.reflectText) {

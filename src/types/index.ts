@@ -125,6 +125,8 @@ export interface RepoPromptOverrides {
   batchContextPrompt?: string;
   interactiveContextPrompt?: string;
   loopContextPrompt?: string;
+  /** Shell command the host runs after each ACT step in loop mode (e.g. `npm test`). */
+  checkCommand?: string;
 }
 
 export interface AgentLoopState {
