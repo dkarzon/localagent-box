@@ -6,9 +6,14 @@ import { describe, it } from 'node:test';
 import {
   buildIterationHandoffBlock,
   formatPlanSlice,
+  INITIAL_PLAN_RETRY_PROMPT,
+  isLoopPlanFilePresent,
   parseReflectNextLine,
   readLoopPlanSlice,
+  seedLoopPlanFromAssistantText,
+  writeLoopPlanFile,
 } from './loop-handoff';
+import { interpolateStepPrompt } from './loop-config';
 
 describe('parseReflectNextLine', () => {
   it('extracts NEXT from structured REFLECT output', () => {
@@ -160,4 +165,112 @@ describe('buildIterationHandoffBlock', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('injects raw plan prose when the file has no checklist items', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-prose-'));
+    try {
+      writePlan(dir, 'High-level plan without checkboxes.');
+      const block = buildIterationHandoffBlock({ workspaceDir: dir });
+      assert.equal(block, '## Plan (host-read)\nHigh-level plan without checkboxes.');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+describe('isLoopPlanFilePresent', () => {
+  it('returns true for a non-empty plan file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-present-'));
+    try {
+      writePlan(dir, '- [ ] todo');
+      assert.equal(isLoopPlanFilePresent(dir), true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns false when missing or whitespace-only', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-plan-absent-'));
+    try {
+      assert.equal(isLoopPlanFilePresent(dir), false);
+      writePlan(dir, '   \n');
+      assert.equal(isLoopPlanFilePresent(dir), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('seedLoopPlanFromAssistantText', () => {
+  function planPath(dir: string): string {
+    return path.join(dir, '.localagent-box', 'loop-plan.md');
+  }
+
+  it('extracts checklist lines from assistant output', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-checklist-'));
+    try {
+      seedLoopPlanFromAssistantText(
+        dir,
+        'Here is the plan:\n- [ ] first\n- [ ] second\nDone.',
+        'ignored',
+      );
+      const content = fs.readFileSync(planPath(dir), 'utf8');
+      assert.equal(content, '- [ ] first\n- [ ] second\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes raw assistant text when no checklist lines exist', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-raw-'));
+    try {
+      seedLoopPlanFromAssistantText(dir, 'Step one: do the thing.', 'goal');
+      assert.equal(fs.readFileSync(planPath(dir), 'utf8'), 'Step one: do the thing.\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to a single goal milestone when assistant output is empty', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-seed-goal-'));
+    try {
+      seedLoopPlanFromAssistantText(dir, '   ', 'Ship feature X');
+      assert.equal(fs.readFileSync(planPath(dir), 'utf8'), '- [ ] Ship feature X\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('writeLoopPlanFile', () => {
+  it('creates .localagent-box and writes the plan file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-write-plan-'));
+    try {
+      writeLoopPlanFile(dir, '- [ ] one');
+      assert.equal(
+        fs.readFileSync(path.join(dir, '.localagent-box', 'loop-plan.md'), 'utf8'),
+        '- [ ] one\n',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('INITIAL_PLAN_RETRY_PROMPT', () => {
+  it('interpolates the goal template variable', () => {
+    const prompt = interpolateStepPrompt(INITIAL_PLAN_RETRY_PROMPT, {
+      goal: 'Add caching',
+      iteration: 0,
+      completionMarker: 'LOOP_COMPLETE',
+    });
+    assert.match(prompt, /Add caching/);
+    assert.match(prompt, /loop-plan\.md/);
+  });
+});
+
+function writePlan(dir: string, content: string): void {
+  const planDir = path.join(dir, '.localagent-box');
+  fs.mkdirSync(planDir, { recursive: true });
+  fs.writeFileSync(path.join(planDir, 'loop-plan.md'), content, 'utf8');
+}

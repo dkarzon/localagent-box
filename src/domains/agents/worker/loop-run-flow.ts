@@ -30,7 +30,12 @@ import {
   resolveBatchFailureMessage,
   resolveRunConfig,
 } from './batch-run-flow';
-import { buildIterationHandoffBlock } from './loop-handoff';
+import {
+  buildIterationHandoffBlock,
+  INITIAL_PLAN_RETRY_PROMPT,
+  isLoopPlanFilePresent,
+  seedLoopPlanFromAssistantText,
+} from './loop-handoff';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
 
@@ -84,6 +89,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   exit: LoopStepExit;
   loopState: AgentLoopState;
   resolvedModel: string | null;
+  assistantText: string | null;
 }> {
   const {
     session,
@@ -183,13 +189,13 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   if (turnResult.outcome === 'cancelled') {
     await checkpointGitStatus();
     emitLoopStepEnd(session.eventWriter, { iteration, stepIndex, verb }, session.sessionId);
-    return { exit: { kind: 'cancelled' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'cancelled' }, loopState, resolvedModel: modelId, assistantText: null };
   }
 
   if (turnResult.outcome === 'timeout') {
     await checkpointGitStatus();
     emitLoopStepEnd(session.eventWriter, { iteration, stepIndex, verb }, session.sessionId);
-    return { exit: { kind: 'timeout' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'timeout' }, loopState, resolvedModel: modelId, assistantText: null };
   }
 
   if (turnResult.outcome === 'failed') {
@@ -203,8 +209,11 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
       },
       loopState,
       resolvedModel: modelId,
+      assistantText: null,
     };
   }
+
+  const assistantText = turnResult.assistantText ?? null;
 
   const completionSignal =
     (verb === 'REFLECT' || verb === 'ORIENT') &&
@@ -224,15 +233,15 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     loopState = patchLoopState('processing', loopState, { finishRequested: true });
     updateAgentRecord(agentsStore, job.agentId, { loop: loopState });
     appendLog(logPath, 'Finish requested — completing after current step');
-    return { exit: { kind: 'finish' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'finish' }, loopState, resolvedModel: modelId, assistantText };
   }
 
   if (completionSignal) {
     appendLog(logPath, `Loop completion signal detected on iteration ${iteration}`);
-    return { exit: { kind: 'complete' }, loopState, resolvedModel: modelId };
+    return { exit: { kind: 'complete' }, loopState, resolvedModel: modelId, assistantText };
   }
 
-  return { exit: { kind: 'continue', reflectText }, loopState, resolvedModel: modelId };
+  return { exit: { kind: 'continue', reflectText }, loopState, resolvedModel: modelId, assistantText };
 }
 
 export async function runLoopJob(ctx: WorkerContext): Promise<void> {
@@ -386,6 +395,48 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
       }
       if (initialExit.action === 'break') {
         harnessDone = true;
+      }
+
+      if (initialExit.action === 'continue') {
+        const initialPlanAssistantTexts: string[] = [];
+        if (initialResult.assistantText?.trim()) {
+          initialPlanAssistantTexts.push(initialResult.assistantText);
+        }
+
+        if (!isLoopPlanFilePresent(job.workspaceDir)) {
+          appendLog(
+            logPath,
+            'Loop plan file missing after INITIAL_PLAN — retrying with pointed prompt',
+          );
+          const retryResult = await runStepAndTrack({
+            ...sharedStepParams,
+            loopState,
+            iteration: 0,
+            stepIndex: 0,
+            verb: 'INITIAL_PLAN',
+            promptTemplate: INITIAL_PLAN_RETRY_PROMPT,
+          });
+          loopState = retryResult.loopState;
+          const retryExit = applyStepExit(retryResult.exit);
+          if (retryResult.assistantText?.trim()) {
+            initialPlanAssistantTexts.push(retryResult.assistantText);
+          }
+          if (retryExit.action === 'return') {
+            return;
+          }
+          if (retryExit.action === 'break') {
+            harnessDone = true;
+          }
+        }
+
+        if (!harnessDone && !isLoopPlanFilePresent(job.workspaceDir)) {
+          appendLog(logPath, 'Loop plan file still missing — host seeding from assistant output');
+          seedLoopPlanFromAssistantText(
+            job.workspaceDir,
+            initialPlanAssistantTexts.join('\n\n'),
+            job.prompt,
+          );
+        }
       }
     }
 

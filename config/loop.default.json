@@ -6,7 +6,7 @@
   "steps": [
     {
       "verb": "ORIENT",
-      "prompt": "Use the host-injected plan checklist below when present; otherwise read `.localagent-box/loop-plan.md`. Inspect only files relevant to the next unfinished item, then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+      "prompt": "Use the host-injected plan checklist below. Inspect only files relevant to the next unfinished item, then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {
       "verb": "ACT",
