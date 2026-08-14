@@ -36,6 +36,7 @@ import {
   INITIAL_PLAN_RETRY_PROMPT,
   isLoopPlanFilePresent,
   seedLoopPlanFromAssistantText,
+  syncLoopStateFromPlanFile,
 } from './loop-handoff';
 import { formatCheckResultBlock, runLoopCheckCommand, type LoopCheckResult } from './loop-check';
 import { finalizeGitChanges, captureGitStatusCheckpoint, buildHostChangeSummary } from './workspace-setup';
@@ -468,6 +469,11 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
             job.prompt,
           );
         }
+
+        if (!harnessDone && isLoopPlanFilePresent(job.workspaceDir)) {
+          syncLoopStateFromPlanFile(job.workspaceDir, job.prompt, { iteration: 0 });
+          appendLog(logPath, 'Loop state synced from plan file after INITIAL_PLAN');
+        }
       }
     }
 
@@ -516,7 +522,10 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
           const stepExit = applyStepExit(stepResult.exit);
           if (stepExit.reflectText) {
             lastReflectText = stepExit.reflectText;
-            const ledger = applyLedgerUpdateFromReflect(job.workspaceDir, stepExit.reflectText);
+            const ledger = applyLedgerUpdateFromReflect(job.workspaceDir, stepExit.reflectText, {
+              goal: job.prompt,
+              iteration,
+            });
             lastReflectNext = ledger.parsed.next;
             if (ledger.ledgerUpdated) {
               appendLog(logPath, 'Loop plan ledger updated from REFLECT output');

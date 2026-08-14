@@ -2,11 +2,11 @@
   "version": 1,
   "maxIterations": 5,
   "completionMarker": "LOOP_COMPLETE",
-  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration and noting how to verify it. Planning only — no implementation. The host injects and maintains this ledger across iterations.\n\nGoal: {{goal}}",
+  "initialPlanPrompt": "Survey the codebase, then write `.localagent-box/loop-plan.md` as a markdown checklist (`- [ ] …`) of ordered milestones, each completable in one iteration. Optional per item: `— verify: <command>`. Planning only — no implementation. The host syncs this to `loop-state.json` and injects the next milestone each iteration.\n\nGoal: {{goal}}",
   "steps": [
     {
       "verb": "ORIENT",
-      "prompt": "Use the host-injected plan checklist below. Inspect only files relevant to the next unfinished item, then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
+      "prompt": "Use the host-injected milestone below. Inspect only files relevant to that milestone, then state the smallest next change toward the goal. Do not implement yet.\nIf the goal is already fully achieved, output a line exactly: `{{completionMarker}}: true` and nothing else.\n\nGoal: {{goal}}\nIteration: {{iteration}}"
     },
     {
       "verb": "ACT",

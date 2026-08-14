@@ -8,13 +8,18 @@ import {
   applyTicksToPlanContent,
   buildIterationHandoffBlock,
   formatPlanSlice,
+  formatLoopStateInjectionSlice,
   INITIAL_PLAN_RETRY_PROMPT,
   isLoopPlanFilePresent,
   parseReflectNextLine,
   parseReflectOutput,
   readLoopPlanSlice,
+  readLoopState,
   seedLoopPlanFromAssistantText,
+  syncLoopStateFromPlanFile,
+  validateLoopState,
   writeLoopPlanFile,
+  writeLoopState,
 } from './loop-handoff';
 import { interpolateStepPrompt } from './loop-config';
 
@@ -87,12 +92,100 @@ describe('applyLedgerUpdateFromReflect', () => {
       const result = applyLedgerUpdateFromReflect(
         dir,
         'DONE: completed Add validation\nNEXT: Wire API route',
+        { goal: 'Ship feature', iteration: 1 },
       );
       assert.equal(result.ledgerUpdated, true);
       assert.equal(result.parsed.next, 'Wire API route');
       const content = fs.readFileSync(path.join(dir, '.localagent-box', 'loop-plan.md'), 'utf8');
       assert.match(content, /- \[x\] Add validation/);
       assert.match(content, /- \[ \] Wire API/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('syncs loop-state.json when goal is provided', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-ledger-state-'));
+    try {
+      writePlan(dir, '- [x] Add validation\n- [ ] Wire API');
+      applyLedgerUpdateFromReflect(dir, 'NEXT: Wire API route\nFILES TOUCHED: src/a.ts', {
+        goal: 'Ship feature',
+        iteration: 2,
+      });
+      const state = readLoopState(dir);
+      assert.ok(state);
+      assert.equal(state.goal, 'Ship feature');
+      assert.equal(state.iteration, 2);
+      assert.equal(state.next, 'Wire API route');
+      assert.deepEqual(state.lastFiles, ['src/a.ts']);
+      assert.equal(state.milestones[1]?.done, false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('loop-state.json', () => {
+  it('validates and round-trips loop state', () => {
+    const state = validateLoopState({
+      version: 1,
+      goal: 'Ship feature',
+      milestones: [{ id: 'm1', text: 'Add validation', done: false }],
+      next: 'Start with models',
+      lastFiles: [],
+      iteration: 0,
+    });
+    assert.equal(state.goal, 'Ship feature');
+  });
+
+  it('syncs milestones from the markdown plan file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-state-sync-'));
+    try {
+      writePlan(dir, '- [ ] Add validation — verify: npm test\n- [ ] Wire API');
+      const state = syncLoopStateFromPlanFile(dir, 'Ship feature', { iteration: 0 });
+      assert.ok(state);
+      assert.equal(state.milestones.length, 2);
+      assert.equal(state.milestones[0]?.verify, 'npm test');
+      assert.equal(readLoopState(dir)?.goal, 'Ship feature');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('formats a compact injection slice from loop state', () => {
+    const slice = formatLoopStateInjectionSlice({
+      version: 1,
+      goal: 'Ship',
+      milestones: [
+        { id: 'm1', text: 'Add validation', done: true },
+        { id: 'm2', text: 'Wire API', done: false },
+      ],
+      next: 'Add POST handler',
+      lastFiles: [],
+      iteration: 2,
+    });
+    assert.equal(slice, 'Milestone: Wire API\nNEXT: Add POST handler');
+  });
+
+  it('prefers loop-state injection over the markdown plan slice', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-state-'));
+    try {
+      writePlan(dir, '- [ ] m1\n- [ ] m2\n- [ ] m3');
+      writeLoopState(dir, {
+        version: 1,
+        goal: 'Goal',
+        milestones: [
+          { id: 'm1', text: 'm1', done: true },
+          { id: 'm2', text: 'm2', done: false },
+        ],
+        next: 'do m2',
+        lastFiles: [],
+        iteration: 1,
+      });
+      const block = buildIterationHandoffBlock({ workspaceDir: dir });
+      assert.match(block ?? '', /Milestone: m2/);
+      assert.match(block ?? '', /NEXT: do m2/);
+      assert.doesNotMatch(block ?? '', /- \[ \] m3/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -189,6 +282,29 @@ describe('buildIterationHandoffBlock', () => {
       assert.match(block ?? '', /- \[ \] m2/);
       assert.match(block ?? '', /NEXT \(from last iteration\): implement m2/);
       assert.doesNotMatch(block ?? '', /## Previous iteration summary/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not duplicate NEXT when loop-state already includes it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-handoff-state-next-'));
+    try {
+      writePlan(dir, '- [ ] m1');
+      writeLoopState(dir, {
+        version: 1,
+        goal: 'Goal',
+        milestones: [{ id: 'm1', text: 'm1', done: false }],
+        next: 'from state',
+        lastFiles: [],
+        iteration: 1,
+      });
+      const block = buildIterationHandoffBlock({
+        workspaceDir: dir,
+        previousReflectNext: 'from reflect',
+      });
+      assert.match(block ?? '', /NEXT: from state/);
+      assert.doesNotMatch(block ?? '', /NEXT \(from last iteration\)/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
