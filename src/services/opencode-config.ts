@@ -191,6 +191,12 @@ export function buildOpenCodeConfig(
 
   if (options?.disableQuestionTool) {
     file.tools = { question: false };
+    // Explicit deny must follow wildcard allow — OpenCode merges legacy `tools` into
+    // permissions and last-match evaluation lets `* allow` override tools-derived deny.
+    file.permission = {
+      ...(file.permission ?? {}),
+      question: 'deny',
+    };
   }
 
   if (options?.codegraph) {

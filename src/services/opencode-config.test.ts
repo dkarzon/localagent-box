@@ -105,6 +105,23 @@ describe('buildOpenCodeConfig', () => {
     } as AppConfig;
     const file = buildOpenCodeConfig(config, { disableQuestionTool: true });
     assert.deepEqual(file.tools, { question: false });
+    assert.deepEqual(file.permission, { question: 'deny' });
+  });
+
+  it('denies question after wildcard allow so auto-approve cannot re-enable it', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config, {
+      autoApprovePermissions: true,
+      disableQuestionTool: true,
+    });
+    assert.deepEqual(file.permission, {
+      '*': { '*': 'allow' },
+      question: 'deny',
+    });
   });
 });
 
