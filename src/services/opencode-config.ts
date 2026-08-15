@@ -65,12 +65,17 @@ export interface OpenCodeMcpLocalServer {
   timeout?: number;
 }
 
+export type OpenCodePermissionAction = 'ask' | 'allow' | 'deny';
+
+/** OpenCode permission rules: wildcard maps or per-tool actions like `question: deny`. */
+export type OpenCodePermissionRule = OpenCodePermissionAction | Record<string, string>;
+
 export interface OpenCodeConfigFile {
   $schema: string;
   model: string;
   instructions?: string[];
   tools?: Record<string, boolean>;
-  permission?: Record<string, Record<string, string>>;
+  permission?: Record<string, OpenCodePermissionRule>;
   mcp?: Record<string, OpenCodeMcpLocalServer>;
   provider: Record<
     string,
