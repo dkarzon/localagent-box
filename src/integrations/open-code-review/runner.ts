@@ -22,7 +22,7 @@ export function getOcrBinary(): string {
 }
 
 export function writeOcrConfig(config: AppConfig, workspaceDir: string): void {
-  const effectiveModel = config.reviewModel || config.opencodeModel;
+  const effectiveModel = config.reviewModel || config.opencodeModel || 'llama3.2';
   const baseUrl = normalizeOpenCodeBaseUrl(config.ollamaBaseUrl);
   const ocrCfg: OcrConfig = {
     llm: {
