@@ -86,6 +86,26 @@ describe('buildOpenCodeConfig', () => {
       timeout: 15000,
     });
   });
+
+  it('omits tools block by default', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config);
+    assert.equal(file.tools, undefined);
+  });
+
+  it('disables the question tool when requested for unattended modes', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config, { disableQuestionTool: true });
+    assert.deepEqual(file.tools, { question: false });
+  });
 });
 
 describe('buildCodegraphMcpServer', () => {

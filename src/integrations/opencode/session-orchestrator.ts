@@ -129,11 +129,19 @@ export async function runSessionOrchestrator(
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codegraph });
+  const disableQuestionTool = mode === 'batch';
+  perAgentConfig.writeOpenCodeConfig(runConfig, {
+    autoApprovePermissions,
+    codegraph,
+    disableQuestionTool,
+  });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
   if (codegraph) {
     logCodegraphEnabled(logPath);
+  }
+  if (disableQuestionTool) {
+    appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended batch)');
   }
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
@@ -736,7 +744,13 @@ export async function startOpenCodeLoopSession(options: {
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job, codegraph });
+  perAgentConfig.writeOpenCodeConfig(runConfig, {
+    autoApprovePermissions,
+    job,
+    codegraph,
+    disableQuestionTool: true,
+  });
+  appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended loop)');
   if (codegraph) {
     logCodegraphEnabled(logPath);
   }

@@ -69,6 +69,7 @@ export interface OpenCodeConfigFile {
   $schema: string;
   model: string;
   instructions?: string[];
+  tools?: Record<string, boolean>;
   permission?: Record<string, Record<string, string>>;
   mcp?: Record<string, OpenCodeMcpLocalServer>;
   provider: Record<
@@ -87,6 +88,8 @@ export interface OpenCodeConfigBuildOptions {
   job?: AgentJob;
   /** When true, inject the codegraph MCP server into opencode.json. */
   codegraph?: boolean;
+  /** When true, set `tools.question: false` so unattended runs cannot block on user input. */
+  disableQuestionTool?: boolean;
 }
 
 export const CODEGRAPH_BIN = 'codegraph';
@@ -184,6 +187,10 @@ export function buildOpenCodeConfig(
 
   if (options?.autoApprovePermissions) {
     file.permission = { '*': { '*': 'allow' } };
+  }
+
+  if (options?.disableQuestionTool) {
+    file.tools = { question: false };
   }
 
   if (options?.codegraph) {
