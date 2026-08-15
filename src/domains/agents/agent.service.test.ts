@@ -25,6 +25,7 @@ const testRepo: Repo = {
   lastVerifiedAt: null,
   lastVerifyStatus: null,
   lastVerifyMessage: null,
+  autoReviewPullRequests: null,
 };
 
 function mockChildProcess(): ChildProcess {
@@ -138,6 +139,7 @@ function createTestContext(options?: {
         created_at: '2026-06-09T00:10:00.000Z',
         merged_at: null,
         updated_at: '2026-06-09T00:10:00.000Z',
+        head: { sha: 'deadbeef1234567890abcdef1234567890abcdef', ref: input.head },
       };
     },
     fetchRepositoryBranches: async () => [],
@@ -145,6 +147,7 @@ function createTestContext(options?: {
       throw new Error('not implemented');
     },
     findPullRequestByHead: async () => null,
+    createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
     redactSecrets: (text) => text,
     createAppJwt: () => '',
     normalizePrivateKey: (key) => key,
@@ -161,6 +164,7 @@ function createTestContext(options?: {
       message: 'ok',
     }),
     createBranch: async () => {},
+    fetchAndCheckoutBranch: async () => {},
     getPorcelainStatus: async () => ' M src/changed.ts',
     getDiffStat: async () => ' src/changed.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)',
     parsePorcelainStatus: () => [{ path: 'src/changed.ts', kind: 'modified', statusCode: ' M' }],
@@ -836,5 +840,212 @@ describe('createPullRequest', () => {
     assert.equal(capturedTitle, 'Implemented retries with jitter and updated docs.');
     assert.match(capturedBody, /Implemented retries with jitter/);
     assert.match(capturedBody, /Local Agent Box session/);
+  });
+
+  it('auto-spawns review agent when auto-review is enabled', async () => {
+    const agentId = 'completedreview1';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'localagent/retry-webhook',
+        branch: 'localagent/retry-webhook',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent/retry-webhook',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    await service.createPullRequest(agentId);
+
+    const reviewAgents = repository
+      .findAll()
+      .filter((entry) => entry.mode === 'review' && entry.parentAgentId === agentId);
+    assert.equal(reviewAgents.length, 1);
+    assert.equal(reviewAgents[0].review?.headBranch, 'localagent/retry-webhook');
+    assert.equal(reviewAgents[0].review?.baseBranch, 'main');
+  });
+
+  it('skips duplicate auto-review for the same PR head sha', async () => {
+    const agentId = 'completedreview2';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'localagent/retry-webhook',
+        branch: 'localagent/retry-webhook',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent/retry-webhook',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    repository.save({
+      ...baseAgentFields({
+        agentId: 'reviewexisting1',
+        mode: 'review',
+        status: 'completed',
+        parentAgentId: agentId,
+      }),
+      review: {
+        baseBranch: 'main',
+        headBranch: 'localagent/retry-webhook',
+        prNumber: 42,
+        headSha: 'deadbeef1234567890abcdef1234567890abcdef',
+      },
+    });
+
+    await service.createPullRequest(agentId);
+
+    const reviewAgents = repository
+      .findAll()
+      .filter((entry) => entry.mode === 'review' && entry.parentAgentId === agentId);
+    assert.equal(reviewAgents.length, 1);
+  });
+
+  it('skips auto-review when a child branch-pair review already exists', async () => {
+    const agentId = 'completedreview3';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'localagent/retry-webhook',
+        branch: 'localagent/retry-webhook',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent/retry-webhook',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    // Manual review for the same parent/branches — no PR/sha metadata yet,
+    // so isDuplicateReview would miss it and createAgent would throw DUPLICATE.
+    repository.save({
+      ...baseAgentFields({
+        agentId: 'reviewexisting2',
+        mode: 'review',
+        status: 'queued',
+        parentAgentId: agentId,
+      }),
+      review: {
+        baseBranch: 'main',
+        headBranch: 'localagent/retry-webhook',
+      },
+    });
+
+    const updated = await service.createPullRequest(agentId);
+
+    assert.ok(updated.pullRequest);
+    assert.equal(updated.pullRequest?.number, 42);
+
+    const reviewAgents = repository
+      .findAll()
+      .filter((entry) => entry.mode === 'review' && entry.parentAgentId === agentId);
+    assert.equal(reviewAgents.length, 1);
+    assert.equal(reviewAgents[0].agentId, 'reviewexisting2');
+  });
+
+  it('allows a new review after a completed branch-pair review', async () => {
+    const agentId = 'completedreview4';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'localagent/retry-webhook',
+        branch: 'localagent/retry-webhook',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent/retry-webhook',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    repository.save({
+      ...baseAgentFields({
+        agentId: 'reviewexisting3',
+        mode: 'review',
+        status: 'completed',
+        parentAgentId: agentId,
+      }),
+      review: {
+        baseBranch: 'main',
+        headBranch: 'localagent/retry-webhook',
+      },
+    });
+
+    const reviewAgent = service.createAgent({
+      repoId: testRepo.repoId,
+      mode: 'review',
+      prompt: '',
+      baseBranch: 'main',
+      headBranch: 'localagent/retry-webhook',
+      parentAgentId: agentId,
+    });
+
+    assert.equal(reviewAgent.mode, 'review');
+    assert.equal(reviewAgent.parentAgentId, agentId);
+    assert.equal(reviewAgent.status, 'queued');
   });
 });

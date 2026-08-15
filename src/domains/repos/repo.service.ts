@@ -18,6 +18,10 @@ export interface RepoService {
   listRepos: () => Repo[];
   getRepo: (repoId: string) => Repo;
   registerRepo: (body: RegisterRepoRequest) => Repo;
+  updateRepo: (
+    repoId: string,
+    updates: Partial<Pick<Repo, 'autoReviewPullRequests'>>,
+  ) => Repo;
   deleteRepo: (repoId: string) => Repo;
   verifyRepo: (
     config: AppConfig,
@@ -33,6 +37,7 @@ export interface RepoService {
     repoId: string,
     workspaceDir: string,
     branch?: unknown,
+    options?: { fullHistory?: boolean },
   ) => Promise<{ repo: Repo; branch: string; workspaceDir: string }>;
   validateRepoId: (repoId: unknown) => string;
 }
@@ -79,6 +84,7 @@ export function createRepoService({
       lastVerifiedAt: null,
       lastVerifyStatus: null,
       lastVerifyMessage: null,
+      autoReviewPullRequests: null,
     };
 
     repository.add(repo);
@@ -129,6 +135,7 @@ export function createRepoService({
     repoId: string,
     workspaceDir: string,
     branch?: unknown,
+    options?: { fullHistory?: boolean },
   ) {
     const repo = getRepo(repoId);
     const branchToUse = branch ? validateBranchName(branch) : repo.defaultBranch;
@@ -140,6 +147,7 @@ export function createRepoService({
       branch: branchToUse,
       targetDir: workspaceDir,
       token,
+      fullHistory: options?.fullHistory,
     });
 
     return {
@@ -153,6 +161,13 @@ export function createRepoService({
     listRepos: () => repository.findAll(),
     getRepo,
     registerRepo,
+    updateRepo: (repoId, updates) => {
+      const repo = repository.update(repoId, updates);
+      if (!repo) {
+        throw new CodedError('Repository not found', 'NOT_FOUND');
+      }
+      return repo;
+    },
     deleteRepo,
     verifyRepo,
     resolveAuthenticatedCloneUrl,

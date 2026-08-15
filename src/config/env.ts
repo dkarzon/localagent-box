@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'path';
 import { DEFAULT_API_TOKEN } from '../lib/auth-constants';
 import { parsePositiveInt } from '../lib/parse';
@@ -50,7 +51,26 @@ function resolveAgentWorkspace(dataDir: string): string {
   return '/workspace/agents';
 }
 
+function loadDotenv(): Record<string, string> {
+  const result: Record<string, string> = {};
+  try {
+    const dotfile = path.join(process.cwd(), '.env');
+    if (fs.existsSync(dotfile)) {
+      for (const line of fs.readFileSync(dotfile, 'utf8').split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+        const idx = trimmed.indexOf('=');
+        const key = trimmed.slice(0, idx).trim();
+        const val = trimmed.slice(idx + 1).trim();
+        result[key] = val;
+      }
+    }
+  } catch {}
+  return result;
+}
+
 export function loadServerEnv(): ServerEnv {
+  const fileVars = loadDotenv();
   const isProduction = process.env.NODE_ENV === 'production';
   const apiToken = process.env.API_TOKEN || DEFAULT_API_TOKEN;
 
@@ -60,29 +80,29 @@ export function loadServerEnv(): ServerEnv {
     );
   }
 
-  const dataDir = process.env.DATA_DIR || '/data';
-  const agentTimeoutSeconds = parsePositiveInt(process.env.AGENT_TIMEOUT, 3600);
+  const dataDir = process.env.DATA_DIR || fileVars.DATA_DIR || '/data';
+  const agentTimeoutSeconds = parsePositiveInt(process.env.AGENT_TIMEOUT ?? fileVars.AGENT_TIMEOUT, 3600);
 
   return {
-    port: parsePort(process.env.PORT),
+    port: parsePort(process.env.PORT ?? fileVars.PORT),
     dataDir,
     agentWorkspace: resolveAgentWorkspace(dataDir),
-    maxConcurrentAgents: parsePositiveInt(process.env.MAX_CONCURRENT_AGENTS, 3),
+    maxConcurrentAgents: parsePositiveInt(process.env.MAX_CONCURRENT_AGENTS ?? fileVars.MAX_CONCURRENT_AGENTS, 3),
     agentTimeoutSeconds,
     agentTimeoutMs: agentTimeoutSeconds * 1000,
     apiToken,
     publicDir: path.join(__dirname, '..', '..', 'public'),
     isProduction,
-    logLevel: process.env.LOG_LEVEL || (isProduction ? 'info' : 'debug'),
-    maxBodyBytes: parsePositiveInt(process.env.MAX_BODY_BYTES, 5 * 1024 * 1024),
-    shutdownTimeoutMs: parsePositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 30_000),
-    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || undefined,
-    opencodeModel: process.env.OPENCODE_MODEL || undefined,
-    opencodeProvider: process.env.OPENCODE_PROVIDER || undefined,
-    opencodeBin: process.env.OPENCODE_BIN || 'opencode',
-    opencodePortBase: parsePositiveInt(process.env.OPENCODE_PORT_BASE, 4100),
-    opencodeStartupTimeoutMs: parsePositiveInt(process.env.OPENCODE_STARTUP_TIMEOUT_MS, 900_000),
-    enableCodegraph: parseBool(process.env.ENABLE_CODEGRAPH),
+    logLevel: (process.env.LOG_LEVEL ?? fileVars.LOG_LEVEL) || (isProduction ? 'info' : 'debug'),
+    maxBodyBytes: parsePositiveInt(process.env.MAX_BODY_BYTES ?? fileVars.MAX_BODY_BYTES, 5 * 1024 * 1024),
+    shutdownTimeoutMs: parsePositiveInt(process.env.SHUTDOWN_TIMEOUT_MS ?? fileVars.SHUTDOWN_TIMEOUT_MS, 30_000),
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || fileVars.OLLAMA_BASE_URL || undefined,
+    opencodeModel: process.env.OPENCODE_MODEL || fileVars.OPENCODE_MODEL || undefined,
+    opencodeProvider: process.env.OPENCODE_PROVIDER || fileVars.OPENCODE_PROVIDER || undefined,
+    opencodeBin: process.env.OPENCODE_BIN || fileVars.OPENCODE_BIN || 'opencode',
+    opencodePortBase: parsePositiveInt(process.env.OPENCODE_PORT_BASE ?? fileVars.OPENCODE_PORT_BASE, 4100),
+    opencodeStartupTimeoutMs: parsePositiveInt(process.env.OPENCODE_STARTUP_TIMEOUT_MS ?? fileVars.OPENCODE_STARTUP_TIMEOUT_MS, 900_000),
+    enableCodegraph: parseBool(process.env.ENABLE_CODEGRAPH ?? fileVars.ENABLE_CODEGRAPH),
   };
 }
 
@@ -97,3 +117,4 @@ export function getServerEnv(): ServerEnv {
 export function resetServerEnvCache(): void {
   cachedEnv = null;
 }
+

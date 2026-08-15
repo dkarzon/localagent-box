@@ -22,6 +22,7 @@ const stubGithubApp: GithubAppService = {
     throw new Error('not implemented');
   },
   findPullRequestByHead: async () => null,
+  createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
   redactSecrets: (text) => text,
   createAppJwt: () => '',
   normalizePrivateKey: (key) => key,

@@ -1,6 +1,6 @@
 export type StatusVariant = '' | 'success' | 'error';
 
-export type AgentMode = 'batch' | 'interactive' | 'loop';
+export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
 
 export type LoopVerb = 'INITIAL_PLAN' | 'ORIENT' | 'ACT' | 'REFLECT';
 
@@ -121,6 +121,8 @@ export interface AppConfig {
   loopAgentTimeoutSeconds?: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback chain. */
   loopVerbModels?: LoopVerbModels;
+  autoReviewPullRequests?: boolean;
+  reviewModel?: string;
   ollama?: OllamaStatus;
   opencode?: { path?: string };
 }
@@ -140,6 +142,17 @@ export interface Repo {
   lastVerifiedAt?: string;
   lastVerifyStatus?: string;
   lastVerifyMessage?: string;
+  autoReviewPullRequests?: boolean | null;
+}
+
+export interface AgentReviewMetadata {
+  baseBranch?: string | null;
+  headBranch?: string | null;
+  background?: string | null;
+  ocrResultPath?: string | null;
+  githubReviewId?: string | null;
+  headSha?: string | null;
+  prNumber?: number | null;
 }
 
 export interface AgentPullRequest {
@@ -216,6 +229,8 @@ export interface Agent {
   autoApprovePermissions?: boolean;
   result?: { warning?: string; commitSha?: string | null; opencodeSuccess?: boolean };
   pullRequest?: AgentPullRequest | null;
+  parentAgentId?: string | null;
+  review?: AgentReviewMetadata | null;
   tokenUsage?: AgentTokenUsage;
 }
 
@@ -276,6 +291,81 @@ export function isLoopAgent(agent: Agent): boolean {
   return getAgentMode(agent) === 'loop';
 }
 
+export function isReviewAgent(agent: Agent): boolean {
+  return getAgentMode(agent) === 'review';
+}
+
+function isDuplicateBranchReview(
+  existingAgent: Agent,
+  parentAgentId: string,
+  baseBranch: string,
+  headBranch: string,
+): boolean {
+  if (existingAgent.mode !== 'review' || existingAgent.parentAgentId !== parentAgentId) {
+    return false;
+  }
+  if (!ACTIVE_AGENT_STATUSES.has(existingAgent.status as AgentStatus)) {
+    return false;
+  }
+  const review = existingAgent.review;
+  if (!review) {
+    return false;
+  }
+  return review.baseBranch === baseBranch && review.headBranch === headBranch;
+}
+
+function isBranchInUse(
+  agents: Agent[],
+  repoId: string,
+  branch: string,
+  excludeAgentId?: string,
+): boolean {
+  return agents.some(
+    (entry) =>
+      entry.agentId !== excludeAgentId &&
+      entry.repoId === repoId &&
+      ACTIVE_AGENT_STATUSES.has(entry.status as AgentStatus) &&
+      entry.agentBranch === branch,
+  );
+}
+
+export function canReviewBranches(
+  agent: Agent,
+  options: { relatedAgents?: Agent[]; baseBranch?: string; agentsLoaded?: boolean },
+): boolean {
+  if (
+    isReviewAgent(agent) ||
+    agent.status !== 'completed' ||
+    agent.pushed !== true ||
+    !(agent.agentBranch || agent.branch)
+  ) {
+    return false;
+  }
+
+  // Wait until the caller has fetched agents; unlike Create PR this needs conflict checks.
+  if (!options.agentsLoaded) {
+    return false;
+  }
+
+  const headBranch = agent.agentBranch || agent.branch!;
+  const relatedAgents = options.relatedAgents ?? [];
+
+  if (
+    options.baseBranch &&
+    relatedAgents.some((entry) =>
+      isDuplicateBranchReview(entry, agent.agentId, options.baseBranch!, headBranch),
+    )
+  ) {
+    return false;
+  }
+
+  if (isBranchInUse(relatedAgents, agent.repoId, headBranch, agent.agentId)) {
+    return false;
+  }
+
+  return true;
+}
+
 export function formatLoopProgress(loop: AgentLoopState, stepModel?: string | null): string {
   if (loop.currentVerb === 'INITIAL_PLAN') {
     return stepModel?.trim() ? `Initial plan · ${stepModel.trim()}` : 'Initial plan';
@@ -294,6 +384,7 @@ export function formatLoopProgress(loop: AgentLoopState, stepModel?: string | nu
 export function agentModeBadgeVariant(mode: AgentMode): 'awaiting' | 'processing' | 'neutral' {
   if (mode === 'interactive') return 'awaiting';
   if (mode === 'loop') return 'processing';
+  if (mode === 'review') return 'processing';
   return 'neutral';
 }
 

@@ -22,6 +22,15 @@ import {
 } from '../../lib/pr-content-generator';
 import { getLogger } from '../../lib/logger';
 import { parsePositiveInt } from '../../lib/parse';
+import {
+  buildAutoSpawnReviewBackground,
+  readParentTranscriptLines,
+} from '../../lib/review-background';
+import {
+  isDuplicateBranchReview,
+  isDuplicateReview,
+  resolveAutoReviewPullRequests,
+} from '../../lib/resolve-auto-review';
 import { CodedError, getErrorMessage } from '../../types';
 import type { Agent, AgentJob, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
@@ -352,6 +361,7 @@ export function createAgentService(options: {
       agentId,
     );
 
+    const mode = payload.mode;
     const config = configRepository.load();
     githubApp.assertConfigured(config);
 
@@ -360,6 +370,27 @@ export function createAgentService(options: {
         `Agent branch "${payload.agentBranch}" is already in use by an active job on this repo`,
         'BRANCH_IN_USE',
       );
+    }
+
+    // Validate review-specific fields
+    if (mode === 'review' && !payload.headBranch) {
+      throw new CodedError('Review mode requires headBranch to be specified', 'VALIDATION_ERROR');
+    }
+    if (mode === 'review' && payload.parentAgentId && payload.headBranch) {
+      const duplicate = repository.findAll().find((entry) =>
+        isDuplicateBranchReview(
+          entry,
+          payload.parentAgentId!,
+          payload.baseBranch,
+          payload.headBranch!,
+        ),
+      );
+      if (duplicate) {
+        throw new CodedError(
+          'A review for these branches is already in progress',
+          'DUPLICATE',
+        );
+      }
     }
     const workspaceId = crypto.randomUUID();
     const workspaceDir = repository.getWorkspaceDir(workspaceId);
@@ -383,7 +414,7 @@ export function createAgentService(options: {
       push: payload.push,
       pushOnFailure: payload.pushOnFailure,
       autoApprovePermissions: payload.autoApprovePermissions,
-      model: payload.model,
+      model: payload.model || null,
       ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
       status: 'queued',
       commitSha: null,
@@ -406,9 +437,19 @@ export function createAgentService(options: {
             interactive: buildInteractiveState('queued'),
           }
         : {}),
-      ...(payload.mode === 'loop'
+      ...((mode as import('../../types').AgentMode) === 'loop'
         ? {
             loop: buildLoopState('queued'),
+          }
+        : {}),
+      ...((mode as import('../../types').AgentMode) === 'review'
+        ? {
+            parentAgentId: payload.parentAgentId || null,
+            review: {
+              baseBranch: payload.baseBranch || null,
+              headBranch: payload.headBranch || null,
+              background: payload.background || null,
+            },
           }
         : {}),
     };
@@ -923,7 +964,101 @@ export function createAgentService(options: {
     if (!updated) {
       throw new CodedError('Agent not found', 'NOT_FOUND');
     }
+
+    const headSha = githubPr.head?.sha || agent.commitSha || '';
+    maybeSpawnReviewAgent(updated, pullRequest, headSha);
+
     return updated;
+  }
+
+  function maybeSpawnReviewAgent(
+    parentAgent: Agent,
+    pullRequest: NonNullable<Agent['pullRequest']>,
+    headSha: string,
+  ): void {
+    const repo = repoManager.getRepo(parentAgent.repoId);
+    const config = configRepository.load();
+
+    if (!resolveAutoReviewPullRequests(undefined, repo, config)) {
+      return;
+    }
+
+    if (!headSha) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — PR #${pullRequest.number} has no head SHA`,
+      );
+      return;
+    }
+
+    const headBranch = parentAgent.agentBranch || parentAgent.branch;
+    if (!headBranch) {
+      return;
+    }
+
+    const base = parentAgent.useExistingBranch
+      ? repo.defaultBranch || 'main'
+      : parentAgent.baseBranch || repo.defaultBranch || 'main';
+
+    const existingReviews = repository.findAll();
+    const shaDuplicate = existingReviews.find(
+      (entry) =>
+        entry.mode === 'review' &&
+        entry.parentAgentId === parentAgent.agentId &&
+        isDuplicateReview(entry, pullRequest.number, headSha),
+    );
+    if (shaDuplicate) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — PR #${pullRequest.number} @ ${headSha.slice(0, 7)} already reviewed`,
+      );
+      return;
+    }
+
+    // Same branch-pair guard as createAgent — skip instead of throwing DUPLICATE
+    // after the GitHub PR has already been created and saved.
+    const branchDuplicate = existingReviews.find((entry) =>
+      isDuplicateBranchReview(entry, parentAgent.agentId, base, headBranch),
+    );
+    if (branchDuplicate) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — review for ${base}...${headBranch} already exists (${branchDuplicate.agentId})`,
+      );
+      return;
+    }
+
+    const conversationPath = repository.getConversationPath(parentAgent.agentId);
+    let transcript = '';
+    if (fsImpl.existsSync(conversationPath)) {
+      const lines = fsImpl.readFileSync(conversationPath, 'utf8').trim().split('\n');
+      transcript = readParentTranscriptLines(lines);
+    }
+
+    const background = buildAutoSpawnReviewBackground(parentAgent, transcript);
+
+    try {
+      const reviewAgent = createAgent({
+        repoId: parentAgent.repoId,
+        mode: 'review',
+        prompt: '',
+        baseBranch: base,
+        headBranch,
+        useExistingBranch: true,
+        parentAgentId: parentAgent.agentId,
+        background,
+      } as CreateAgentRequest);
+
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Auto-spawned review agent ${reviewAgent.agentId} for PR #${pullRequest.number}`,
+      );
+    } catch (err) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — failed to spawn: ${getErrorMessage(err)}`,
+      );
+    }
   }
 
   async function refreshPullRequest(agentId: string): Promise<Agent> {

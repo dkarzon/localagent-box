@@ -18,6 +18,7 @@ const baseConfig: AppConfig = {
   loopAutoApprovePermissions: true,
   interactiveAutoApprovePermissions: false,
   autoCreatePullRequest: true,
+  reviewModel: '',
   interactiveAgentTimeoutSeconds: 3600,
   loopAgentTimeoutSeconds: 3600,
   loopVerbModels: {

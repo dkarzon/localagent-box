@@ -60,6 +60,13 @@ export interface GithubAppService {
     repo: string,
     headBranch: string,
   ) => Promise<GitHubPullRequestResponse | null>;
+  createPullRequestReview: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    input: { body: string; event?: 'COMMENT' },
+  ) => Promise<{ id: string; html_url: string }>;
   redactSecrets: (text: string | undefined | null) => string | undefined | null;
   createAppJwt: (appId: string, privateKeyPem: string) => string;
   normalizePrivateKey: (privateKey: string) => string;
@@ -242,6 +249,30 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     return pulls[0] ?? null;
   }
 
+  async function createPullRequestReview(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    input: { body: string; event?: 'COMMENT' },
+  ): Promise<{ id: string; html_url: string }> {
+    const result = await githubApiRequest<Record<string, unknown>>(
+      config,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/reviews`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          body: input.body,
+          event: (input.event || 'COMMENT') as string,
+        }),
+      },
+    );
+    return {
+      id: String(result.id ?? ''),
+      html_url: String(result.html_url ?? ''),
+    };
+  }
+
   function redactSecrets(text: string | undefined | null): string | undefined | null {
     if (!text) {
       return text;
@@ -257,6 +288,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     fetchRepositoryBranches,
     createPullRequest,
     getPullRequest,
+    createPullRequestReview,
     findPullRequestByHead,
     redactSecrets,
     createAppJwt,

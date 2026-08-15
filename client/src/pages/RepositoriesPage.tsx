@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { updateRepoSettings } from '../api/repos';
 import { apiFetch, authHeaders } from '../api/client';
 import type { Repo, StatusVariant } from '../api/types';
 import { useApiToken } from '../hooks/useApiToken';
@@ -6,7 +7,7 @@ import { PAGE_SUBTITLES, PAGE_TITLES } from '../navigation';
 import { IconFolder, IconInfo, IconRefresh } from '../components/icons';
 import { Badge } from '../components/ui/Badge';
 import { StatCard } from '../components/ui/Card';
-import { Button, Field, TextInput } from '../components/ui/Form';
+import { Button, Field, Select, TextInput } from '../components/ui/Form';
 import { StatusMessage } from '../components/ui/StatusMessage';
 
 interface RepositoriesPageProps {
@@ -81,6 +82,22 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
 
   const setRepoAction = (repoId: string, message: string, variant: StatusVariant) => {
     setRepoActions((prev) => ({ ...prev, [repoId]: { message, variant } }));
+  };
+
+  const updateAutoReview = async (repoId: string, value: 'inherit' | 'on' | 'off') => {
+    const autoReviewPullRequests = value === 'inherit' ? null : value === 'on';
+    setRepoAction(repoId, 'Updating review settings…', '');
+    try {
+      await updateRepoSettings(repoId, { autoReviewPullRequests }, token);
+      setRepoAction(repoId, 'Review settings updated.', 'success');
+      await refreshRepos();
+    } catch (err) {
+      setRepoAction(
+        repoId,
+        err instanceof Error ? err.message : 'Failed to update review settings',
+        'error',
+      );
+    }
   };
 
   const verifyRepo = async (repoId: string) => {
@@ -234,7 +251,7 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
                     </div>
                   </header>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <p className="label-md text-muted">Branch</p>
                       <p className="mt-1 code-md text-on-surface-variant">{repo.defaultBranch}</p>
@@ -250,6 +267,29 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
                       <p className="mt-1 truncate code-md text-xs text-on-surface-variant">
                         {repo.cloneUrl}
                       </p>
+                    </div>
+                    <div>
+                      <p className="label-md text-muted">Auto-review PRs</p>
+                      <Select
+                        className="mt-1"
+                        value={
+                          repo.autoReviewPullRequests === true
+                            ? 'on'
+                            : repo.autoReviewPullRequests === false
+                              ? 'off'
+                              : 'inherit'
+                        }
+                        onChange={(e) =>
+                          void updateAutoReview(
+                            repo.repoId,
+                            e.target.value as 'inherit' | 'on' | 'off',
+                          )
+                        }
+                      >
+                        <option value="inherit">Inherit global</option>
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                      </Select>
                     </div>
                   </div>
 

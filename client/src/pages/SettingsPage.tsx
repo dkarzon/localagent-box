@@ -88,6 +88,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
   const [interactiveAgentTimeoutSeconds, setInteractiveAgentTimeoutSeconds] = useState(3600);
   const [loopAgentTimeoutSeconds, setLoopAgentTimeoutSeconds] = useState(3600);
   const [loopVerbModels, setLoopVerbModels] = useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
+  const [autoReviewPullRequests, setAutoReviewPullRequests] = useState(false);
+  const [reviewModel, setReviewModel] = useState('');
   const [workspaceRetentionDays, setWorkspaceRetentionDays] = useState(30);
   const [cleanupStatus, setCleanupStatus] = useState('');
   const [cleanupStatusVariant, setCleanupStatusVariant] = useState<StatusVariant>('');
@@ -142,6 +144,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       setInteractiveAgentTimeoutSeconds(config.interactiveAgentTimeoutSeconds ?? 3600);
       setLoopAgentTimeoutSeconds(config.loopAgentTimeoutSeconds ?? 3600);
       setLoopVerbModels(mergeLoopVerbModels(config.loopVerbModels));
+      setAutoReviewPullRequests(config.autoReviewPullRequests === true);
+      setReviewModel(config.reviewModel || '');
       configEverLoadedRef.current = true;
       setConfigLoaded(true);
       setStatus('All settings loaded successfully');
@@ -209,6 +213,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       interactiveAgentTimeoutSeconds,
       loopAgentTimeoutSeconds,
       loopVerbModels,
+      autoReviewPullRequests,
+      reviewModel: reviewModel.trim(),
     };
 
     try {
@@ -225,6 +231,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       setInteractiveAgentTimeoutSeconds(config.interactiveAgentTimeoutSeconds ?? 3600);
       setLoopAgentTimeoutSeconds(config.loopAgentTimeoutSeconds ?? 3600);
       setLoopVerbModels(mergeLoopVerbModels(config.loopVerbModels));
+      setAutoReviewPullRequests(config.autoReviewPullRequests === true);
+      setReviewModel(config.reviewModel || '');
 
       let message = 'Settings saved.';
       if (config.opencode?.path) {
@@ -486,6 +494,36 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                     onChange={(e) => updateField('opencodeProvider', e.target.value)}
                   />
                 </Field>
+              </div>
+            </SectionCard>
+          ) : null}
+
+          {showSection(['review', 'code review', 'ocr', 'pull request', 'auto-review']) ? (
+            <SectionCard
+              title="Code review"
+              icon={<span className="code-md text-secondary">CR</span>}
+              className="lg:col-span-2"
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Review model">
+                  <TextInput
+                    name="reviewModel"
+                    placeholder="Leave empty to use OpenCode model"
+                    value={reviewModel}
+                    onChange={(e) => setReviewModel(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <div className="mt-4">
+                <CheckboxField
+                  label="Auto-review pull requests after agent-created PRs"
+                  checked={autoReviewPullRequests}
+                  onChange={(e) => setAutoReviewPullRequests(e.target.checked)}
+                />
+                <p className="mt-2 text-sm text-muted">
+                  When enabled, a review agent is queued automatically after a coding agent creates a
+                  pull request. Per-repo settings can override this default.
+                </p>
               </div>
             </SectionCard>
           ) : null}

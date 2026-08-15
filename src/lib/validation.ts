@@ -123,18 +123,23 @@ export function validatePrompt(prompt: unknown): string {
   return sanitized;
 }
 
-export type AgentMode = 'batch' | 'interactive' | 'loop';
+export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
 
 export function validateAgentMode(mode: unknown): AgentMode {
   if (mode == null || mode === '') {
     return 'batch';
   }
 
-  if (mode === 'batch' || mode === 'interactive' || mode === 'loop') {
+  if (
+    mode === 'batch' ||
+    mode === 'interactive' ||
+    mode === 'loop' ||
+    mode === 'review'
+  ) {
     return mode;
   }
 
-  throw validationError('mode must be "batch", "interactive", or "loop"');
+  throw validationError('mode must be "batch", "interactive", "loop", or "review"');
 }
 
 export function validateMessageText(text: unknown): string {

@@ -46,6 +46,20 @@ const handleDeleteRepo = withErrorHandling(
   },
 );
 
+const handleUpdateRepo = withErrorHandling(async (req, res, ctx, repoId) => {
+  const body = await readJsonBody(req);
+  const updates: { autoReviewPullRequests?: boolean | null } = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'autoReviewPullRequests')) {
+    if (body.autoReviewPullRequests === null) {
+      updates.autoReviewPullRequests = null;
+    } else if (typeof body.autoReviewPullRequests === 'boolean') {
+      updates.autoReviewPullRequests = body.autoReviewPullRequests;
+    }
+  }
+  const repo = ctx.repoManager.updateRepo(repoId, updates);
+  sendJson(res, 200, { repo });
+});
+
 const reposRoute: Route = {
   match: (_method, pathname) => pathname.startsWith('/api/v1/repos'),
   handle: async (req, res, ctx) => {
@@ -63,6 +77,14 @@ const reposRoute: Route = {
     const detailMatch = pathname.match(/^\/api\/v1\/repos\/([^/]+)$/);
     if (detailMatch) {
       const repoId = detailMatch[1];
+
+      if (req.method === 'PUT') {
+        if (!requireAuth(req, res)) {
+          return;
+        }
+        await handleUpdateRepo(req, res, ctx, repoId);
+        return;
+      }
 
       if (req.method === 'GET') {
         await handleGetRepo(req, res, ctx, repoId);

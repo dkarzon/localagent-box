@@ -9,6 +9,7 @@ import { apiFetch, authHeaders } from '../api/client';
 import {
   agentModeBadgeVariant,
   canCreatePullRequest,
+  canReviewBranches,
   getAgentMode,
   isAgentActive,
   type Agent,
@@ -55,6 +56,10 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const [defaultModel, setDefaultModel] = useState('');
   const [followTail, setFollowTail] = useState(true);
   const [prBusy, setPrBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [relatedSessions, setRelatedSessions] = useState<Agent[]>([]);
+  const [allAgents, setAllAgents] = useState<Agent[]>([]);
+  const [allAgentsLoaded, setAllAgentsLoaded] = useState(false);
   const [showDebugLogs, setShowDebugLogs] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [pageStatus, setPageStatus] = useState('');
@@ -92,15 +97,39 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     }
   }, []);
 
+  const loadRelatedSessions = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ agents: Agent[] }>('/api/v1/agents');
+      setAllAgents(data.agents);
+      setAllAgentsLoaded(true);
+      const parentAgentId = agent?.parentAgentId;
+      const related = data.agents.filter(
+        (entry) =>
+          entry.parentAgentId === agentId ||
+          (parentAgentId && entry.agentId === parentAgentId) ||
+          (parentAgentId &&
+            entry.parentAgentId === parentAgentId &&
+            entry.agentId !== agentId),
+      );
+      setRelatedSessions(related);
+    } catch {
+      setAllAgents([]);
+      setAllAgentsLoaded(false);
+      setRelatedSessions([]);
+    }
+  }, [agentId, agent?.parentAgentId]);
+
   useEffect(() => {
     loadLogs();
     loadConfig();
-  }, [loadLogs, loadConfig]);
+    void loadRelatedSessions();
+  }, [loadLogs, loadConfig, loadRelatedSessions]);
 
   usePolling(
     () => {
       session.loadAgent();
       loadLogs();
+      void loadRelatedSessions();
       if (!session.messagesLoaded || !session.eventsConnected) {
         void session.loadMessages();
       }
@@ -114,6 +143,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
       try {
         const data = await refreshAgentPullRequest(agentId);
         session.loadAgent();
+        void loadRelatedSessions();
         void data;
       } catch {
         /* ignore refresh errors during polling */
@@ -200,6 +230,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     try {
       const data = await createAgentPullRequest(agentId, token);
       await session.loadAgent();
+      void loadRelatedSessions();
       setPageStatus(`Pull request #${data.pullRequest.number} created.`);
       setPageStatusVariant('success');
     } catch (err) {
@@ -228,6 +259,40 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     }
   };
 
+  const startBranchReview = async () => {
+    if (!agent) return;
+    const headBranch = agent.agentBranch || agent.branch;
+    if (!headBranch) return;
+
+    const agentRepo = repos.find((r) => r.repoId === agent.repoId);
+    const baseBranch = agent.useExistingBranch
+      ? agentRepo?.defaultBranch || 'main'
+      : agent.baseBranch || agentRepo?.defaultBranch || 'main';
+
+    setReviewBusy(true);
+    setPageStatus('Starting branch review…');
+    setPageStatusVariant('');
+    try {
+      const result = await apiFetch<{ agentId: string }>('/api/v1/agents', {
+        method: 'POST',
+        headers: authHeaders(token, true),
+        body: JSON.stringify({
+          mode: 'review',
+          repoId: agent.repoId,
+          baseBranch,
+          headBranch,
+          parentAgentId: agent.agentId,
+        }),
+      });
+      navigate(`/agents/${result.agentId}`);
+    } catch (err) {
+      setPageStatus(err instanceof Error ? err.message : 'Failed to start review');
+      setPageStatusVariant('error');
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   const repo = agent ? repos.find((r) => r.repoId === agent.repoId) : null;
   const repoLabel = repo ? `${repo.owner}/${repo.name}` : agent?.repoId ?? '—';
   const statusMessage = session.status || pageStatus;
@@ -239,6 +304,60 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const agentMode = agent ? getAgentMode(agent) : 'batch';
   const sessionShortId = agentId.slice(0, 8).toUpperCase();
 
+  const reviewBaseBranch = agent
+    ? agent.useExistingBranch
+      ? repos.find((r) => r.repoId === agent.repoId)?.defaultBranch || 'main'
+      : agent.baseBranch || repos.find((r) => r.repoId === agent.repoId)?.defaultBranch || 'main'
+    : 'main';
+  const showReviewBranches = agent
+    ? canReviewBranches(agent, {
+        relatedAgents: allAgents,
+        baseBranch: reviewBaseBranch,
+        agentsLoaded: allAgentsLoaded,
+      })
+    : false;
+
+  const renderPrAndReviewActions = (compact: boolean) => {
+    const buttonClass = compact ? '!gap-1.5 !px-2.5 !py-1.5 text-xs' : '!gap-2';
+    const reviewButtonClass = compact ? '!px-3 !py-1.5 text-xs' : '!gap-2';
+    const iconClass = compact ? 'size-3.5' : 'size-4';
+
+    return (
+      <>
+        {agent?.pullRequest ? (
+          <Button
+            variant="primary"
+            className={buttonClass}
+            onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
+          >
+            <IconLink className={iconClass} />
+            Open PR
+          </Button>
+        ) : showCreatePr ? (
+          <Button
+            variant="primary"
+            className={buttonClass}
+            disabled={prBusy}
+            onClick={() => createPullRequest()}
+          >
+            <IconGithub className={iconClass} />
+            Create PR
+          </Button>
+        ) : null}
+        {showReviewBranches ? (
+          <Button
+            variant="primary"
+            className={reviewButtonClass}
+            disabled={reviewBusy}
+            onClick={() => startBranchReview()}
+          >
+            Review branches
+          </Button>
+        ) : null}
+      </>
+    );
+  };
+
   const sessionInfoProps = {
     agent,
     agentId,
@@ -248,6 +367,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     eventsConnected: session.eventsConnected,
     loadError: session.loadError,
     prBusy,
+    relatedSessions,
     onRefreshPullRequest: refreshPullRequest,
   };
 
@@ -267,26 +387,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           Commit and push changes
         </Button>
       ) : null}
-      {agent?.pullRequest ? (
-        <Button
-          variant="primary"
-          className="!gap-2"
-          onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
-        >
-          <IconLink className="size-4" />
-          View PR
-        </Button>
-      ) : showCreatePr ? (
-        <Button
-          variant="primary"
-          className="!gap-2"
-          disabled={prBusy}
-          onClick={() => createPullRequest()}
-        >
-          <IconGithub className="size-4" />
-          Create PR
-        </Button>
-      ) : null}
+      {renderPrAndReviewActions(false)}
       {isActive ? (
         <Button variant="ghost" onClick={() => cancelAgent()}>
           Cancel session
@@ -323,26 +424,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
           Commit changes
         </Button>
       ) : null}
-      {agent?.pullRequest ? (
-        <Button
-          variant="primary"
-          className="!gap-1.5 !px-2.5 !py-1.5 text-xs"
-          onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
-        >
-          <IconLink className="size-3.5" />
-          View PR
-        </Button>
-      ) : showCreatePr ? (
-        <Button
-          variant="primary"
-          className="!gap-1.5 !px-2.5 !py-1.5 text-xs"
-          disabled={prBusy}
-          onClick={() => createPullRequest()}
-        >
-          <IconGithub className="size-3.5" />
-          Create PR
-        </Button>
-      ) : null}
+      {renderPrAndReviewActions(true)}
       {isActive ? (
         <Button variant="ghost" className="!px-2.5 !py-1.5 text-xs" onClick={() => cancelAgent()}>
           Cancel

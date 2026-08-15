@@ -13,6 +13,7 @@ const repo: Repo = {
   lastVerifiedAt: null,
   lastVerifyStatus: null,
   lastVerifyMessage: null,
+  autoReviewPullRequests: null,
 };
 
 describe('parseCreateAgentPayload', () => {
@@ -54,6 +55,25 @@ describe('parseCreateAgentPayload', () => {
 
     assert.equal(payload.mode, 'loop');
     assert.equal(payload.prompt, 'Refactor auth');
+  });
+
+  it('defaults review mode to existing branch checkout of head branch', () => {
+    const payload = parseCreateAgentPayload(
+      {
+        repoId: 'acme-demo',
+        mode: 'review',
+        headBranch: 'feature/review-me',
+        baseBranch: 'main',
+      },
+      repo,
+      'abc123',
+    );
+
+    assert.equal(payload.mode, 'review');
+    assert.equal(payload.useExistingBranch, true);
+    assert.equal(payload.agentBranch, 'feature/review-me');
+    assert.equal(payload.push, false);
+    assert.equal(payload.commitMessage, '');
   });
 
   it('ignores agentBranch when useExistingBranch is true', () => {

@@ -16,6 +16,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   loopAutoApprovePermissions: true,
   interactiveAutoApprovePermissions: false,
   autoCreatePullRequest: true,
+  autoReviewPullRequests: false,
+  reviewModel: '',
   interactiveAgentTimeoutSeconds: 3600,
   loopAgentTimeoutSeconds: 3600,
   loopVerbModels: {
@@ -106,6 +108,9 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       interactiveAutoApprovePermissions: config.interactiveAutoApprovePermissions === true,
       interactiveAgentTimeoutSeconds: config.interactiveAgentTimeoutSeconds || 3600,
       loopAgentTimeoutSeconds: config.loopAgentTimeoutSeconds || 3600,
+      autoCreatePullRequest: config.autoCreatePullRequest !== false,
+      autoReviewPullRequests: config.autoReviewPullRequests === true,
+      reviewModel: config.reviewModel || '',
       loopVerbModels: config.loopVerbModels,
     };
   }

@@ -14,6 +14,10 @@ export interface CreateAgentRequest {
   loopVerbModels?: unknown;
   mode?: unknown;
   sessionId?: unknown;
+  // Review-specific fields (mode: 'review')
+  headBranch?: unknown;
+  background?: unknown;
+  parentAgentId?: unknown;
 }
 
 export interface CreateAgentResponse {

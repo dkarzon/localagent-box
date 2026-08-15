@@ -96,6 +96,13 @@ export function createWorkerSpawner(options: {
       autoApprovePermissions: agent.autoApprovePermissions,
       model: agent.model || undefined,
       ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
+      // Pass review-specific fields if present (review mode)
+      ...(mode === 'review' && agent.review?.headBranch
+        ? { headBranch: agent.review.headBranch as unknown as string }
+        : {}),
+      ...(mode === 'review' && agent.review?.background
+        ? { background: agent.review.background as unknown as string | undefined }
+        : {}),
       agentTimeoutMs:
         mode === 'interactive'
           ? options.getInteractiveAgentTimeoutMs()

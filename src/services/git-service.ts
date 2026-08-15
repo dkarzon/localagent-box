@@ -19,12 +19,18 @@ export interface GitService {
     branch: string;
     targetDir: string;
     token: string;
+    fullHistory?: boolean;
   }) => Promise<void>;
   verifyClone: (
     config: AppConfig,
     params: { owner: string; name: string; branch: string },
   ) => Promise<{ ok: boolean; owner: string; name: string; branch: string; message: string }>;
   createBranch: (targetDir: string, branchName: string) => Promise<void>;
+  fetchAndCheckoutBranch: (
+    targetDir: string,
+    branchName: string,
+    options?: { shallow?: boolean },
+  ) => Promise<void>;
   getPorcelainStatus: (targetDir: string) => Promise<string>;
   /** `git diff --stat <baseRef>` (default HEAD) — deterministic working-tree change summary; '' on failure. */
   getDiffStat: (targetDir: string, baseRef?: string) => Promise<string>;
@@ -83,24 +89,20 @@ export function createGitService(options: {
     branch,
     targetDir,
     token,
+    fullHistory = false,
   }: {
     owner: string;
     name: string;
     branch: string;
     targetDir: string;
     token: string;
+    fullHistory?: boolean;
   }): Promise<void> {
     const cloneUrl = githubApp.buildAuthenticatedCloneUrl(owner, name, token);
-    const args = [
-      'clone',
-      '--depth',
-      '1',
-      '--single-branch',
-      '--branch',
-      branch,
-      cloneUrl,
-      targetDir,
-    ];
+    const args = ['clone', '--branch', branch, cloneUrl, targetDir];
+    if (!fullHistory) {
+      args.splice(1, 0, '--depth', '1', '--single-branch');
+    }
 
     try {
       await execFileAsyncImpl('git', args, {
@@ -165,6 +167,43 @@ export function createGitService(options: {
         execErr.stderr || execErr.message || 'Git branch creation failed',
       );
       throw new Error(message || 'Git branch creation failed');
+    }
+  }
+
+  async function fetchAndCheckoutBranch(
+    targetDir: string,
+    branchName: string,
+    options?: { shallow?: boolean },
+  ): Promise<void> {
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+    };
+    const fetchArgs = ['fetch', 'origin', `${branchName}:refs/heads/${branchName}`];
+    if (options?.shallow !== false) {
+      fetchArgs.push('--depth', '1');
+    }
+    try {
+      await execFileAsyncImpl(
+        'git',
+        fetchArgs,
+        {
+          cwd: targetDir,
+          timeout: CLONE_TIMEOUT_MS,
+          env: gitEnv,
+        },
+      );
+      await execFileAsyncImpl('git', ['checkout', branchName], {
+        cwd: targetDir,
+        timeout: 60000,
+        env: gitEnv,
+      });
+    } catch (err) {
+      const execErr = err as { stderr?: string; message?: string };
+      const message = githubApp.redactSecrets(
+        execErr.stderr || execErr.message || 'Git fetch/checkout failed',
+      );
+      throw new Error(message || 'Git fetch/checkout failed');
     }
   }
 
@@ -364,6 +403,7 @@ export function createGitService(options: {
     shallowClone,
     verifyClone,
     createBranch,
+    fetchAndCheckoutBranch,
     getPorcelainStatus,
     getDiffStat,
     parsePorcelainStatus,

@@ -11,6 +11,7 @@ import { runLoopJob } from '../../domains/agents/worker/loop-run-flow';
 import { createWorkerContext, getAgentMode } from '../../domains/agents/worker/worker-context';
 import { prepareWorkspace } from '../../domains/agents/worker/workspace-setup';
 import { runInteractiveSession } from '../../domains/agents/worker/interactive-session';
+import { runReviewJob } from '../../domains/agents/worker/review-run-flow';
 
 export async function runJob(job: AgentJob): Promise<void> {
   const ctx = await createWorkerContext(job);
@@ -20,6 +21,8 @@ export async function runJob(job: AgentJob): Promise<void> {
     await runInteractiveSession(ctx);
   } else if (getAgentMode(job) === 'loop') {
     await runLoopJob(ctx);
+  } else if (getAgentMode(job) === 'review') {
+    await runReviewJob(ctx);
   } else {
     await runBatchJob(ctx);
   }
