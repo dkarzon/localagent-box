@@ -23,6 +23,8 @@ import {
 } from '../../domains/agents/worker/agent-state-writer';
 import { logOpenCodeRunContext, resolveRunConfig } from '../../domains/agents/worker/batch-run-flow';
 import { resolveLoopStepModel } from '../../domains/agents/worker/loop-model';
+import { formatLoopStepAgentsSummary } from '../../domains/agents/worker/loop-agent';
+import { loadLoopConfig } from '../../domains/agents/worker/loop-config';
 import { captureGitStatusCheckpoint } from '../../domains/agents/worker/workspace-setup';
 import { loadRepoConfig } from '../../domains/agents/worker/repo-config';
 import type { WorkerContext } from '../../domains/agents/worker/worker-context';
@@ -127,11 +129,19 @@ export async function runSessionOrchestrator(
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, codegraph });
+  const disableQuestionTool = mode === 'batch';
+  perAgentConfig.writeOpenCodeConfig(runConfig, {
+    autoApprovePermissions,
+    codegraph,
+    disableQuestionTool,
+  });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
   if (codegraph) {
     logCodegraphEnabled(logPath);
+  }
+  if (disableQuestionTool) {
+    appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended batch)');
   }
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
@@ -686,6 +696,7 @@ export interface OpenCodeLoopSessionHandle {
     conversationText: string;
     promptText: string;
     model?: OpenCodeModelRef;
+    agent?: string;
   }) => Promise<LoopTurnResult>;
   /** Create a fresh OpenCode session in the running process, discarding accumulated conversation history. */
   rotateSession: () => Promise<void>;
@@ -733,7 +744,13 @@ export async function startOpenCodeLoopSession(options: {
   const perAgentConfig = createOpenCodeConfigService({
     configDir: path.join(agentDir, 'opencode-config'),
   });
-  perAgentConfig.writeOpenCodeConfig(runConfig, { autoApprovePermissions, job, codegraph });
+  perAgentConfig.writeOpenCodeConfig(runConfig, {
+    autoApprovePermissions,
+    job,
+    codegraph,
+    disableQuestionTool: true,
+  });
+  appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended loop)');
   if (codegraph) {
     logCodegraphEnabled(logPath);
   }
@@ -746,6 +763,12 @@ export async function startOpenCodeLoopSession(options: {
       .map((verb) => `${verb}=${resolveLoopStepModel(verb, runConfig, job) ?? 'default'}`)
       .join(', ')}`,
   );
+  try {
+    const { config: loopConfig } = loadLoopConfig(job.workspaceDir);
+    appendLog(logPath, `Loop step agents: ${formatLoopStepAgentsSummary(loopConfig.steps)}`);
+  } catch {
+    /* loop config logged from runLoopJob when load fails */
+  }
 
   appendLog(logPath, 'Starting OpenCode loop session…');
   logOpenCodeRunContext(logPath, {
@@ -923,6 +946,7 @@ export async function startOpenCodeLoopSession(options: {
     conversationText: string;
     promptText: string;
     model?: OpenCodeModelRef;
+    agent?: string;
   }): Promise<LoopTurnResult> {
     turnState.seenBusySinceProcessing = false;
     turnState.batchPromptBusySeen = false;
@@ -948,7 +972,7 @@ export async function startOpenCodeLoopSession(options: {
     appendConversation(job, 'user', options.conversationText);
     await sessionRunner.sendPromptAsync(sessionId, {
       parts: [{ type: 'text', text: options.promptText }],
-      agent: 'build',
+      agent: options.agent ?? 'build',
       ...(turnModelRef ? { model: turnModelRef } : {}),
     });
     turnCount += 1;

@@ -28,6 +28,13 @@ export function validateRepoConfig(raw: unknown): RepoPromptOverrides {
     }
   }
 
+  if (obj.checkCommand !== undefined) {
+    if (typeof obj.checkCommand !== 'string' || !obj.checkCommand.trim()) {
+      throw new Error('.localagent-box/config.json checkCommand must be a non-empty string when provided');
+    }
+    overrides.checkCommand = obj.checkCommand.trim();
+  }
+
   return overrides;
 }
 

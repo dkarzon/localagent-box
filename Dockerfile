@@ -45,7 +45,7 @@ COPY config ./config
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 
-RUN npm install -g opencode-ai@v1.18.4
+RUN npm install -g opencode-ai@v1.18.18
 RUN npm install -g @alibaba-group/open-code-review
 
 # codegraph MCP server (stdio). Bundles its own runtime — no native build needed.

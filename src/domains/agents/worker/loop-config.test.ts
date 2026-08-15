@@ -70,10 +70,26 @@ describe('validateLoopConfig', () => {
     assert.equal(result.initialPlanPrompt, 'Plan for {{goal}}');
   });
 
-  it('rejects empty initialPlanPrompt', () => {
+  it('accepts optional per-step OpenCode agent override', () => {
+    const result = validateLoopConfig({
+      ...valid,
+      steps: [
+        { verb: 'ORIENT', prompt: 'Look', agent: 'plan' },
+        { verb: 'ACT', prompt: 'Do', agent: 'build' },
+      ],
+    });
+    assert.equal(result.steps[0]?.agent, 'plan');
+    assert.equal(result.steps[1]?.agent, 'build');
+  });
+
+  it('rejects invalid step agent', () => {
     assert.throws(
-      () => validateLoopConfig({ ...valid, initialPlanPrompt: '   ' }),
-      /initialPlanPrompt must be a non-empty string/,
+      () =>
+        validateLoopConfig({
+          ...valid,
+          steps: [{ verb: 'ORIENT', prompt: 'x', agent: 'coder' }],
+        }),
+      /agent must be "build" or "plan"/,
     );
   });
 });

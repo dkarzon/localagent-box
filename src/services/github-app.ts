@@ -217,6 +217,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
           head: input.head,
           base: input.base,
           body: input.body || '',
+          draft: true,
         }),
       },
     );

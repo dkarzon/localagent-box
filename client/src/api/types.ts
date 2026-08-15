@@ -47,9 +47,21 @@ export function hasResolvableLoopModel(options: {
   return false;
 }
 
+export type LoopOpenCodeAgent = 'build' | 'plan';
+
 export interface LoopStepConfig {
   verb: LoopVerb;
   prompt: string;
+  agent?: LoopOpenCodeAgent;
+}
+
+export interface AgentLoopHandoffState {
+  next: string | null;
+  remaining: string | null;
+  milestonesTotal: number;
+  milestonesDone: number;
+  currentMilestone: string | null;
+  lastFiles: string[];
 }
 
 export interface AgentLoopState {
@@ -64,6 +76,7 @@ export interface AgentLoopState {
   finishRequested: boolean;
   configSource: 'server-default' | 'repo-override';
   effectiveSteps: LoopStepConfig[];
+  handoff?: AgentLoopHandoffState;
 }
 
 export type AgentStatus =

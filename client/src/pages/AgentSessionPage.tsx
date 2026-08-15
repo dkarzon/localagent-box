@@ -21,7 +21,7 @@ import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
 import { AgentTranscript } from '../components/agents/AgentTranscript';
-import { IconGithub, IconInfo, IconLink, IconLogs, IconRefresh } from '../components/icons';
+import { IconGithub, IconInfo, IconLink, IconRefresh } from '../components/icons';
 import { Badge, agentStatusPulse, agentStatusVariant } from '../components/ui/Badge';
 import { FlyoutPanel } from '../components/ui/FlyoutPanel';
 import { Button, FormActions } from '../components/ui/Form';
