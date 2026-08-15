@@ -65,11 +65,17 @@ export interface OpenCodeMcpLocalServer {
   timeout?: number;
 }
 
+export type OpenCodePermissionAction = 'ask' | 'allow' | 'deny';
+
+/** OpenCode permission rules: wildcard maps or per-tool actions like `question: deny`. */
+export type OpenCodePermissionRule = OpenCodePermissionAction | Record<string, string>;
+
 export interface OpenCodeConfigFile {
   $schema: string;
   model: string;
   instructions?: string[];
-  permission?: Record<string, Record<string, string>>;
+  tools?: Record<string, boolean>;
+  permission?: Record<string, OpenCodePermissionRule>;
   mcp?: Record<string, OpenCodeMcpLocalServer>;
   provider: Record<
     string,
@@ -87,6 +93,8 @@ export interface OpenCodeConfigBuildOptions {
   job?: AgentJob;
   /** When true, inject the codegraph MCP server into opencode.json. */
   codegraph?: boolean;
+  /** When true, set `tools.question: false` so unattended runs cannot block on user input. */
+  disableQuestionTool?: boolean;
 }
 
 export const CODEGRAPH_BIN = 'codegraph';
@@ -184,6 +192,16 @@ export function buildOpenCodeConfig(
 
   if (options?.autoApprovePermissions) {
     file.permission = { '*': { '*': 'allow' } };
+  }
+
+  if (options?.disableQuestionTool) {
+    file.tools = { question: false };
+    // Explicit deny must follow wildcard allow — OpenCode merges legacy `tools` into
+    // permissions and last-match evaluation lets `* allow` override tools-derived deny.
+    file.permission = {
+      ...(file.permission ?? {}),
+      question: 'deny',
+    };
   }
 
   if (options?.codegraph) {
