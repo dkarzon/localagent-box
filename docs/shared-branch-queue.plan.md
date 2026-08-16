@@ -2,7 +2,7 @@
 
 Allow multiple agent sessions to **share one project branch** and run **one at a time on that branch**, so a large piece of work can be split into chunks that each commit and push onto the same head.
 
-**Status:** Phases 1–2 implemented (queue eligibility, host checkout from remote existence, force push when chaining). Phases 3–6 not started.
+**Status:** Phases 1–3 implemented (queue eligibility, host checkout, retry / allow-successors / computed `queue`). Phases 4–6 not started.
 
 **Related:** `src/domains/agents/agent-queue.ts`, `src/domains/agents/agent.service.ts` (`branchInUse`, `restoreOnStartup`), `src/domains/agents/worker/workspace-setup.ts`, `docs/initial-build.plan.md` (branch uniqueness)
 

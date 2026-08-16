@@ -1216,5 +1216,98 @@ describe('createAgentService (shared-branch queue)', () => {
 
     assert.equal(review.push, false);
   });
+
+  it('attaches queue wait reason on a blocked successor', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+
+    const queued = ctx.service.getAgent(second.agentId);
+    assert.equal(queued.queue?.waitingOn, 'predecessor');
+    assert.equal(queued.queue?.predecessorId, first.agentId);
+    assert.equal(queued.queue?.canRetry, false);
+    assert.equal(ctx.service.getAgent(first.agentId).queue?.waitingOn, null);
+  });
+
+  it('retries a failed session in place and starts it before later chunks', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+
+    ctx.repository.update(first.agentId, {
+      status: 'failed',
+      pushed: false,
+      finishedAt: new Date().toISOString(),
+      error: 'boom',
+    });
+    ctx.spawned[0].emitExit(1);
+
+    const retried = ctx.service.retryAgent(first.agentId);
+    assert.equal(retried.status, 'queued');
+    assert.equal(retried.error, null);
+    assert.equal(retried.allowSuccessors, false);
+    assert.equal(ctx.spawned.length, 2);
+    assert.equal(hasStartedWorker(ctx, second.agentId), false);
+  });
+
+  it('rejects retry unless the session is failed or cancelled', () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    assert.throws(() => ctx.service.retryAgent(agent.agentId), (err: unknown) => {
+      assert.ok(err instanceof CodedError);
+      assert.equal(err.code, 'NOT_ACTIVE');
+      return true;
+    });
+  });
+
+  it('starts the next queued session after allowSuccessors on a failed predecessor', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+
+    ctx.repository.update(first.agentId, {
+      status: 'failed',
+      pushed: false,
+      finishedAt: new Date().toISOString(),
+      error: 'boom',
+    });
+    ctx.spawned[0].emitExit(1);
+
+    const result = ctx.service.allowSuccessors(first.agentId);
+    assert.equal(result.agent.allowSuccessors, true);
+    assert.match(result.warning || '', /will not include this session/);
+    assert.equal(hasStartedWorker(ctx, second.agentId), true);
+  });
 });
 

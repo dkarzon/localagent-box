@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus } from '../../types';
+import type { Agent, AgentQueueState, AgentQueueWaitingOn, AgentStatus } from '../../types';
 import { getAgentMode, TERMINAL_STATUSES } from './agent.types';
 
 /** Statuses that mean a worker is (or should be) occupying the branch. */
@@ -64,7 +64,10 @@ export function hasLiveWorkerOnBranch(
 }
 
 function isAwaitingWorker(agent: Agent, hasWorker: (agentId: string) => boolean): boolean {
-  return agent.status === 'queued' || (agent.status === 'completing' && !hasWorker(agent.agentId));
+  if (hasWorker(agent.agentId)) {
+    return false;
+  }
+  return agent.status === 'queued' || agent.status === 'completing';
 }
 
 export function decideQueueAction(
@@ -82,4 +85,84 @@ export function decideQueueAction(
     return 'defer';
   }
   return 'start';
+}
+
+export function hasQueuedCodingSuccessor(agents: readonly Agent[], agent: Agent): boolean {
+  return agents.some(
+    (other) =>
+      other.agentId !== agent.agentId &&
+      other.repoId === agent.repoId &&
+      other.agentBranch === agent.agentBranch &&
+      getAgentMode(other) !== 'review' &&
+      other.status === 'queued' &&
+      other.createdAt > agent.createdAt,
+  );
+}
+
+function predecessorWaitReason(predecessor: Agent): string {
+  if (predecessor.status === 'failed' || predecessor.status === 'cancelled') {
+    return `Waiting for ${predecessor.agentId} (${predecessor.status}) — retry that session or start next`;
+  }
+  return `Waiting for ${predecessor.agentId} to finish and push`;
+}
+
+export function buildAgentQueueState(
+  agent: Agent,
+  allAgents: readonly Agent[],
+  hasWorker: (agentId: string) => boolean,
+): AgentQueueState {
+  const predecessor = findCodingPredecessor(allAgents, agent);
+  const canRetry = agent.status === 'failed' || agent.status === 'cancelled';
+  const canAllowSuccessors =
+    canRetry && !agent.allowSuccessors && hasQueuedCodingSuccessor(allAgents, agent);
+
+  if (!isAwaitingWorker(agent, hasWorker)) {
+    return {
+      position: null,
+      waitingOn: null,
+      predecessorId: predecessor?.agentId ?? null,
+      predecessorStatus: predecessor?.status ?? null,
+      reason: null,
+      canRetry,
+      canAllowSuccessors,
+    };
+  }
+
+  const queuedOnBranch = allAgents
+    .filter(
+      (other) =>
+        other.repoId === agent.repoId &&
+        other.agentBranch === agent.agentBranch &&
+        other.status === 'queued',
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.agentId.localeCompare(b.agentId));
+  const index = queuedOnBranch.findIndex((other) => other.agentId === agent.agentId);
+  const position = index === -1 ? null : index + 1;
+
+  const branchBusy = hasLiveWorkerOnBranch(allAgents, agent, hasWorker);
+  const predecessorBlocks =
+    getAgentMode(agent) !== 'review' && !predecessorAllowsStart(predecessor);
+
+  let waitingOn: AgentQueueWaitingOn | null = null;
+  let reason: string | null = null;
+  if (predecessorBlocks && predecessor) {
+    waitingOn = 'predecessor';
+    reason = predecessorWaitReason(predecessor);
+  } else if (branchBusy) {
+    waitingOn = 'branch_worker';
+    reason = 'Waiting for another session on this branch to finish';
+  } else {
+    waitingOn = 'slot';
+    reason = 'Waiting for a worker slot';
+  }
+
+  return {
+    position,
+    waitingOn,
+    predecessorId: predecessor?.agentId ?? null,
+    predecessorStatus: predecessor?.status ?? null,
+    reason,
+    canRetry,
+    canAllowSuccessors,
+  };
 }

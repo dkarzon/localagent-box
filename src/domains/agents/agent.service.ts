@@ -42,7 +42,7 @@ import type { OllamaChatService } from '../../services/ollama-client';
 import type { WebhookSender } from '../../lib/webhook';
 import { createAgentRepository, type AgentRepository } from './agent.repository';
 import { createAgentQueue } from './agent-queue';
-import { decideQueueAction } from './queue-eligibility';
+import { decideQueueAction, buildAgentQueueState } from './queue-eligibility';
 import { createWorkerSpawner } from './worker-spawner';
 import { parseCreateAgentPayload, parseMessageText } from './agent.validation';
 import { appendLog } from './worker/agent-state-writer';
@@ -79,6 +79,8 @@ export interface AgentService {
   finishAgent: (agentId: string) => Agent;
   commitOutstandingChanges: (agentId: string) => Promise<Agent>;
   cancelAgent: (agentId: string) => Agent;
+  retryAgent: (agentId: string) => Agent;
+  allowSuccessors: (agentId: string) => { agent: Agent; warning: string | null };
   deleteAgent: (agentId: string) => void;
   cleanupOldWorkspaces: (daysToKeep: number) => CleanupOldWorkspacesResult;
   createPullRequest: (
@@ -334,6 +336,13 @@ export function createAgentService(options: {
       }
     },
   });
+
+  function present(agent: Agent): Agent {
+    return {
+      ...withLoopFields(withInteractiveFields(agent)),
+      queue: buildAgentQueueState(agent, repository.findAll(), (id) => spawner.has(id)),
+    };
+  }
 
   function createAgent(body: CreateAgentRequest): Agent {
     const repo = repoManager.getRepo(body.repoId as string);
@@ -640,7 +649,75 @@ export function createAgentService(options: {
     }
 
     queue.process();
-    return repository.findById(agentId)!;
+    return present(repository.findById(agentId)!);
+  }
+
+  function retryAgent(agentId: string): Agent {
+    const agent = repository.getAgent(agentId);
+    if (agent.status !== 'failed' && agent.status !== 'cancelled') {
+      throw new CodedError(`Agent cannot be retried while ${agent.status}`, 'NOT_ACTIVE');
+    }
+
+    const mode = getAgentMode(agent);
+    const branchOccupied = repository.findAll().some(
+      (existing) =>
+        existing.agentId !== agent.agentId &&
+        existing.repoId === agent.repoId &&
+        existing.agentBranch === agent.agentBranch &&
+        ACTIVE_STATUSES.has(existing.status),
+    );
+    const push = mode !== 'review' && branchOccupied ? true : agent.push;
+
+    const patch: Partial<Agent> = {
+      status: 'queued',
+      error: null,
+      finishedAt: null,
+      result: null,
+      startedAt: null,
+      commitSha: null,
+      pushed: false,
+      filesChanged: null,
+      allowSuccessors: false,
+      gitStatus: null,
+      push,
+    };
+    if (mode === 'interactive') {
+      Object.assign(patch, {
+        opencodeSessionId: null,
+        turnCount: 0,
+        lastActivityAt: null,
+        awaitingInputSince: null,
+        interactive: buildInteractiveState('queued'),
+      });
+    }
+    if (mode === 'loop') {
+      patch.loop = buildLoopState('queued');
+    }
+
+    repository.update(agentId, patch);
+    appendLog(repository.getLogPath(agentId), 'Retry requested — re-queued');
+    queue.enqueue(agentId);
+    return present(repository.getAgent(agentId));
+  }
+
+  function allowSuccessors(agentId: string): { agent: Agent; warning: string | null } {
+    const agent = repository.getAgent(agentId);
+    if (agent.status !== 'failed' && agent.status !== 'cancelled') {
+      throw new CodedError(
+        `Successors can only be released after a failed or cancelled session`,
+        'NOT_ACTIVE',
+      );
+    }
+
+    repository.update(agentId, { allowSuccessors: true });
+    queue.process();
+    const updated = repository.getAgent(agentId);
+    return {
+      agent: present(updated),
+      warning: updated.pushed
+        ? null
+        : 'Next chunk will not include this session\'s work',
+    };
   }
 
   async function handleAutoCreatePullRequest(agentId: string, options?: { autoCreatePr?: boolean }): Promise<void> {
@@ -1104,8 +1181,8 @@ export function createAgentService(options: {
 
   return {
     createAgent,
-    getAgent: (agentId) => repository.getAgent(agentId),
-    listAgents: (filters) => repository.list(filters),
+    getAgent: (agentId) => present(repository.getAgent(agentId)),
+    listAgents: (filters) => repository.list(filters).map(present),
     readLogs: (agentId, tailLines) => repository.readLogs(agentId, tailLines),
     readEvents: (agentId, sinceSeq) => repository.readEvents(agentId, sinceSeq),
     getLastEventSeq: (agentId) => repository.getLastEventSeq(agentId),
@@ -1114,6 +1191,8 @@ export function createAgentService(options: {
     finishAgent,
     commitOutstandingChanges,
     cancelAgent,
+    retryAgent,
+    allowSuccessors,
     deleteAgent,
     cleanupOldWorkspaces,
     createPullRequest,

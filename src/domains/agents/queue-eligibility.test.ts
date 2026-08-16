@@ -5,6 +5,7 @@ import {
   decideQueueAction,
   findCodingPredecessor,
   predecessorAllowsStart,
+  buildAgentQueueState,
 } from './queue-eligibility';
 
 function agent(overrides: Partial<Agent> & Pick<Agent, 'agentId' | 'status'>): Agent {
@@ -96,5 +97,33 @@ describe('queue-eligibility', () => {
   it('starts a completing agent that no longer has a worker', () => {
     const completing = { ...first, status: 'completing' as const };
     assert.equal(decideQueueAction(completing, [completing], () => false), 'start');
+  });
+
+  it('drops a queued agent that already has a worker', () => {
+    assert.equal(decideQueueAction(first, [first], () => true), 'drop');
+  });
+
+  it('describes a predecessor halt on the successor queue state', () => {
+    const failed = { ...first, status: 'failed' as const };
+    const state = buildAgentQueueState(second, [failed, second], () => false);
+    assert.equal(state.waitingOn, 'predecessor');
+    assert.equal(state.predecessorId, 'a1');
+    assert.equal(state.canRetry, false);
+    assert.match(state.reason || '', /retry that session or start next/);
+    assert.equal(state.position, 1);
+  });
+
+  it('offers retry and start-next on a failed predecessor with a queued successor', () => {
+    const failed = { ...first, status: 'failed' as const };
+    const state = buildAgentQueueState(failed, [failed, second], () => false);
+    assert.equal(state.canRetry, true);
+    assert.equal(state.canAllowSuccessors, true);
+    assert.equal(state.waitingOn, null);
+  });
+
+  it('uses a slot wait when the branch is free but the session is still queued', () => {
+    const state = buildAgentQueueState(first, [first], () => false);
+    assert.equal(state.waitingOn, 'slot');
+    assert.equal(state.reason, 'Waiting for a worker slot');
   });
 });

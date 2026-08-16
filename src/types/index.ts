@@ -179,6 +179,18 @@ export type AgentStatus =
   | 'failed'
   | 'cancelled';
 
+export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
+
+export interface AgentQueueState {
+  position: number | null;
+  waitingOn: AgentQueueWaitingOn | null;
+  predecessorId: string | null;
+  predecessorStatus: AgentStatus | null;
+  reason: string | null;
+  canRetry: boolean;
+  canAllowSuccessors: boolean;
+}
+
 export type AgentEventType =
   | 'session.status'
   | 'assistant.delta'
@@ -292,6 +304,8 @@ export interface Agent {
   review?: AgentReviewMetadata | null;
   /** Cumulative token usage across all assistant messages in this session */
   tokenUsage?: AgentTokenUsage;
+  /** Derived wait/retry info; not persisted */
+  queue?: AgentQueueState;
 }
 
 export interface AgentJob {

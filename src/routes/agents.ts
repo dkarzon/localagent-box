@@ -104,6 +104,16 @@ const handleCancelAgent = withErrorHandling((_req, res, ctx, agentId) => {
   sendJson(res, 200, { agent });
 });
 
+const handleRetryAgent = withErrorHandling((_req, res, ctx, agentId) => {
+  const agent = ctx.agentManager.retryAgent(agentId);
+  sendJson(res, 200, { agent });
+});
+
+const handleAllowSuccessors = withErrorHandling((_req, res, ctx, agentId) => {
+  const result = ctx.agentManager.allowSuccessors(agentId);
+  sendJson(res, 200, result);
+});
+
 const handleDeleteAgent = withErrorHandling((_req, res, ctx, agentId) => {
   ctx.agentManager.deleteAgent(agentId);
   sendJson(res, 200, { deleted: true, agentId });
@@ -222,6 +232,24 @@ const agentsRoute: Route = {
         await handleRefreshPullRequest(req, res, ctx, agentId);
         return;
       }
+    }
+
+    const retryMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/retry$/);
+    if (retryMatch && req.method === 'POST') {
+      if (!requireAuth(req, res)) {
+        return;
+      }
+      await handleRetryAgent(req, res, ctx, retryMatch[1]);
+      return;
+    }
+
+    const allowSuccessorsMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/allow-successors$/);
+    if (allowSuccessorsMatch && req.method === 'POST') {
+      if (!requireAuth(req, res)) {
+        return;
+      }
+      await handleAllowSuccessors(req, res, ctx, allowSuccessorsMatch[1]);
+      return;
     }
 
     const deleteMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/delete$/);

@@ -89,6 +89,18 @@ export type AgentStatus =
   | 'failed'
   | 'cancelled';
 
+export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
+
+export interface AgentQueueState {
+  position: number | null;
+  waitingOn: AgentQueueWaitingOn | null;
+  predecessorId: string | null;
+  predecessorStatus: AgentStatus | string | null;
+  reason: string | null;
+  canRetry: boolean;
+  canAllowSuccessors: boolean;
+}
+
 export interface OllamaModel {
   name: string;
   size?: number;
@@ -232,6 +244,8 @@ export interface Agent {
   parentAgentId?: string | null;
   review?: AgentReviewMetadata | null;
   tokenUsage?: AgentTokenUsage;
+  allowSuccessors?: boolean;
+  queue?: AgentQueueState;
 }
 
 export const CONFIG_FIELDS = [
