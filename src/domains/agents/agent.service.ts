@@ -365,6 +365,20 @@ export function createAgentService(options: {
     );
     const push = payload.mode !== 'review' && branchOccupied ? true : payload.push;
 
+    if (payload.mode !== 'review' && branchOccupied) {
+      for (const existing of repository.findAll()) {
+        if (
+          existing.repoId === payload.repoId &&
+          existing.agentBranch === payload.agentBranch &&
+          getAgentMode(existing) !== 'review' &&
+          ACTIVE_STATUSES.has(existing.status) &&
+          !existing.push
+        ) {
+          repository.update(existing.agentId, { push: true });
+        }
+      }
+    }
+
     // Validate review-specific fields
     if (mode === 'review' && !payload.headBranch) {
       throw new CodedError('Review mode requires headBranch to be specified', 'VALIDATION_ERROR');
@@ -624,6 +638,8 @@ export function createAgentService(options: {
     );
 
     sendAgentWebhook(agentId, 'agent.completed');
+
+    queue.process();
 
     return withLoopFields(updated);
   }
