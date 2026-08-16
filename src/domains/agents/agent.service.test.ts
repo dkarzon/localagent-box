@@ -52,7 +52,9 @@ function mockChildProcess(): ChildProcess & {
       }
     },
   };
-  return child as ChildProcess & { emitExit: (code?: number | null, signal?: NodeJS.Signals | null) => void };
+  return child as unknown as ChildProcess & {
+    emitExit: (code?: number | null, signal?: NodeJS.Signals | null) => void;
+  };
 }
 
 function baseAgentFields(overrides: Partial<Agent> & Pick<Agent, 'agentId' | 'mode' | 'status'>): Agent {
