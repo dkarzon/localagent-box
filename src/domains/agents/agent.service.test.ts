@@ -1078,6 +1078,107 @@ describe('createPullRequest', () => {
     assert.equal(reviewAgent.parentAgentId, agentId);
     assert.equal(reviewAgent.status, 'queued');
   });
+
+  it('skips auto-review while a coding successor is still queued on the branch', async () => {
+    const agentId = 'completedreview5';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'feature/project',
+        branch: 'feature/project',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'feature/project',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId: 'queued-chunk-2',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/project',
+        createdAt: '2026-06-09T00:06:00.000Z',
+        startedAt: null,
+      }),
+    );
+
+    await service.createPullRequest(agentId);
+
+    const reviewAgents = repository.findAll().filter((entry) => entry.mode === 'review');
+    assert.equal(reviewAgents.length, 0);
+    const log = fs.readFileSync(repository.getLogPath(agentId), 'utf8');
+    assert.match(log, /Skipping auto-review — coding session still queued or running on feature\/project/);
+  });
+
+  it('auto-spawns review when earlier chunks on the branch are already complete', async () => {
+    const agentId = 'completedreview6';
+    const { service, repository, configRepository } = createTestContext();
+
+    configRepository.save({ autoReviewPullRequests: true });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId: 'completed-chunk-1',
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'feature/project',
+        branch: 'feature/project',
+        pushed: true,
+        createdAt: '2026-06-09T00:00:00.000Z',
+        finishedAt: '2026-06-09T00:05:00.000Z',
+      }),
+    );
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        agentBranch: 'feature/project',
+        branch: 'feature/project',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        createdAt: '2026-06-09T00:06:00.000Z',
+        finishedAt: '2026-06-09T00:10:00.000Z',
+        result: {
+          branch: 'feature/project',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    await service.createPullRequest(agentId);
+
+    const reviewAgents = repository
+      .findAll()
+      .filter((entry) => entry.mode === 'review' && entry.parentAgentId === agentId);
+    assert.equal(reviewAgents.length, 1);
+  });
 });
 
 describe('createAgentService (shared-branch queue)', () => {

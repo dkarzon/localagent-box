@@ -1,5 +1,5 @@
 import type { Agent, AgentQueueState, AgentQueueWaitingOn, AgentStatus } from '../../types';
-import { getAgentMode, TERMINAL_STATUSES } from './agent.types';
+import { ACTIVE_STATUSES, getAgentMode, TERMINAL_STATUSES } from './agent.types';
 
 /** Statuses that mean a worker is (or should be) occupying the branch. */
 const BRANCH_WORKER_STATUSES = new Set<AgentStatus>([
@@ -96,6 +96,22 @@ export function hasQueuedCodingSuccessor(agents: readonly Agent[], agent: Agent)
       getAgentMode(other) !== 'review' &&
       other.status === 'queued' &&
       other.createdAt > agent.createdAt,
+  );
+}
+
+export function hasActiveCodingOnBranch(
+  agents: readonly Agent[],
+  repoId: string,
+  branch: string,
+  excludeAgentId?: string,
+): boolean {
+  return agents.some(
+    (other) =>
+      other.agentId !== excludeAgentId &&
+      other.repoId === repoId &&
+      other.agentBranch === branch &&
+      getAgentMode(other) !== 'review' &&
+      ACTIVE_STATUSES.has(other.status),
   );
 }
 

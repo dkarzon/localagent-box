@@ -42,7 +42,7 @@ import type { OllamaChatService } from '../../services/ollama-client';
 import type { WebhookSender } from '../../lib/webhook';
 import { createAgentRepository, type AgentRepository } from './agent.repository';
 import { createAgentQueue } from './agent-queue';
-import { decideQueueAction, buildAgentQueueState } from './queue-eligibility';
+import { decideQueueAction, buildAgentQueueState, hasActiveCodingOnBranch } from './queue-eligibility';
 import { createWorkerSpawner } from './worker-spawner';
 import { parseCreateAgentPayload, parseMessageText } from './agent.validation';
 import { appendLog } from './worker/agent-state-writer';
@@ -1054,6 +1054,14 @@ export function createAgentService(options: {
 
     const headBranch = parentAgent.agentBranch || parentAgent.branch;
     if (!headBranch) {
+      return;
+    }
+
+    if (hasActiveCodingOnBranch(repository.findAll(), parentAgent.repoId, headBranch, parentAgent.agentId)) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — coding session still queued or running on ${headBranch}`,
+      );
       return;
     }
 

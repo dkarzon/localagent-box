@@ -6,6 +6,7 @@ import {
   findCodingPredecessor,
   predecessorAllowsStart,
   buildAgentQueueState,
+  hasActiveCodingOnBranch,
 } from './queue-eligibility';
 
 function agent(overrides: Partial<Agent> & Pick<Agent, 'agentId' | 'status'>): Agent {
@@ -125,5 +126,25 @@ describe('queue-eligibility', () => {
     const state = buildAgentQueueState(first, [first], () => false);
     assert.equal(state.waitingOn, 'slot');
     assert.equal(state.reason, 'Waiting for a worker slot');
+  });
+
+  it('detects an active coding occupant on the branch', () => {
+    const completed = { ...first, status: 'completed' as const, pushed: true };
+    assert.equal(hasActiveCodingOnBranch([completed, second], 'acme-demo', 'feature/project', 'a1'), true);
+    assert.equal(hasActiveCodingOnBranch([completed], 'acme-demo', 'feature/project', 'a1'), false);
+  });
+
+  it('ignores review occupants and other branches when checking active coding', () => {
+    const review = agent({
+      agentId: 'rev1',
+      mode: 'review',
+      status: 'queued',
+    });
+    const otherBranch = agent({
+      agentId: 'other',
+      status: 'queued',
+      agentBranch: 'feature/other',
+    });
+    assert.equal(hasActiveCodingOnBranch([review, otherBranch], 'acme-demo', 'feature/project'), false);
   });
 });
