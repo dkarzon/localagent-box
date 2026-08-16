@@ -309,6 +309,23 @@ export function isReviewAgent(agent: Agent): boolean {
   return getAgentMode(agent) === 'review';
 }
 
+export interface QueueOnBranchPrefill {
+  repoId: string;
+  baseBranch: string;
+  agentBranch: string;
+}
+
+export function queueOnBranchPrefill(agent: Agent): QueueOnBranchPrefill | null {
+  if (isReviewAgent(agent)) return null;
+  const agentBranch = agent.agentBranch || agent.branch;
+  if (!agentBranch) return null;
+  return {
+    repoId: agent.repoId,
+    baseBranch: agent.baseBranch || 'main',
+    agentBranch,
+  };
+}
+
 function isDuplicateBranchReview(
   existingAgent: Agent,
   parentAgentId: string,

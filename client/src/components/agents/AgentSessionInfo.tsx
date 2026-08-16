@@ -107,6 +107,7 @@ export function AgentSessionInfo({
               ['Started', formatRelativeTime(agent.createdAt)],
               ['Workspace', agent.workspaceId || '—'],
               ['Session ID', agent.agentId || agentId],
+              ...(agent.queue?.reason ? ([['Queue', agent.queue.reason] as const] as const) : []),
             ].map(([label, value]) => (
               <div
                 key={label}

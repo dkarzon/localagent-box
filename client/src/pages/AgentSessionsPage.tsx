@@ -11,11 +11,13 @@ import {
   LOOP_VERB_MODELS_DEFAULT,
   LOOP_VERBS,
   mergeLoopVerbModels,
+  queueOnBranchPrefill,
   type Agent,
   type AgentMode,
   type AppConfig,
   type LoopVerbModels,
   type OllamaStatus,
+  type QueueOnBranchPrefill,
   type Repo,
   type StatusVariant,
 } from '../api/types';
@@ -47,6 +49,8 @@ interface AgentSessionsPageProps {
   searchQuery?: string;
   openNewOnMount?: boolean;
   onNewOrchestrationOpened?: () => void;
+  queuePrefill?: QueueOnBranchPrefill | null;
+  onQueuePrefillConsumed?: () => void;
   onRegisterNewOrchestration?: (open: () => void) => void;
   onSessionOpen: (agentId: string) => void;
 }
@@ -56,6 +60,8 @@ export function AgentSessionsPage({
   searchQuery = '',
   openNewOnMount = false,
   onNewOrchestrationOpened,
+  queuePrefill = null,
+  onQueuePrefillConsumed,
   onRegisterNewOrchestration,
   onSessionOpen,
 }: AgentSessionsPageProps) {
@@ -105,6 +111,17 @@ export function AgentSessionsPage({
     onRegisterNewOrchestration?.(() => setModalOpen(true));
   }, [onRegisterNewOrchestration]);
 
+  const openQueueOnBranch = useCallback((prefill: QueueOnBranchPrefill) => {
+    setRepoId(prefill.repoId);
+    setBaseBranch(prefill.baseBranch);
+    setAgentBranch(prefill.agentBranch);
+    setUseExistingBranch(false);
+    setPrompt('');
+    setMode((current) => (current === 'review' ? 'batch' : current));
+    setAutoApproveExplicit(false);
+    setModalOpen(true);
+  }, []);
+
   useEffect(() => {
     if (openNewOnMount) {
       setModalOpen(true);
@@ -112,6 +129,11 @@ export function AgentSessionsPage({
       onNewOrchestrationOpened?.();
     }
   }, [openNewOnMount, onNewOrchestrationOpened]);
+
+  useEffect(() => {
+    if (!queuePrefill) return;
+    openQueueOnBranch(queuePrefill);
+  }, [queuePrefill, openQueueOnBranch]);
 
   const modeAutoApproveDefault =
     mode === 'batch'
@@ -299,6 +321,13 @@ export function AgentSessionsPage({
     setLoopRunVerbModels(LOOP_VERB_MODELS_DEFAULT);
   };
 
+  const closeCreateModal = () => {
+    setModalOpen(false);
+    resetLoopRunVerbModels();
+    setAutoApproveExplicit(false);
+    onQueuePrefillConsumed?.();
+  };
+
   const startDisabled =
     !repos.length ||
     !configLoaded ||
@@ -376,6 +405,7 @@ export function AgentSessionsPage({
       resetLoopRunVerbModels();
       setAutoApproveExplicit(false);
       setModalOpen(false);
+      onQueuePrefillConsumed?.();
       await loadAgents();
       onSessionOpen(result.agentId);
     } catch (err) {
@@ -534,6 +564,7 @@ export function AgentSessionsPage({
                 filteredAgents.map((agent, index) => {
                   const repo = repos.find((r) => r.repoId === agent.repoId);
                   const repoLabel = repo ? `${repo.owner}/${repo.name}` : agent.repoId;
+                  const branchPrefill = queueOnBranchPrefill(agent);
                   return (
                     <tr
                       key={agent.agentId}
@@ -562,6 +593,9 @@ export function AgentSessionsPage({
                         <Badge variant={agentStatusVariant(agent.status)} pulse={agentStatusPulse(agent.status)}>
                           {agent.status}
                         </Badge>
+                        {agent.queue?.reason ? (
+                          <p className="mt-1 max-w-xs text-xs text-muted">{agent.queue.reason}</p>
+                        ) : null}
                         {agent.pullRequest ? (
                           <a
                             href={agent.pullRequest.url}
@@ -596,6 +630,18 @@ export function AgentSessionsPage({
                           >
                             <IconEye className="size-4" />
                           </Button>
+                          {branchPrefill ? (
+                            <Button
+                              variant="ghost"
+                              className="!px-2 !py-1.5 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openQueueOnBranch(branchPrefill);
+                              }}
+                            >
+                              Queue another
+                            </Button>
+                          ) : null}
                           {isAgentActive(agent) ? (
                             <Button
                               variant="ghost"
@@ -632,11 +678,7 @@ export function AgentSessionsPage({
 
       <Modal
         open={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          resetLoopRunVerbModels();
-          setAutoApproveExplicit(false);
-        }}
+        onClose={closeCreateModal}
         title={mode === 'review' ? 'New Review' : 'New Agent'}
         className="sm:max-w-2xl"
       >
@@ -775,6 +817,10 @@ export function AgentSessionsPage({
                   value={agentBranch}
                   onChange={(e) => setAgentBranch(e.target.value)}
                 />
+                <p className="mt-1 text-xs text-muted">
+                  Sessions that share this branch run one at a time. Later sessions start after the
+                  current one finishes and pushes.
+                </p>
               </Field>
             ) : null}
               </>
@@ -964,10 +1010,7 @@ export function AgentSessionsPage({
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => {
-                  setModalOpen(false);
-                  setAutoApproveExplicit(false);
-                }}
+                onClick={closeCreateModal}
               >
                 Cancel
               </Button>

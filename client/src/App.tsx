@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from './api/client';
-import type { Repo } from './api/types';
+import type { QueueOnBranchPrefill, Repo } from './api/types';
 import { AppShell } from './components/layout/AppShell';
 import { ApiTokenProvider } from './hooks/useApiToken';
 import { agentSessionPath, getPageId, parseAgentSessionId } from './navigation';
@@ -19,6 +19,7 @@ export default function App() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingNewOrchestration, setPendingNewOrchestration] = useState(false);
+  const [queuePrefill, setQueuePrefill] = useState<QueueOnBranchPrefill | null>(null);
   const newOrchestrationRef = useRef<(() => void) | null>(null);
 
   const loadRepos = useCallback(async () => {
@@ -40,12 +41,21 @@ export default function App() {
   }, [page]);
 
   const handleNewOrchestration = () => {
+    setQueuePrefill(null);
     if (page !== 'agents' || agentSessionId) {
       setPendingNewOrchestration(true);
       navigate('/agents');
       return;
     }
     newOrchestrationRef.current?.();
+  };
+
+  const handleQueueAnother = (prefill: QueueOnBranchPrefill) => {
+    setPendingNewOrchestration(false);
+    setQueuePrefill(prefill);
+    if (page !== 'agents' || agentSessionId) {
+      navigate('/agents');
+    }
   };
 
   if (pathname === '/') {
@@ -56,14 +66,20 @@ export default function App() {
     <ApiTokenProvider>
       <AppShell page={page} onNewOrchestration={handleNewOrchestration}>
         {page === 'agents' && agentSessionId ? (
-          <AgentSessionPage agentId={agentSessionId} repos={repos} />
+          <AgentSessionPage
+            agentId={agentSessionId}
+            repos={repos}
+            onQueueAnother={handleQueueAnother}
+          />
         ) : null}
         {page === 'agents' && !agentSessionId ? (
           <AgentSessionsPage
             repos={repos}
             searchQuery={agentSessionId ? '' : searchQuery}
             openNewOnMount={pendingNewOrchestration}
+            queuePrefill={queuePrefill}
             onNewOrchestrationOpened={() => setPendingNewOrchestration(false)}
+            onQueuePrefillConsumed={() => setQueuePrefill(null)}
             onRegisterNewOrchestration={(open) => {
               newOrchestrationRef.current = open;
             }}
