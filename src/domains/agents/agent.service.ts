@@ -1153,6 +1153,9 @@ export function createAgentService(options: {
     let changed = false;
 
     for (const agent of agents) {
+      if (agent.status === 'queued') {
+        continue;
+      }
       const mode = getAgentMode(agent);
       const activeStatuses =
         mode === 'interactive'
@@ -1176,6 +1179,16 @@ export function createAgentService(options: {
 
     if (changed) {
       repository.saveAll(agents);
+    }
+
+    const queued = agents
+      .filter((agent) => agent.status === 'queued')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.agentId.localeCompare(b.agentId));
+    if (queued.length > 0) {
+      getLogger().info({ count: queued.length }, 'Re-enqueueing queued agents after startup');
+    }
+    for (const agent of queued) {
+      queue.enqueue(agent.agentId);
     }
   }
 

@@ -1311,3 +1311,89 @@ describe('createAgentService (shared-branch queue)', () => {
   });
 });
 
+describe('restoreOnStartup', () => {
+  it('re-enqueues queued agents and starts the first eligible one', () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'queued0000001',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:01.000Z',
+        startedAt: null,
+      }),
+    );
+
+    ctx.service.restoreOnStartup();
+
+    assert.equal(ctx.service.getAgent('queued0000001').status, 'queued');
+    assert.equal(hasStartedWorker(ctx, 'queued0000001'), true);
+  });
+
+  it('fails in-progress agents but keeps later queued chunks waiting', () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'running000001',
+        mode: 'batch',
+        status: 'running',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:01.000Z',
+      }),
+    );
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'queued0000002',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:02.000Z',
+        startedAt: null,
+      }),
+    );
+
+    ctx.service.restoreOnStartup();
+
+    const failed = ctx.service.getAgent('running000001');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error || '', /Server restarted/);
+    assert.equal(ctx.service.getAgent('queued0000002').status, 'queued');
+    assert.equal(hasStartedWorker(ctx, 'queued0000002'), false);
+  });
+
+  it('starts queued sessions in createdAt order across branches', () => {
+    const ctx = createTestContext({ maxConcurrent: 2 });
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'queued-a',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/a',
+        createdAt: '2026-08-16T00:00:02.000Z',
+        startedAt: null,
+      }),
+    );
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'queued-b',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/b',
+        createdAt: '2026-08-16T00:00:01.000Z',
+        startedAt: null,
+      }),
+    );
+
+    ctx.service.restoreOnStartup();
+
+    assert.equal(hasStartedWorker(ctx, 'queued-b'), true);
+    assert.equal(hasStartedWorker(ctx, 'queued-a'), true);
+  });
+});
+
