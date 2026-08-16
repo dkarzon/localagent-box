@@ -89,6 +89,18 @@ export type AgentStatus =
   | 'failed'
   | 'cancelled';
 
+export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
+
+export interface AgentQueueState {
+  position: number | null;
+  waitingOn: AgentQueueWaitingOn | null;
+  predecessorId: string | null;
+  predecessorStatus: AgentStatus | string | null;
+  reason: string | null;
+  canRetry: boolean;
+  canAllowSuccessors: boolean;
+}
+
 export interface OllamaModel {
   name: string;
   size?: number;
@@ -232,6 +244,8 @@ export interface Agent {
   parentAgentId?: string | null;
   review?: AgentReviewMetadata | null;
   tokenUsage?: AgentTokenUsage;
+  allowSuccessors?: boolean;
+  queue?: AgentQueueState;
 }
 
 export const CONFIG_FIELDS = [
@@ -293,6 +307,23 @@ export function isLoopAgent(agent: Agent): boolean {
 
 export function isReviewAgent(agent: Agent): boolean {
   return getAgentMode(agent) === 'review';
+}
+
+export interface QueueOnBranchPrefill {
+  repoId: string;
+  baseBranch: string;
+  agentBranch: string;
+}
+
+export function queueOnBranchPrefill(agent: Agent): QueueOnBranchPrefill | null {
+  if (isReviewAgent(agent)) return null;
+  const agentBranch = agent.agentBranch || agent.branch;
+  if (!agentBranch) return null;
+  return {
+    repoId: agent.repoId,
+    baseBranch: agent.baseBranch || 'main',
+    agentBranch,
+  };
 }
 
 function isDuplicateBranchReview(

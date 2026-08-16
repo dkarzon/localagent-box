@@ -147,6 +147,8 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `GET` | `/api/v1/agents/:agentId/messages` | No | Transcript + events snapshot (`?since=` for event replay) |
 | `POST` | `/api/v1/agents/:agentId/messages` | Yes | Send follow-up message (interactive only) |
 | `POST` | `/api/v1/agents/:agentId/finish` | Yes | Finish interactive or loop session + commit/push |
+| `POST` | `/api/v1/agents/:agentId/retry` | Yes | Re-queue a failed or cancelled session in the same slot |
+| `POST` | `/api/v1/agents/:agentId/allow-successors` | Yes | Let later sessions on the same branch start after a failed/cancelled chunk |
 | `POST` | `/api/v1/agents/:agentId/pull-request` | Yes | Open GitHub PR for completed, pushed session |
 | `GET` | `/api/v1/agents/:agentId/pull-request` | No | Refresh linked PR state from GitHub |
 | `POST` | `/api/v1/agents/:agentId/delete` | Yes | Remove agent record, logs, and workspace |
@@ -340,7 +342,7 @@ curl -X POST http://localhost:8080/api/v1/agents/<agentId>/delete \
   -H "Authorization: Bearer localagent-box"
 ```
 
-Each agent gets an isolated git workspace under `AGENT_WORKSPACE` (default `{DATA_DIR}/workspace/agents/<workspaceId>/` on Windows, `/workspace/agents/<workspaceId>/` in Docker). Agent metadata, logs, events, and per-agent OpenCode config live under `{DATA_DIR}/agents/{agentId}/`. All modes use `opencode serve` with the session orchestrator; interactive workers poll an inbox for follow-ups until Finish; loop workers drive multi-step harness cycles from config. Concurrent jobs on the same repo require distinct `agentBranch` values (409 `BRANCH_IN_USE` if a branch is already active).
+Each agent gets an isolated git workspace under `AGENT_WORKSPACE` (default `{DATA_DIR}/workspace/agents/<workspaceId>/` on Windows, `/workspace/agents/<workspaceId>/` in Docker). Agent metadata, logs, events, and per-agent OpenCode config live under `{DATA_DIR}/agents/{agentId}/`. All modes use `opencode serve` with the session orchestrator; interactive workers poll an inbox for follow-ups until Finish; loop workers drive multi-step harness cycles from config. Multiple sessions may share an `agentBranch`; at most one worker runs per `(repoId, agentBranch)` and a later session starts only after the previous one on that branch completed and pushed.
 
 #### Loop harness config (`loop.json`)
 
@@ -381,7 +383,7 @@ Valid step verbs are `ORIENT`, `ACT`, and `REFLECT` (legacy `OBSERVE`/`PLAN` are
 
 ### Agent statuses and events
 
-Statuses include `queued`, `running`, `awaiting_input`, `processing`, `completing`, `completed`, `failed`, and `cancelled`. Interactive agents move through `awaiting_input` between turns; batch agents typically go `queued` → `running` → `completed` or `failed`; loop agents stay in `processing` between harness steps (no `awaiting_input`).
+Statuses include `queued`, `running`, `awaiting_input`, `processing`, `completing`, `completed`, `failed`, and `cancelled`. Interactive agents move through `awaiting_input` between turns; batch agents typically go `queued` → `running` → `completed` or `failed`; loop agents stay in `processing` between harness steps (no `awaiting_input`). `GET /agents` and `GET /agents/:id` include a derived `queue` object with wait reason, predecessor, and `canRetry` / `canAllowSuccessors` for shared-branch chains. The sessions list and session page show that wait reason; a failed or cancelled chunk can **Retry** in place or **Start next queued**, and **Queue another on this branch** prefills a new session on the same head.
 
 SSE event types: `session.status`, `assistant.delta`, `assistant.message`, `tool.start`, `tool.end`, `permission.requested`, `error`, `log.line`, plus loop events `loop.step.start`, `loop.step.end`, and `loop.iteration.end`. The stream closes ~1.5s after a terminal status.
 

@@ -4,6 +4,8 @@ import {
   createAgentPullRequest,
   deleteAgentSession,
   refreshAgentPullRequest,
+  retryAgentSession,
+  allowAgentSuccessors,
 } from '../api/agents';
 import { apiFetch, authHeaders } from '../api/client';
 import {
@@ -12,8 +14,10 @@ import {
   canReviewBranches,
   getAgentMode,
   isAgentActive,
+  queueOnBranchPrefill,
   type Agent,
   type AppConfig,
+  type QueueOnBranchPrefill,
   type Repo,
   type StatusVariant,
 } from '../api/types';
@@ -33,11 +37,13 @@ import { usePolling } from '../hooks/usePolling';
 interface AgentSessionPageProps {
   agentId: string;
   repos: Repo[];
+  onQueueAnother?: (prefill: QueueOnBranchPrefill) => void;
 }
 
 const LOG_TAIL = 500;
 
 function composerDisabledReason(agent: Agent): string | undefined {
+  if (agent.status === 'queued' && agent.queue?.reason) return agent.queue.reason;
   if (agent.status === 'processing') return 'The agent is processing your request…';
   if (agent.status === 'running' || agent.status === 'queued') return 'Session is starting…';
   if (agent.status === 'completing') return 'Finishing session — commit in progress…';
@@ -47,7 +53,7 @@ function composerDisabledReason(agent: Agent): string | undefined {
   return undefined;
 }
 
-export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
+export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessionPageProps) {
   const navigate = useNavigate();
   const { token } = useApiToken();
   const session = useAgentSession({ agentId, token });
@@ -57,6 +63,7 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
   const [followTail, setFollowTail] = useState(true);
   const [prBusy, setPrBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [queueBusy, setQueueBusy] = useState(false);
   const [relatedSessions, setRelatedSessions] = useState<Agent[]>([]);
   const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [allAgentsLoaded, setAllAgentsLoaded] = useState(false);
@@ -293,6 +300,56 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
     }
   };
 
+  const retrySession = async () => {
+    setQueueBusy(true);
+    setPageStatus('Re-queueing session…');
+    setPageStatusVariant('');
+    try {
+      await retryAgentSession(agentId, token);
+      setPageStatus('Session re-queued.');
+      setPageStatusVariant('success');
+      await session.loadAgent();
+      await loadLogs();
+    } catch (err) {
+      setPageStatus(err instanceof Error ? err.message : 'Failed to retry session');
+      setPageStatusVariant('error');
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+
+  const startNextQueued = async () => {
+    if (agent && agent.pushed !== true) {
+      const confirmed = window.confirm(
+        "This session did not push. The next queued session will start without this session's work. Continue?",
+      );
+      if (!confirmed) return;
+    }
+
+    setQueueBusy(true);
+    setPageStatus('Starting the next queued session…');
+    setPageStatusVariant('');
+    try {
+      const result = await allowAgentSuccessors(agentId, token);
+      setPageStatus(result.warning || 'Later sessions on this branch can start.');
+      setPageStatusVariant('success');
+      await session.loadAgent();
+      void loadRelatedSessions();
+    } catch (err) {
+      setPageStatus(err instanceof Error ? err.message : 'Failed to start the next session');
+      setPageStatusVariant('error');
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+
+  const queueAnotherOnBranch = () => {
+    if (!agent) return;
+    const prefill = queueOnBranchPrefill(agent);
+    if (!prefill) return;
+    onQueueAnother?.(prefill);
+  };
+
   const repo = agent ? repos.find((r) => r.repoId === agent.repoId) : null;
   const repoLabel = repo ? `${repo.owner}/${repo.name}` : agent?.repoId ?? '—';
   const statusMessage = session.status || pageStatus;
@@ -388,6 +445,21 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
         </Button>
       ) : null}
       {renderPrAndReviewActions(false)}
+      {agent?.queue?.canRetry ? (
+        <Button variant="primary" disabled={queueBusy} onClick={() => retrySession()}>
+          Retry
+        </Button>
+      ) : null}
+      {agent?.queue?.canAllowSuccessors ? (
+        <Button variant="ghost" disabled={queueBusy} onClick={() => startNextQueued()}>
+          Start next queued
+        </Button>
+      ) : null}
+      {agent && queueOnBranchPrefill(agent) ? (
+        <Button variant="ghost" onClick={() => queueAnotherOnBranch()}>
+          Queue another on this branch
+        </Button>
+      ) : null}
       {isActive ? (
         <Button variant="ghost" onClick={() => cancelAgent()}>
           Cancel session
@@ -425,6 +497,35 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
         </Button>
       ) : null}
       {renderPrAndReviewActions(true)}
+      {agent?.queue?.canRetry ? (
+        <Button
+          variant="primary"
+          className="!px-3 !py-1.5 text-xs"
+          disabled={queueBusy}
+          onClick={() => retrySession()}
+        >
+          Retry
+        </Button>
+      ) : null}
+      {agent?.queue?.canAllowSuccessors ? (
+        <Button
+          variant="ghost"
+          className="!px-2.5 !py-1.5 text-xs"
+          disabled={queueBusy}
+          onClick={() => startNextQueued()}
+        >
+          Start next
+        </Button>
+      ) : null}
+      {agent && queueOnBranchPrefill(agent) ? (
+        <Button
+          variant="ghost"
+          className="!px-2.5 !py-1.5 text-xs"
+          onClick={() => queueAnotherOnBranch()}
+        >
+          Queue another
+        </Button>
+      ) : null}
       {isActive ? (
         <Button variant="ghost" className="!px-2.5 !py-1.5 text-xs" onClick={() => cancelAgent()}>
           Cancel
@@ -486,6 +587,9 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
                 {loop && loopProgress ? ` · ${loopProgress}` : ''}
               </p>
             ) : null}
+            {agent?.queue?.reason ? (
+              <p className="mt-1 text-xs text-muted">{agent.queue.reason}</p>
+            ) : null}
           </div>
           <Button
             variant="ghost"
@@ -539,6 +643,9 @@ export function AgentSessionPage({ agentId, repos }: AgentSessionPageProps) {
               {agent.agentBranch || agent.branch || '—'}
               {interactive && agent.turnCount != null ? ` · ${agent.turnCount} turn(s)` : ''}
             </p>
+          ) : null}
+          {agent?.queue?.reason ? (
+            <p className="mt-1 text-sm text-muted">{agent.queue.reason}</p>
           ) : null}
           {loop && loopProgress ? (
             <p className="mt-1 text-sm text-on-surface-variant">

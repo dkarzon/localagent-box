@@ -179,6 +179,18 @@ export type AgentStatus =
   | 'failed'
   | 'cancelled';
 
+export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
+
+export interface AgentQueueState {
+  position: number | null;
+  waitingOn: AgentQueueWaitingOn | null;
+  predecessorId: string | null;
+  predecessorStatus: AgentStatus | null;
+  reason: string | null;
+  canRetry: boolean;
+  canAllowSuccessors: boolean;
+}
+
 export type AgentEventType =
   | 'session.status'
   | 'assistant.delta'
@@ -284,12 +296,16 @@ export interface Agent {
   pullRequest?: AgentPullRequest | null;
   /** Auto-create PR when agent completes */
   autoCreatePullRequest?: boolean;
+  /** When true on a failed/cancelled session, later sessions on the same branch may start. */
+  allowSuccessors?: boolean;
   /** Links auto-spawned review to the coding agent that completed */
   parentAgentId?: string | null;
   /** Review-specific metadata; present only when mode === 'review' */
   review?: AgentReviewMetadata | null;
   /** Cumulative token usage across all assistant messages in this session */
   tokenUsage?: AgentTokenUsage;
+  /** Derived wait/retry info; not persisted */
+  queue?: AgentQueueState;
 }
 
 export interface AgentJob {

@@ -65,6 +65,33 @@ export async function initCodegraph(
   }
 }
 
+export async function checkoutJobBranch(
+  gitService: Pick<GitService, 'remoteBranchExists' | 'fetchAndCheckoutBranch' | 'createBranch'>,
+  job: Pick<AgentJob, 'workspaceDir' | 'baseBranch' | 'agentBranch'>,
+  options: { shallow: boolean; logPath: string },
+): Promise<'cloned' | 'fetched' | 'created'> {
+  const { workspaceDir, baseBranch, agentBranch } = job;
+  const { shallow, logPath } = options;
+
+  if (agentBranch === baseBranch) {
+    appendLog(logPath, `Checked out existing branch ${agentBranch}`);
+    return 'cloned';
+  }
+
+  const exists = await gitService.remoteBranchExists(workspaceDir, agentBranch);
+  if (exists) {
+    appendLog(logPath, `Fetching and checking out ${agentBranch}…`);
+    await gitService.fetchAndCheckoutBranch(workspaceDir, agentBranch, { shallow });
+    appendLog(logPath, `Checked out existing branch ${agentBranch}`);
+    return 'fetched';
+  }
+
+  appendLog(logPath, `Creating branch ${agentBranch}…`);
+  await gitService.createBranch(workspaceDir, agentBranch);
+  appendLog(logPath, `Branch ${agentBranch} checked out`);
+  return 'created';
+}
+
 export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   const { job, logPath, config, agentsStore, gitService, githubApp } = ctx;
 
@@ -72,9 +99,6 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   appendLog(logPath, `Workspace: ${job.workspaceDir}`);
   appendLog(logPath, `Base branch: ${job.baseBranch}`);
   appendLog(logPath, `Agent branch: ${job.agentBranch}`);
-  if (job.useExistingBranch) {
-    appendLog(logPath, 'Using existing branch (no new branch will be created)');
-  }
 
   const currentStatus = readAgentStatus(agentsStore, job.agentId);
   const finishAlreadyRequested =
@@ -107,19 +131,7 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   ctx.repo = cloneResult.repo;
   appendLog(logPath, `Cloned ${ctx.repo.owner}/${ctx.repo.name} @ ${cloneResult.branch}`);
 
-  if (job.useExistingBranch) {
-    if (job.agentBranch !== job.baseBranch) {
-      appendLog(logPath, `Fetching and checking out ${job.agentBranch}…`);
-      await gitService.fetchAndCheckoutBranch(job.workspaceDir, job.agentBranch, {
-        shallow: !isReview,
-      });
-    }
-    appendLog(logPath, `Checked out existing branch ${job.agentBranch}`);
-  } else {
-    appendLog(logPath, `Creating branch ${job.agentBranch}…`);
-    await gitService.createBranch(job.workspaceDir, job.agentBranch);
-    appendLog(logPath, `Branch ${job.agentBranch} checked out`);
-  }
+  await checkoutJobBranch(gitService, job, { shallow: !isReview, logPath });
 
   ensureLocalagentBoxIgnored(job.workspaceDir);
 

@@ -43,3 +43,20 @@ export async function refreshAgentPullRequest(
 ): Promise<{ agent: Agent; pullRequest: AgentPullRequest }> {
   return apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/pull-request`);
 }
+
+export async function retryAgentSession(agentId: string, token: string): Promise<{ agent: Agent }> {
+  return apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/retry`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
+
+export async function allowAgentSuccessors(
+  agentId: string,
+  token: string,
+): Promise<{ agent: Agent; warning: string | null }> {
+  return apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/allow-successors`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
