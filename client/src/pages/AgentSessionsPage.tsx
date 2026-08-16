@@ -609,7 +609,7 @@ export function AgentSessionsPage({
                         ) : null}
                       </td>
                       <td className="px-6 py-4 code-md text-on-surface-variant">
-                        {formatDuration(agent.createdAt, agent.finishedAt)}
+                        {formatDuration(agent.startedAt, agent.finishedAt)}
                         {agent.tokenUsage ? (
                           <p className="mt-0.5 text-xs text-muted">
                             {formatTokenCount(agent.tokenUsage.inputTokens + agent.tokenUsage.outputTokens)} tokens
