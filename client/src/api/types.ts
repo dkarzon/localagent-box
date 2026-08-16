@@ -226,6 +226,7 @@ export interface Agent {
   model?: string | null;
   loopVerbModels?: LoopVerbModels;
   createdAt?: string;
+  startedAt?: string;
   finishedAt?: string;
   commitSha?: string;
   filesChanged?: number;
