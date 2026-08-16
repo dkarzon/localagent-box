@@ -10,6 +10,7 @@ export {
 } from './agent.service';
 export { createAgentRepository, type AgentRepository } from './agent.repository';
 export { createAgentQueue, type AgentQueue } from './agent-queue';
+export { decideQueueAction, type QueueDecision } from './queue-eligibility';
 export { createWorkerSpawner, type WorkerSpawner } from './worker-spawner';
 export { getAgentMode, withInteractiveFields } from './agent.types';
 export { parseCreateAgentPayload, parseMessageText, type CreateAgentPayload } from './agent.validation';

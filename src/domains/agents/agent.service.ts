@@ -42,6 +42,7 @@ import type { OllamaChatService } from '../../services/ollama-client';
 import type { WebhookSender } from '../../lib/webhook';
 import { createAgentRepository, type AgentRepository } from './agent.repository';
 import { createAgentQueue } from './agent-queue';
+import { decideQueueAction } from './queue-eligibility';
 import { createWorkerSpawner } from './worker-spawner';
 import { parseCreateAgentPayload, parseMessageText } from './agent.validation';
 import { appendLog } from './worker/agent-state-writer';
@@ -177,16 +178,6 @@ export function createAgentService(options: {
       fs: fsImpl,
       path: pathImpl,
     });
-
-  function branchInUse(repoId: string, agentBranch: string, excludeAgentId?: string): boolean {
-    return repository.findAll().some(
-      (agent) =>
-        agent.repoId === repoId &&
-        agent.agentBranch === agentBranch &&
-        ACTIVE_STATUSES.has(agent.status) &&
-        agent.agentId !== excludeAgentId,
-    );
-  }
 
   function sendAgentWebhook(agentId: string, event: string): void {
     const webhookUrl = configRepository.load().webhookUrl?.trim();
@@ -334,16 +325,8 @@ export function createAgentService(options: {
   const queue = createAgentQueue({
     maxConcurrent,
     getActiveWorkerCount: () => spawner.activeCount(),
-    shouldStart: (agentId) => {
-      const agent = repository.findById(agentId);
-      if (!agent) {
-        return false;
-      }
-      return (
-        agent.status === 'queued' ||
-        (agent.status === 'completing' && !spawner.has(agentId))
-      );
-    },
+    decide: (agentId) =>
+      decideQueueAction(repository.findById(agentId), repository.findAll(), (id) => spawner.has(id)),
     onStartAgent: (agentId) => {
       const agent = repository.findById(agentId);
       if (agent) {
@@ -365,12 +348,13 @@ export function createAgentService(options: {
     const config = configRepository.load();
     githubApp.assertConfigured(config);
 
-    if (branchInUse(payload.repoId, payload.agentBranch)) {
-      throw new CodedError(
-        `Agent branch "${payload.agentBranch}" is already in use by an active job on this repo`,
-        'BRANCH_IN_USE',
-      );
-    }
+    const branchOccupied = repository.findAll().some(
+      (existing) =>
+        existing.repoId === payload.repoId &&
+        existing.agentBranch === payload.agentBranch &&
+        ACTIVE_STATUSES.has(existing.status),
+    );
+    const push = payload.mode !== 'review' && branchOccupied ? true : payload.push;
 
     // Validate review-specific fields
     if (mode === 'review' && !payload.headBranch) {
@@ -411,7 +395,7 @@ export function createAgentService(options: {
       agentBranch: payload.agentBranch,
       useExistingBranch: payload.useExistingBranch,
       commitMessage: payload.commitMessage,
-      push: payload.push,
+      push,
       pushOnFailure: payload.pushOnFailure,
       autoApprovePermissions: payload.autoApprovePermissions,
       model: payload.model || null,

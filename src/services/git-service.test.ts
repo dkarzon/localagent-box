@@ -76,3 +76,34 @@ describe('parsePorcelainStatus', () => {
     assert.equal(files[0].kind, 'renamed');
   });
 });
+
+describe('remoteBranchExists', () => {
+  it('is true when ls-remote returns a ref', async () => {
+    const calls: { file: string; args: readonly string[]; cwd?: string }[] = [];
+    const gitService = createGitService({
+      githubApp: stubGithubApp,
+      execFileAsync: async (file, args, options) => {
+        calls.push({ file, args, cwd: options.cwd });
+        return {
+          stdout: 'abc123\trefs/heads/feature/project\n',
+          stderr: '',
+        };
+      },
+    });
+
+    assert.equal(await gitService.remoteBranchExists('/workspace/agent', 'feature/project'), true);
+    assert.deepEqual(calls[0], {
+      file: 'git',
+      args: ['ls-remote', '--heads', 'origin', 'feature/project'],
+      cwd: '/workspace/agent',
+    });
+  });
+
+  it('is false when ls-remote returns empty', async () => {
+    const gitService = createGitService({
+      githubApp: stubGithubApp,
+      execFileAsync: async () => ({ stdout: '', stderr: '' }),
+    });
+    assert.equal(await gitService.remoteBranchExists('/workspace/agent', 'feature/missing'), false);
+  });
+});

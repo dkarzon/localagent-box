@@ -1,3 +1,5 @@
+import type { QueueDecision } from './queue-eligibility';
+
 export interface AgentQueue {
   enqueue: (agentId: string) => void;
   remove: (agentId: string) => void;
@@ -9,21 +11,32 @@ export interface AgentQueue {
 export function createAgentQueue(options: {
   maxConcurrent: number;
   getActiveWorkerCount: () => number;
-  shouldStart: (agentId: string) => boolean;
+  decide: (agentId: string) => QueueDecision;
   onStartAgent: (agentId: string) => void;
 }): AgentQueue {
   const queue: string[] = [];
 
   function process(): void {
-    while (options.getActiveWorkerCount() < options.maxConcurrent && queue.length > 0) {
-      const agentId = queue.shift();
-      if (!agentId) {
-        continue;
+    while (options.getActiveWorkerCount() < options.maxConcurrent) {
+      let started = false;
+      for (let i = 0; i < queue.length; ) {
+        const agentId = queue[i];
+        const decision = options.decide(agentId);
+        if (decision === 'drop') {
+          queue.splice(i, 1);
+          continue;
+        }
+        if (decision === 'start') {
+          queue.splice(i, 1);
+          options.onStartAgent(agentId);
+          started = true;
+          break;
+        }
+        i += 1;
       }
-      if (!options.shouldStart(agentId)) {
-        continue;
+      if (!started) {
+        break;
       }
-      options.onStartAgent(agentId);
     }
   }
 

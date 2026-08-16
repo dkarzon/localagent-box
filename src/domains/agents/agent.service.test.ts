@@ -28,13 +28,31 @@ const testRepo: Repo = {
   autoReviewPullRequests: null,
 };
 
-function mockChildProcess(): ChildProcess {
-  return {
-    stdout: { on: () => mockChildProcess() },
-    stderr: { on: () => mockChildProcess() },
-    on: () => mockChildProcess(),
-    kill: () => true,
-  } as unknown as ChildProcess;
+function mockChildProcess(): ChildProcess & {
+  emitExit: (code?: number | null, signal?: NodeJS.Signals | null) => void;
+} {
+  const exitHandlers: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = [];
+  const child: Record<string, unknown> = {
+    killed: false,
+    stdout: { on: () => child },
+    stderr: { on: () => child },
+    on: (event: string, handler: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+      if (event === 'exit') {
+        exitHandlers.push(handler);
+      }
+      return child;
+    },
+    kill: () => {
+      child.killed = true;
+      return true;
+    },
+    emitExit: (code: number | null = 0, signal: NodeJS.Signals | null = null) => {
+      for (const handler of exitHandlers) {
+        handler(code, signal);
+      }
+    },
+  };
+  return child as ChildProcess & { emitExit: (code?: number | null, signal?: NodeJS.Signals | null) => void };
 }
 
 function baseAgentFields(overrides: Partial<Agent> & Pick<Agent, 'agentId' | 'mode' | 'status'>): Agent {
@@ -70,6 +88,7 @@ interface TestContext {
   service: ReturnType<typeof createAgentService>;
   repository: ReturnType<typeof createAgentRepository>;
   configRepository: ReturnType<typeof createConfigRepository>;
+  spawned: Array<ReturnType<typeof mockChildProcess>>;
 }
 
 const contexts: TestContext[] = [];
@@ -78,6 +97,7 @@ function createTestContext(options?: {
   onCreatePullRequest?: () => void;
   ollamaChat?: OllamaChatService;
   capturePullRequest?: (input: { title: string; body: string }) => void;
+  maxConcurrent?: number;
 }): TestContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-service-'));
   const dataDir = path.join(root, 'data');
@@ -165,6 +185,7 @@ function createTestContext(options?: {
     }),
     createBranch: async () => {},
     fetchAndCheckoutBranch: async () => {},
+    remoteBranchExists: async () => false,
     getPorcelainStatus: async () => ' M src/changed.ts',
     getDiffStat: async () => ' src/changed.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)',
     parsePorcelainStatus: () => [{ path: 'src/changed.ts', kind: 'modified', statusCode: ' M' }],
@@ -174,6 +195,7 @@ function createTestContext(options?: {
     getCommitDiff: async () => null,
   };
 
+  const spawned: Array<ReturnType<typeof mockChildProcess>> = [];
   const service = createAgentService({
     dataDir,
     workspaceRoot,
@@ -184,13 +206,21 @@ function createTestContext(options?: {
     gitService,
     ollamaChat: options?.ollamaChat,
     repository,
-    spawn: () => mockChildProcess(),
-    maxConcurrent: 1,
+    spawn: () => {
+      const child = mockChildProcess();
+      spawned.push(child);
+      return child;
+    },
+    maxConcurrent: options?.maxConcurrent ?? 1,
   });
 
-  const ctx = { root, dataDir, workspaceRoot, service, repository, configRepository };
+  const ctx = { root, dataDir, workspaceRoot, service, repository, configRepository, spawned };
   contexts.push(ctx);
   return ctx;
+}
+
+function hasStartedWorker(ctx: TestContext, agentId: string): boolean {
+  return fs.existsSync(path.join(ctx.repository.getAgentDir(agentId), 'job.json'));
 }
 
 function seedAgent(repository: TestContext['repository'], agent: Agent): void {
@@ -1049,3 +1079,142 @@ describe('createPullRequest', () => {
     assert.equal(reviewAgent.status, 'queued');
   });
 });
+
+describe('createAgentService (shared-branch queue)', () => {
+  it('allows a second session on the same branch and keeps it queued', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+
+    assert.equal(first.status, 'queued');
+    assert.equal(second.status, 'queued');
+    assert.equal(first.agentBranch, 'feature/project');
+    assert.equal(second.agentBranch, 'feature/project');
+    assert.equal(hasStartedWorker(ctx, first.agentId), true);
+    assert.equal(hasStartedWorker(ctx, second.agentId), false);
+  });
+
+  it('starts the next same-branch session after the predecessor completes and pushes', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+
+    ctx.repository.update(first.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(hasStartedWorker(ctx, second.agentId), true);
+  });
+
+  it('does not start the next same-branch session when the predecessor failed', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+
+    ctx.repository.update(first.agentId, {
+      status: 'failed',
+      pushed: false,
+      finishedAt: new Date().toISOString(),
+      error: 'boom',
+    });
+    ctx.spawned[0].emitExit(1);
+
+    assert.equal(hasStartedWorker(ctx, second.agentId), false);
+    assert.equal(ctx.service.getAgent(second.agentId).status, 'queued');
+  });
+
+  it('starts a different-branch session while a same-branch successor is blocked', () => {
+    const ctx = createTestContext({ maxConcurrent: 2 });
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const blocked = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+    });
+    const other = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Unrelated',
+      agentBranch: 'feature/other',
+    });
+
+    assert.equal(hasStartedWorker(ctx, first.agentId), true);
+    assert.equal(hasStartedWorker(ctx, blocked.agentId), false);
+    assert.equal(hasStartedWorker(ctx, other.agentId), true);
+  });
+
+  it('forces push on a chained session even when create requested push false', () => {
+    const ctx = createTestContext();
+
+    const first = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+      push: false,
+    });
+    const second = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 2',
+      agentBranch: 'feature/project',
+      push: false,
+    });
+
+    assert.equal(first.push, false);
+    assert.equal(second.push, true);
+  });
+
+  it('does not force push on a review session sharing the branch', () => {
+    const ctx = createTestContext({ maxConcurrent: 2 });
+
+    ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const review = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      mode: 'review',
+      prompt: '',
+      baseBranch: 'main',
+      headBranch: 'feature/project',
+      parentAgentId: 'parent1',
+    });
+
+    assert.equal(review.push, false);
+  });
+});
+

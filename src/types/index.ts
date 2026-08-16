@@ -284,6 +284,8 @@ export interface Agent {
   pullRequest?: AgentPullRequest | null;
   /** Auto-create PR when agent completes */
   autoCreatePullRequest?: boolean;
+  /** When true on a failed/cancelled session, later sessions on the same branch may start. */
+  allowSuccessors?: boolean;
   /** Links auto-spawned review to the coding agent that completed */
   parentAgentId?: string | null;
   /** Review-specific metadata; present only when mode === 'review' */

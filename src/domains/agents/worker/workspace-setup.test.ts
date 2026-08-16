@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, it } from 'node:test';
 import os from 'os';
-import { initCodegraph, ensureLocalagentBoxIgnored } from './workspace-setup';
+import { initCodegraph, ensureLocalagentBoxIgnored, checkoutJobBranch } from './workspace-setup';
 
 describe('ensureLocalagentBoxIgnored', () => {
   const base = path.join(os.tmpdir(), 'test-gitignore-');
@@ -97,6 +97,87 @@ describe('initCodegraph', () => {
         fs.readFileSync(logPath, 'utf8'),
         /codegraph init failed.*binary not found/,
       );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('checkoutJobBranch', () => {
+  function makeLogPath(): { dir: string; logPath: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-checkout-'));
+    return { dir, logPath: path.join(dir, 'agent.log') };
+  }
+
+  function stubGit(remoteExists: boolean) {
+    const created: string[] = [];
+    const fetched: Array<{ branch: string; shallow?: boolean }> = [];
+    return {
+      created,
+      fetched,
+      gitService: {
+        remoteBranchExists: async () => remoteExists,
+        fetchAndCheckoutBranch: async (
+          _dir: string,
+          branch: string,
+          options?: { shallow?: boolean },
+        ) => {
+          fetched.push({ branch, shallow: options?.shallow });
+        },
+        createBranch: async (_dir: string, branch: string) => {
+          created.push(branch);
+        },
+      },
+    };
+  }
+
+  it('stays on the cloned branch when agentBranch equals baseBranch', async () => {
+    const { dir, logPath } = makeLogPath();
+    try {
+      const stub = stubGit(true);
+      const result = await checkoutJobBranch(
+        stub.gitService,
+        { workspaceDir: '/ws', baseBranch: 'main', agentBranch: 'main' },
+        { shallow: true, logPath },
+      );
+      assert.equal(result, 'cloned');
+      assert.deepEqual(stub.created, []);
+      assert.deepEqual(stub.fetched, []);
+      assert.match(fs.readFileSync(logPath, 'utf8'), /Checked out existing branch main/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fetches the agent branch when it exists on origin', async () => {
+    const { dir, logPath } = makeLogPath();
+    try {
+      const stub = stubGit(true);
+      const result = await checkoutJobBranch(
+        stub.gitService,
+        { workspaceDir: '/ws', baseBranch: 'main', agentBranch: 'feature/project' },
+        { shallow: true, logPath },
+      );
+      assert.equal(result, 'fetched');
+      assert.deepEqual(stub.created, []);
+      assert.deepEqual(stub.fetched, [{ branch: 'feature/project', shallow: true }]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('creates the agent branch from base when origin does not have it', async () => {
+    const { dir, logPath } = makeLogPath();
+    try {
+      const stub = stubGit(false);
+      const result = await checkoutJobBranch(
+        stub.gitService,
+        { workspaceDir: '/ws', baseBranch: 'main', agentBranch: 'feature/project' },
+        { shallow: true, logPath },
+      );
+      assert.equal(result, 'created');
+      assert.deepEqual(stub.created, ['feature/project']);
+      assert.deepEqual(stub.fetched, []);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
