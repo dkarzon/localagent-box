@@ -31,6 +31,8 @@ export interface GitService {
     branchName: string,
     options?: { shallow?: boolean },
   ) => Promise<void>;
+  /** True when `origin` advertises `refs/heads/<branchName>` (ls-remote). */
+  remoteBranchExists: (targetDir: string, branchName: string) => Promise<boolean>;
   getPorcelainStatus: (targetDir: string) => Promise<string>;
   /** `git diff --stat <baseRef>` (default HEAD) — deterministic working-tree change summary; '' on failure. */
   getDiffStat: (targetDir: string, baseRef?: string) => Promise<string>;
@@ -204,6 +206,30 @@ export function createGitService(options: {
         execErr.stderr || execErr.message || 'Git fetch/checkout failed',
       );
       throw new Error(message || 'Git fetch/checkout failed');
+    }
+  }
+
+  async function remoteBranchExists(targetDir: string, branchName: string): Promise<boolean> {
+    try {
+      const { stdout } = await execFileAsyncImpl(
+        'git',
+        ['ls-remote', '--heads', 'origin', branchName],
+        {
+          cwd: targetDir,
+          timeout: CLONE_TIMEOUT_MS,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: '0',
+          },
+        },
+      );
+      return stdout.trim().length > 0;
+    } catch (err) {
+      const execErr = err as { stderr?: string; message?: string };
+      const message = githubApp.redactSecrets(
+        execErr.stderr || execErr.message || 'Git ls-remote failed',
+      );
+      throw new Error(message || 'Git ls-remote failed');
     }
   }
 
@@ -404,6 +430,7 @@ export function createGitService(options: {
     verifyClone,
     createBranch,
     fetchAndCheckoutBranch,
+    remoteBranchExists,
     getPorcelainStatus,
     getDiffStat,
     parsePorcelainStatus,
