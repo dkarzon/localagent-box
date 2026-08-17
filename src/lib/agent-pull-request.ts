@@ -43,7 +43,7 @@ export function buildDefaultPullRequestTitle(agent: Agent): string {
   if (branch) {
     return `Agent: ${branch}`;
   }
-  return `Agent session ${agent.agentId.slice(0, 8)}`;
+  return `Agent session ${agent.agentId}`;
 }
 
 export function buildPullRequestMetadataSection(agent: Agent, base?: string): string {

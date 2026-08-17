@@ -172,7 +172,7 @@ export function AgentSessionInfo({
                       to={`/agents/${entry.agentId}`}
                       className="text-primary hover:text-primary-container"
                     >
-                      {isReviewAgent(entry) ? 'Review' : getAgentMode(entry)} #{entry.agentId.slice(0, 8)}
+                      {isReviewAgent(entry) ? 'Review' : getAgentMode(entry)} #{entry.agentId}
                     </Link>
                     <span className="ml-2 text-xs text-muted">{entry.status}</span>
                   </li>

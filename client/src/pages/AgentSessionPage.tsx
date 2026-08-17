@@ -359,7 +359,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const canSend = Boolean(agent?.interactive?.canSendMessage);
   const loopProgress = session.loopProgress;
   const agentMode = agent ? getAgentMode(agent) : 'batch';
-  const sessionShortId = agentId.slice(0, 8).toUpperCase();
+  const sessionId = agentId.toUpperCase();
 
   const reviewBaseBranch = agent
     ? agent.useExistingBranch
@@ -565,7 +565,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
               ← All sessions
             </Link>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-medium text-primary">Session #{sessionShortId}</h2>
+              <h2 className="text-base font-medium text-primary">Session #{sessionId}</h2>
               {agent ? (
                 <>
                   <Badge
@@ -623,7 +623,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             ← All sessions
           </Link>
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="headline-lg text-primary">Session #{sessionShortId}</h2>
+            <h2 className="headline-lg text-primary">Session #{sessionId}</h2>
             {agent ? (
               <>
                 <Badge
