@@ -572,7 +572,7 @@ export function AgentSessionsPage({
                       onClick={() => onSessionOpen(agent.agentId)}
                     >
                       <td className="px-6 py-4">
-                        <p className="code-md text-on-surface">#{agent.agentId.slice(0, 8).toUpperCase()}</p>
+                        <p className="code-md text-on-surface">#{agent.agentId.toUpperCase()}</p>
                         <p className="mt-0.5 text-xs text-muted">
                           {index === 0 ? formatRelativeTime(agent.createdAt) : formatRelativeTime(agent.finishedAt || agent.createdAt)}
                         </p>
