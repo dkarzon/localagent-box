@@ -14,6 +14,7 @@ import {
   queueOnBranchPrefill,
   type Agent,
   type AgentMode,
+  type AgentsListResponse,
   type AppConfig,
   type LoopVerbModels,
   type OllamaStatus,
@@ -25,9 +26,10 @@ import { useApiToken } from '../hooks/useApiToken';
 import { usePolling } from '../hooks/usePolling';
 import { PAGE_SUBTITLES, PAGE_TITLES } from '../navigation';
 import { formatDuration, formatRelativeTime, formatTokenCount, formatCost } from '../lib/format';
+import { agentTokenTotal, computeGlobalTokenStats } from '../lib/token-stats';
 import { IconEye } from '../components/icons';
 import { Badge, agentStatusPulse, agentStatusVariant } from '../components/ui/Badge';
-import { StatCard } from '../components/ui/Card';
+import { SectionCard, StatCard } from '../components/ui/Card';
 import { FilterTabs } from '../components/ui/FilterTabs';
 import {
   Button,
@@ -160,7 +162,7 @@ export function AgentSessionsPage({
     if (!silent) setStatus('');
     setLoadError('');
     try {
-      const data = await apiFetch<{ agents?: Agent[] }>('/api/v1/agents');
+      const data = await apiFetch<AgentsListResponse>('/api/v1/agents');
       setAgents(data.agents || []);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load agents');
@@ -482,6 +484,9 @@ export function AgentSessionsPage({
   const successRate =
     agents.length > 0 ? Math.round((completedCount / agents.length) * 1000) / 10 : 0;
   const activeCount = agents.filter((a) => isAgentActive(a)).length;
+  const tokenStats = useMemo(() => computeGlobalTokenStats(agents), [agents]);
+  const totalTokens = agentTokenTotal(tokenStats.overall);
+  const totalCost = tokenStats.overall.cost ?? 0;
 
   const systemOnline = ollama?.reachable !== false;
 
@@ -511,9 +516,29 @@ export function AgentSessionsPage({
         </div>
       </div>
 
-      <div className="mb-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <StatCard label="Success Rate" value={`${successRate}%`} />
         <StatCard label="Total Sessions" value={agents.length} />
+        <StatCard
+          label="Total Tokens"
+          value={formatTokenCount(totalTokens)}
+          meta={
+            totalCost > 0 ? (
+              <span className="text-xs text-on-surface-variant">{formatCost(totalCost)}</span>
+            ) : null
+          }
+        />
+        <StatCard
+          label="Avg Tokens / Session"
+          value={formatTokenCount(Math.round(tokenStats.averageTokensPerSession))}
+          meta={
+            tokenStats.sessionsWithUsage > 0 ? (
+              <span className="text-xs text-on-surface-variant">
+                {tokenStats.sessionsWithUsage} session{tokenStats.sessionsWithUsage === 1 ? '' : 's'} tracked
+              </span>
+            ) : null
+          }
+        />
         <StatCard
           label="Models Loaded"
           value={ollama?.modelCount ?? 0}
@@ -528,6 +553,57 @@ export function AgentSessionsPage({
         />
         <StatCard label="Active Nodes" value={activeCount} accent />
       </div>
+
+      {tokenStats.byRepo.length > 0 ? (
+        <SectionCard title="Token usage by repository" className="mb-10">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-surface-container-highest">
+                  {['Repository', 'Sessions', 'Total tokens', 'Avg / session', 'Cost'].map((col) => (
+                    <th
+                      key={col}
+                      className="px-2 py-2 label-md font-normal text-on-surface-variant first:pl-0 last:pr-0"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tokenStats.byRepo.map((entry) => {
+                  const repo = repos.find((r) => r.repoId === entry.repoId);
+                  const repoLabel = repo ? `${repo.owner}/${repo.name}` : entry.repoId;
+                  const repoTotal = agentTokenTotal(entry.usage);
+                  const repoAverage =
+                    entry.sessionsWithUsage > 0 ? repoTotal / entry.sessionsWithUsage : 0;
+                  const repoCost = entry.usage.cost ?? 0;
+
+                  return (
+                    <tr key={entry.repoId} className="border-t border-surface-low">
+                      <td className="px-2 py-3 text-on-surface first:pl-0">{repoLabel}</td>
+                      <td className="px-2 py-3 text-on-surface-variant">
+                        {entry.sessionsWithUsage}/{entry.sessionCount}
+                      </td>
+                      <td className="px-2 py-3 code-md text-on-surface">
+                        {formatTokenCount(repoTotal)}
+                      </td>
+                      <td className="px-2 py-3 code-md text-on-surface-variant">
+                        {entry.sessionsWithUsage > 0
+                          ? formatTokenCount(Math.round(repoAverage))
+                          : '—'}
+                      </td>
+                      <td className="px-2 py-3 text-on-surface-variant last:pr-0">
+                        {repoCost > 0 ? formatCost(repoCost) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      ) : null}
 
       {loadError ? <StatusMessage message={loadError} variant="error" className="mb-4" /> : null}
       {status ? (

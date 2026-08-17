@@ -212,6 +212,13 @@ export interface AgentTokenUsage {
   cost?: number;
 }
 
+export interface OverallTokenUsage extends AgentTokenUsage {}
+
+export interface AgentsListResponse {
+  agents: Agent[];
+  overallTokenUsage: OverallTokenUsage;
+}
+
 export interface Agent {
   agentId: string;
   repoId: string;
