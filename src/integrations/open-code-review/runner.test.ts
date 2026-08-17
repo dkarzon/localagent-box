@@ -68,7 +68,7 @@ describe('runOcrReview', () => {
     reviewModel: '',
   } as import('../../types').AppConfig;
 
-  it('parses json summary from stdout', async () => {
+  it('parses legacy string summary from stdout', async () => {
     const result = await runOcrReview({
       config: appConfig,
       workspaceDir: os.tmpdir(),
@@ -77,6 +77,23 @@ describe('runOcrReview', () => {
       spawnFn: () => mockChildProcess('{"summary":"Looks good"}\n'),
     });
     assert.equal(result.summary, 'Looks good');
+  });
+
+  it('parses OCR envelope from stdout', async () => {
+    const result = await runOcrReview({
+      config: appConfig,
+      workspaceDir: os.tmpdir(),
+      baseBranch: 'main',
+      headBranch: 'feature/foo',
+      spawnFn: () =>
+        mockChildProcess(
+          '{"status":"complete","message":"Review complete: 1 finding(s).","summary":{"files_reviewed":2,"comments":1},"comments":[{"path":"src/a.ts","content":"Fix this","start_line":1}]}\n',
+        ),
+    });
+    assert.equal(result.status, 'complete');
+    assert.equal(result.message, 'Review complete: 1 finding(s).');
+    assert.equal(result.comments?.length, 1);
+    assert.equal(result.comments?.[0]?.path, 'src/a.ts');
   });
 
   it('passes OCR_LLM_* env vars to the spawned process', async () => {

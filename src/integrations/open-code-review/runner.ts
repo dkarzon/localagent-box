@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { normalizeOpenCodeBaseUrl } from '../../services/opencode-config';
 import type { AppConfig, SpawnFn } from '../../types';
+import type { OcrReviewEnvelope } from './types';
 
 export interface OcrConfig {
   llm: {
@@ -57,9 +58,22 @@ export function writeOcrConfig(config: AppConfig, workspaceDir: string): void {
   fs.writeFileSync(getOcrConfigPath(workspaceDir), JSON.stringify(ocrCfg, null, 2), 'utf8');
 }
 
-export interface OcrReviewResult {
-  summary: string;
-  issues?: Array<{ file: string; line: number; message: string }>;
+export type OcrReviewResult = OcrReviewEnvelope;
+
+function isOcrReviewEnvelope(value: unknown): value is OcrReviewEnvelope {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as OcrReviewEnvelope;
+  return (
+    typeof candidate.status === 'string' ||
+    typeof candidate.message === 'string' ||
+    Array.isArray(candidate.comments) ||
+    Array.isArray(candidate.issues) ||
+    typeof candidate.summary === 'string' ||
+    (typeof candidate.summary === 'object' && candidate.summary !== null)
+  );
 }
 
 export function runOcrReview(options: {
@@ -119,15 +133,15 @@ export function runOcrReview(options: {
       }
       try {
         let parsed: OcrReviewResult | undefined;
-        // Try to parse streaming JSON lines — look for the last valid object with a summary
+        // Try to parse streaming JSON lines — look for the last valid OCR envelope.
         const trimmed = stdout.trim();
         for (const line of trimmed.split('\n').reverse()) {
           const candidate = line.trim();
           if (!candidate) continue;
           try {
             const obj = JSON.parse(candidate);
-            if (obj.summary || obj.issues !== undefined) {
-              parsed = obj as OcrReviewResult;
+            if (isOcrReviewEnvelope(obj)) {
+              parsed = obj;
               break;
             }
           } catch {}
@@ -137,7 +151,7 @@ export function runOcrReview(options: {
           resolve(parsed);
         } else {
           // If no JSON, treat stdout as plain summary
-          resolve({ summary: trimmed || 'OCR completed with no structured output' });
+          resolve({ message: trimmed || 'OCR completed with no structured output' });
         }
       } catch (err) {
         reject(new Error(`Failed to parse OCR output: ${err instanceof Error ? err.message : String(err)}`));

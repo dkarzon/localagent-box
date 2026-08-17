@@ -2,31 +2,15 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
+import { formatReviewMarkdown } from '../../../integrations/open-code-review/format-review';
 import { writeOcrConfig, runOcrReview } from '../../../integrations/open-code-review/runner';
+import type { OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
 import { loadRepoConfig } from './repo-config';
 import type { WorkerContext } from './worker-context';
 
 const execFileAsync = promisify(execFile);
-
-function buildReviewMarkdown(result: {
-  summary?: string;
-  issues?: Array<{ file?: string; line?: number; message: string }>;
-}): string {
-  const summary = result.summary || 'Code review completed.';
-  let body = `## Code Review Summary\n\n${summary}`;
-
-  if (result.issues && result.issues.length > 0) {
-    body += '\n\n---\n\n### Issues Found';
-    for (const issue of result.issues.slice(0, 20)) {
-      const loc = issue.file ? `${issue.file}${typeof issue.line === 'number' ? `:L${issue.line}` : ''}` : '';
-      body += `\n- **${loc}** ${issue.message}`;
-    }
-  }
-
-  return body.trim();
-}
 
 async function resolveHeadSha(workspaceDir: string): Promise<string | null> {
   try {
@@ -109,7 +93,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     parentAgent?.prompt,
   );
 
-  let ocrResult: { summary?: string; issues?: Array<{ file?: string; line?: number; message: string }> };
+  let ocrResult: OcrReviewEnvelope;
 
   try {
     writeOcrConfig(config, job.workspaceDir);
@@ -172,7 +156,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   try {
     if (foundPrNumber && repo) {
       appendLog(logPath, `Posting review to GitHub for PR #${foundPrNumber}`);
-      const reviewBody = buildReviewMarkdown(ocrResult);
+      const reviewBody = formatReviewMarkdown(ocrResult);
       const reviewResponse = await githubApp.createPullRequestReview(
         config,
         repo.owner,
