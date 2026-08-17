@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import type { ChildProcess } from 'node:child_process';
-import { writeOcrConfig, runOcrReview } from './runner';
+import { buildOcrLlmEnv, writeOcrConfig, runOcrReview } from './runner';
 
 function mockChildProcess(stdout: string, exitCode = 0): ChildProcess {
   const proc = {
@@ -46,9 +46,31 @@ describe('writeOcrConfig', () => {
   });
 });
 
+describe('buildOcrLlmEnv', () => {
+  it('maps Ollama settings to OCR_LLM_* env vars', () => {
+    const env = buildOcrLlmEnv({
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeModel: 'qwen2.5-coder:7b',
+      reviewModel: 'llama3.2',
+    } as import('../../types').AppConfig);
+
+    assert.equal(env.OCR_LLM_URL, 'http://localhost:11434/v1/chat/completions');
+    assert.equal(env.OCR_LLM_TOKEN, 'ollama');
+    assert.equal(env.OCR_LLM_MODEL, 'llama3.2');
+    assert.equal(env.OCR_USE_ANTHROPIC, 'false');
+  });
+});
+
 describe('runOcrReview', () => {
+  const appConfig = {
+    ollamaBaseUrl: 'http://localhost:11434',
+    opencodeModel: 'llama3.2',
+    reviewModel: '',
+  } as import('../../types').AppConfig;
+
   it('parses json summary from stdout', async () => {
     const result = await runOcrReview({
+      config: appConfig,
       workspaceDir: os.tmpdir(),
       baseBranch: 'main',
       headBranch: 'feature/foo',
@@ -57,10 +79,11 @@ describe('runOcrReview', () => {
     assert.equal(result.summary, 'Looks good');
   });
 
-  it('passes OCR_CONFIG_PATH to the spawned process', async () => {
+  it('passes OCR_LLM_* env vars to the spawned process', async () => {
     const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-review-'));
     let capturedEnv: NodeJS.ProcessEnv | undefined;
     await runOcrReview({
+      config: appConfig,
       workspaceDir,
       baseBranch: 'main',
       headBranch: 'feature/foo',
@@ -69,6 +92,10 @@ describe('runOcrReview', () => {
         return mockChildProcess('{"summary":"ok"}\n');
       },
     });
-    assert.equal(capturedEnv?.OCR_CONFIG_PATH, path.join(workspaceDir, '.ocr', 'config.json'));
+    assert.equal(capturedEnv?.OCR_LLM_URL, 'http://localhost:11434/v1/chat/completions');
+    assert.equal(capturedEnv?.OCR_LLM_TOKEN, 'ollama');
+    assert.equal(capturedEnv?.OCR_LLM_MODEL, 'llama3.2');
+    assert.equal(capturedEnv?.OCR_USE_ANTHROPIC, 'false');
+    assert.equal(capturedEnv?.OCR_CONFIG_PATH, undefined);
   });
 });

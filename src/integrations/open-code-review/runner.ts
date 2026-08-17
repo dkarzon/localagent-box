@@ -21,16 +21,35 @@ export function getOcrBinary(): string {
   return process.env.OCR_BIN || 'ocr';
 }
 
-export function writeOcrConfig(config: AppConfig, workspaceDir: string): void {
+export function buildOcrLlmSettings(config: AppConfig): OcrConfig['llm'] {
+  if (!config.ollamaBaseUrl?.trim()) {
+    throw new Error('Ollama is not configured (ollamaBaseUrl is empty)');
+  }
+
   const effectiveModel = config.reviewModel || config.opencodeModel || 'llama3.2';
   const baseUrl = normalizeOpenCodeBaseUrl(config.ollamaBaseUrl);
+  return {
+    url: `${baseUrl}/chat/completions`,
+    auth_token: 'ollama',
+    model: effectiveModel,
+    use_anthropic: false,
+  };
+}
+
+/** OCR review ignores OCR_CONFIG_PATH; it resolves LLM settings from OCR_LLM_* env vars. */
+export function buildOcrLlmEnv(config: AppConfig): NodeJS.ProcessEnv {
+  const llm = buildOcrLlmSettings(config);
+  return {
+    OCR_LLM_URL: llm.url,
+    OCR_LLM_TOKEN: llm.auth_token,
+    OCR_LLM_MODEL: llm.model,
+    OCR_USE_ANTHROPIC: 'false',
+  };
+}
+
+export function writeOcrConfig(config: AppConfig, workspaceDir: string): void {
   const ocrCfg: OcrConfig = {
-    llm: {
-      url: `${baseUrl}/chat/completions`,
-      auth_token: 'ollama',
-      model: effectiveModel,
-      use_anthropic: false,
-    },
+    llm: buildOcrLlmSettings(config),
   };
 
   const ocrDir = path.join(workspaceDir, '.ocr');
@@ -44,6 +63,7 @@ export interface OcrReviewResult {
 }
 
 export function runOcrReview(options: {
+  config: AppConfig;
   workspaceDir: string;
   baseBranch: string;
   headBranch: string;
@@ -64,7 +84,7 @@ export function runOcrReview(options: {
     args.push('-b', options.background);
   }
 
-  const ocrConfigPath = getOcrConfigPath(options.workspaceDir);
+  const ocrLlmEnv = buildOcrLlmEnv(options.config);
 
   return new Promise((resolve, reject) => {
     const proc = (options.spawnFn || spawn)(ocrBin, args, {
@@ -72,7 +92,7 @@ export function runOcrReview(options: {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        OCR_CONFIG_PATH: ocrConfigPath,
+        ...ocrLlmEnv,
       },
     });
 

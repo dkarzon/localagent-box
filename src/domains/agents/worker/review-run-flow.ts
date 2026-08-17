@@ -109,14 +109,14 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     parentAgent?.prompt,
   );
 
-  writeOcrConfig(config, job.workspaceDir);
-  appendLog(logPath, 'OCR config written to workspace');
-
   let ocrResult: { summary?: string; issues?: Array<{ file?: string; line?: number; message: string }> };
 
   try {
+    writeOcrConfig(config, job.workspaceDir);
+    appendLog(logPath, 'OCR config written to workspace');
     appendLog(logPath, `Running OCR review (${job.baseBranch}..${headBranch})`);
     ocrResult = await runOcrReview({
+      config,
       workspaceDir: job.workspaceDir,
       baseBranch: job.baseBranch,
       headBranch,
