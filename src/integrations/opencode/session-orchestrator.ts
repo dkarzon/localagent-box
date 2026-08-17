@@ -18,6 +18,7 @@ import {
   EventWriter,
   getAgentDir,
   getEventsPath,
+  readAgentRecord,
   readAgentStatus,
   updateAgentRecord,
 } from '../../domains/agents/worker/agent-state-writer';
@@ -33,7 +34,9 @@ import { createOpenCodeEventMapper, type AgentRunMode } from './event-mapper';
 import {
   buildModelRef,
   buildOpenCodePrompt,
+  isAgentRunTimedOut,
   parseTimeoutMs,
+  resolveAgentRunStartedAtMs,
   type OpenCodeModelRef,
 } from './runner';
 import {
@@ -179,7 +182,9 @@ export async function runSessionOrchestrator(
   let finishRequested = false;
   let sessionFailed = false;
   let failureMessage: string | null = null;
-  const sessionStartedAt = Date.now();
+  const sessionStartedAt = resolveAgentRunStartedAtMs(
+    readAgentRecord(agentsStore, job.agentId)?.startedAt,
+  );
   const timeoutMs = parseTimeoutMs(job.agentTimeoutMs);
   let eventSubscription: { unsubscribe: () => void; ready: Promise<void> } | undefined;
   let seenBusySinceProcessing = false;
@@ -572,7 +577,7 @@ export async function runSessionOrchestrator(
     }
 
     while (!finishRequested && !sessionFailed) {
-      if (Date.now() - sessionStartedAt > timeoutMs) {
+      if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
         throw new Error(
           mode === 'interactive'
             ? `Interactive session timed out after ${Math.round(timeoutMs / 1000)}s`
@@ -788,7 +793,9 @@ export async function startOpenCodeLoopSession(options: {
   let turnCount = 0;
   let sessionFailed = false;
   let failureMessage: string | null = null;
-  const sessionStartedAt = Date.now();
+  const sessionStartedAt = resolveAgentRunStartedAtMs(
+    readAgentRecord(agentsStore, job.agentId)?.startedAt,
+  );
   const timeoutMs = parseTimeoutMs(job.agentTimeoutMs);
   let eventSubscription: { unsubscribe: () => void; ready: Promise<void> } | undefined;
   const eventMapper = createOpenCodeEventMapper();
@@ -954,7 +961,7 @@ export async function startOpenCodeLoopSession(options: {
     turnState.streamedAssistantText = '';
     eventMapper.reset();
 
-    if (Date.now() - sessionStartedAt > timeoutMs) {
+    if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
       return { outcome: 'timeout', assistantText: null };
     }
 
@@ -984,7 +991,7 @@ export async function startOpenCodeLoopSession(options: {
     }
 
     while (!sessionFailed) {
-      if (Date.now() - sessionStartedAt > timeoutMs) {
+      if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
         return finishTurn({ outcome: 'timeout', assistantText: resolveTurnAssistantText(turnState) });
       }
 

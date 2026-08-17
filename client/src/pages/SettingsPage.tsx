@@ -604,8 +604,9 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                   onChange={(e) => setInteractiveAgentTimeoutSeconds(Number(e.target.value))}
                 />
                 <p className="mt-1 text-sm text-muted">
-                  Max duration (in seconds) before an interactive session auto-terminates. Default:
-                  3600 (1 hour). Min: 60, Max: 86400 (24h).
+                  Max duration (in seconds) of running time before an interactive session
+                  auto-terminates. Queue wait does not count. Default: 3600 (1 hour). Min: 60,
+                  Max: 86400 (24h).
                 </p>
               </Field>
               <Field label="Loop Agent Timeout (seconds)">
@@ -618,8 +619,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                   onChange={(e) => setLoopAgentTimeoutSeconds(Number(e.target.value))}
                 />
                 <p className="mt-1 text-sm text-muted">
-                  Max duration (in seconds) before a loop session auto-terminates. Default: 3600 (1
-                  hour). Min: 60, Max: 86400 (24h).
+                  Max duration (in seconds) of running time before a loop session auto-terminates.
+                  Queue wait does not count. Default: 3600 (1 hour). Min: 60, Max: 86400 (24h).
                 </p>
               </Field>
               <hr className="my-4 border-surface-container-highest" />

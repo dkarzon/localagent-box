@@ -96,7 +96,7 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `OLLAMA_BASE_URL` | — | Bootstrap Ollama URL on first start (e.g. `http://localhost:11434`) |
 | `AGENT_WORKSPACE` | platform-specific | Directory for ephemeral agent clones |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent workers |
-| `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds |
+| `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds, measured from when the worker starts running (not queue wait) |
 | `OPENCODE_BIN` | `opencode` | OpenCode CLI binary |
 | `OPENCODE_PORT_BASE` | `4100` | Base port for per-agent `opencode serve` |
 | `OPENCODE_STARTUP_TIMEOUT_MS` | `900000` | Max wait for `opencode serve` to become ready |
@@ -171,8 +171,8 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `batchAutoApprovePermissions` | When true (default), batch agents auto-approve OpenCode tool permissions via per-agent `opencode.json` |
 | `loopAutoApprovePermissions` | When true (default), loop agents auto-approve tool permissions |
 | `interactiveAutoApprovePermissions` | When true, interactive agents auto-approve tool permissions (default false) |
-| `interactiveAgentTimeoutSeconds` | Interactive session timeout in seconds (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
-| `loopAgentTimeoutSeconds` | Loop session timeout in seconds (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
+| `interactiveAgentTimeoutSeconds` | Interactive session timeout in seconds from worker start (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
+| `loopAgentTimeoutSeconds` | Loop session timeout in seconds from worker start (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
 | `loopVerbModels` | Per-verb model overrides for loop mode (`INITIAL_PLAN`, `ORIENT`, `ACT`, `REFLECT`). Empty string on a verb uses the fallback chain below. Legacy `OBSERVE`/`PLAN` keys are accepted and folded into `ORIENT`. |
 
 Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.

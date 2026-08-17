@@ -92,6 +92,26 @@ export function parseTimeoutMs(value: unknown, fallback = DEFAULT_TIMEOUT_MS): n
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** Worker start time (`startedAt`). Never `createdAt` — queue wait must not consume AGENT_TIMEOUT. */
+export function resolveAgentRunStartedAtMs(
+  startedAt: string | null | undefined,
+  fallbackMs = Date.now(),
+): number {
+  if (!startedAt) {
+    return fallbackMs;
+  }
+  const ms = Date.parse(startedAt);
+  return Number.isFinite(ms) ? ms : fallbackMs;
+}
+
+export function isAgentRunTimedOut(
+  runStartedAtMs: number,
+  timeoutMs: number,
+  nowMs = Date.now(),
+): boolean {
+  return nowMs - runStartedAtMs > timeoutMs;
+}
+
 export function buildModelRef(config: AppConfig): OpenCodeModelRef | null {
   return buildModelRefFromId(config, config.opencodeModel);
 }
