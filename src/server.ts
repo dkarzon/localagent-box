@@ -6,7 +6,7 @@ import { getServerEnv } from './config/env';
 import { sendJson, parseUrl, MIME_TYPES } from './lib/http';
 import { handleRouteError } from './lib/error-handler';
 import { isDefaultApiToken } from './lib/auth';
-import { getLogger } from './lib/logger';
+import { getLogger, createBootstrapLogger } from './lib/logger';
 import { registerProcessHandlers } from './lib/process-handlers';
 import { createConfigRepository } from './domains/config/config.repository';
 import { createJsonStore } from './lib/json-store';
@@ -231,7 +231,6 @@ function startServer(): void {
   const env = getServerEnv();
   const logger = getLogger();
 
-  registerProcessHandlers(logger);
   ensureDirectories(env);
 
   const ctx = createContext(env);
@@ -248,6 +247,8 @@ function startServer(): void {
     } else {
       logger.info({ url: ollama.url, modelCount: ollama.modelCount }, 'Ollama reachable');
     }
+  }).catch((err) => {
+    logger.warn({ err }, 'Ollama startup probe failed');
   });
 
   const server = http.createServer((req, res) => {
@@ -257,6 +258,16 @@ function startServer(): void {
     });
   });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.fatal({ err }, 'Port already in use');
+      process.exit(1);
+      return;
+    }
+
+    logger.error({ err }, 'HTTP server error');
+  });
+
   setupGracefulShutdown(server, ctx, env);
 
   server.listen(env.port, '0.0.0.0', () => {
@@ -264,4 +275,12 @@ function startServer(): void {
   });
 }
 
-startServer();
+const bootstrapLogger = createBootstrapLogger();
+registerProcessHandlers(bootstrapLogger);
+
+try {
+  startServer();
+} catch (err) {
+  bootstrapLogger.fatal({ err }, 'Server failed to start');
+  process.exit(1);
+}

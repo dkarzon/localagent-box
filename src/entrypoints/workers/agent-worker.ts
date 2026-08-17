@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { createJsonStore } from '../../lib/json-store';
 import { getLogger } from '../../lib/logger';
+import { registerProcessHandlers } from '../../lib/process-handlers';
 import { buildInteractiveState, INTERACTIVE_ACTIVE_STATUSES } from '../../lib/interactive-state';
 import { buildLoopState, LOOP_ACTIVE_STATUSES } from '../../lib/loop-state';
 import { BATCH_ACTIVE_STATUSES } from '../../domains/agents/agent.types';
@@ -29,6 +30,12 @@ export async function runJob(job: AgentJob): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const log = getLogger();
+  registerProcessHandlers(log, {
+    exitOnUncaughtException: true,
+    exitOnUnhandledRejection: true,
+  });
+
   const jobFile = process.env.LOCALAGENT_JOB_FILE;
   if (!jobFile || !fs.existsSync(jobFile)) {
     getLogger().fatal('LOCALAGENT_JOB_FILE missing or not found');
@@ -36,7 +43,7 @@ async function main(): Promise<void> {
   }
 
   const job = JSON.parse(fs.readFileSync(jobFile, 'utf8')) as AgentJob;
-  const log = getLogger().child({ agentId: job.agentId, repoId: job.repoId });
+  const agentLog = log.child({ agentId: job.agentId, repoId: job.repoId });
   const agentsStore = createJsonStore<{ agents: Agent[] }>(`${job.dataDir}/agents.json`, { agents: [] }, fs);
   const mode = getAgentMode(job);
   const activeStatuses =
@@ -79,7 +86,7 @@ async function main(): Promise<void> {
       agentsStore.save({ agents });
     }
 
-    log.error({ err }, message);
+    agentLog.error({ err }, message);
     process.exit(1);
   }
 }

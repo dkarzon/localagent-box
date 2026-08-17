@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { handleRouteError } from '../../../lib/error-handler';
+import { getLogger } from '../../../lib/logger';
 import { initSseResponse, writeSseEvent, parseSinceSeq } from '../../../lib/sse';
 import { parseUrl } from '../../../lib/http';
 import { TERMINAL_STATUSES } from '../../../domains/agents/agent.types';
@@ -52,7 +53,8 @@ export function handleAgentEvents(
             }
           }, 1500);
         }
-      } catch {
+      } catch (err) {
+        getLogger().error({ err, agentId }, 'SSE polling error');
         clearInterval(interval);
         if (!res.writableEnded) {
           res.end();
