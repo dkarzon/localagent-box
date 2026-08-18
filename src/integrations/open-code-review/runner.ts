@@ -94,6 +94,81 @@ function isOcrReviewEnvelope(value: unknown): value is OcrReviewEnvelope {
   );
 }
 
+export function parseOcrJsonStdout(stdout: string): Record<string, unknown> | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  for (const line of trimmed.split('\n').reverse()) {
+    const candidate = line.trim();
+    if (!candidate) continue;
+    try {
+      const obj = JSON.parse(candidate);
+      if (obj && typeof obj === 'object') {
+        return obj as Record<string, unknown>;
+      }
+    } catch {}
+  }
+
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj === 'object') {
+      return obj as Record<string, unknown>;
+    }
+  } catch {}
+
+  return null;
+}
+
+export function runOcrSessionShow(options: {
+  workspaceDir: string;
+  sessionId: string;
+  spawnFn?: SpawnFn;
+}): Promise<Record<string, unknown> | null> {
+  const ocrBin = getOcrBinary();
+  const args = [
+    'session',
+    'show',
+    '--json',
+    '--repo',
+    options.workspaceDir,
+    options.sessionId,
+  ];
+
+  return new Promise((resolve, reject) => {
+    const proc = (options.spawnFn || spawn)(ocrBin, args, {
+      cwd: options.workspaceDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    proc.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`OCR session show spawn error: ${err.message}`));
+    });
+
+    proc.on('close', (code, signal) => {
+      if (signal || code !== 0) {
+        reject(new Error(stderr.trim() || `ocr session show exited with code=${code} signal=${signal}`));
+        return;
+      }
+
+      resolve(parseOcrJsonStdout(stdout));
+    });
+  });
+}
+
 export function runOcrReview(options: {
   config: AppConfig;
   workspaceDir: string;
@@ -153,25 +228,16 @@ export function runOcrReview(options: {
       }
       try {
         let parsed: OcrReviewResult | undefined;
-        // Try to parse streaming JSON lines — look for the last valid OCR envelope.
-        const trimmed = stdout.trim();
-        for (const line of trimmed.split('\n').reverse()) {
-          const candidate = line.trim();
-          if (!candidate) continue;
-          try {
-            const obj = JSON.parse(candidate);
-            if (isOcrReviewEnvelope(obj)) {
-              parsed = obj;
-              break;
-            }
-          } catch {}
+        const envelope = parseOcrJsonStdout(stdout);
+        if (envelope && isOcrReviewEnvelope(envelope)) {
+          parsed = envelope;
         }
 
         if (parsed) {
           resolve(parsed);
         } else {
           // If no JSON, treat stdout as plain summary
-          resolve({ message: trimmed || 'OCR completed with no structured output' });
+          resolve({ message: stdout.trim() || 'OCR completed with no structured output' });
         }
       } catch (err) {
         reject(new Error(`Failed to parse OCR output: ${err instanceof Error ? err.message : String(err)}`));

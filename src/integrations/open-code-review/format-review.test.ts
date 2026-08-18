@@ -2,13 +2,36 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { formatReviewMarkdown } from './format-review';
+import { formatReviewMarkdown, formatOcrSessionMarkdown } from './format-review';
 import type { OcrReviewEnvelope } from './types';
 
 describe('formatReviewMarkdown', () => {
-  it('formats the real OCR sample with no findings', () => {
-    const samplePath = path.join(process.cwd(), 'docs', 'code-review-sample.json');
-    const sample = JSON.parse(fs.readFileSync(samplePath, 'utf8')) as OcrReviewEnvelope;
+  it('formats complete review output with no findings', () => {
+    const sample: OcrReviewEnvelope = {
+      status: 'complete',
+      message: 'Review complete: 0 finding(s) across 4 selected item(s).',
+      summary: {
+        files_reviewed: 4,
+        comments: 0,
+        total_tokens: 97264,
+        input_tokens: 91736,
+        output_tokens: 5528,
+        elapsed: '4m11s',
+      },
+      comments: [],
+      manifest: {
+        input: { requested_from: 'main', requested_head: 'feature/foo' },
+        execution: { ocr_version: 'v1.9.4', model: 'llama3.2' },
+        coverage: {
+          completed: [
+            { path: 'client/src/components/agents/AgentSessionInfo.tsx' },
+            { path: 'client/src/pages/AgentSessionsPage.tsx' },
+            { path: 'client/src/pages/AgentSessionPage.tsx' },
+            { path: 'src/lib/agent-pull-request.ts' },
+          ],
+        },
+      },
+    };
     const markdown = formatReviewMarkdown(sample);
 
     assert.match(markdown, /^## Code Review/);
@@ -19,6 +42,28 @@ describe('formatReviewMarkdown', () => {
     assert.match(markdown, /localagent-box · OCR v1\.9\.4/);
     assert.doesNotMatch(markdown, /\[object Object\]/);
     assert.doesNotMatch(markdown, /"status":/);
+  });
+
+  it('formats partial review output with failed files and retry report', () => {
+    const samplePath = path.join(process.cwd(), 'docs', 'pr-review-output.json');
+    const sample = JSON.parse(fs.readFileSync(samplePath, 'utf8')) as OcrReviewEnvelope;
+    const markdown = formatReviewMarkdown(sample);
+
+    assert.match(markdown, /Review partially complete/);
+    assert.match(markdown, /10 of 11 selected item\(s\) failed/);
+    assert.match(markdown, /`main` → `typescript`/);
+    assert.match(markdown, /\| Failed \| 10 \|/);
+    assert.match(markdown, /Files that could not be reviewed/);
+    assert.match(markdown, /timeout: file review exceeded its time limit/);
+    assert.match(markdown, /GrowthTrackerTabHeaderBlock\.tsx/);
+    assert.match(markdown, /LLM retries/);
+    assert.match(markdown, /Failed: 11/);
+    assert.match(markdown, /timeout \(11\)/);
+    assert.match(markdown, /Per-file LLM failures/);
+    assert.match(markdown, /`GlobalStyles\.d\.ts` \| main_task \| failed/);
+    assert.match(markdown, /Files reviewed successfully/);
+    assert.match(markdown, /utils\/imageSource\.d\.ts/);
+    assert.doesNotMatch(markdown, /No issues found/);
   });
 
   it('formats findings with line ranges and suggestions', () => {
@@ -58,6 +103,38 @@ describe('formatReviewMarkdown', () => {
     assert.match(markdown, /```suggestion/);
     assert.match(markdown, /mu\.Lock\(\); defer mu\.Unlock\(\);/);
     assert.match(markdown, /`src\/bar\.ts:10`/);
+  });
+
+  it('includes collapsible reasoning under findings', () => {
+    const markdown = formatReviewMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 1, comments: 1 },
+      comments: [
+        {
+          path: 'src/foo.ts',
+          content: 'Potential race condition.',
+          start_line: 10,
+          thinking: 'The map is written without synchronization.',
+        },
+      ],
+    });
+
+    assert.match(markdown, /Potential race condition\./);
+    assert.match(markdown, /<summary>Reasoning<\/summary>/);
+    assert.match(markdown, /written without synchronization/);
+  });
+
+  it('formats OCR session markdown with resume hint', () => {
+    const markdown = formatOcrSessionMarkdown('abcd-1234', {
+      status: 'partial',
+      operation: 'review',
+      items: [{ path: 'src/foo.ts', status: 'complete' }],
+    });
+
+    assert.match(markdown, /Session ID: `abcd-1234`/);
+    assert.match(markdown, /Per-file checkpoints/);
+    assert.match(markdown, /`src\/foo\.ts`/);
+    assert.match(markdown, /ocr review --resume abcd-1234/);
   });
 
   it('supports legacy string summary and issues array', () => {

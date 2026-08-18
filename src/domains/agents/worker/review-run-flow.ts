@@ -8,6 +8,7 @@ import {
   getOcrLlmTimeoutSeconds,
   writeOcrConfig,
   runOcrReview,
+  runOcrSessionShow,
 } from '../../../integrations/open-code-review/runner';
 import type { OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
@@ -133,6 +134,21 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     storedPath = path.join(agentDir, 'review-result.json');
     fs.writeFileSync(storedPath, JSON.stringify(ocrResult, null, 2));
     appendLog(logPath, `OCR result saved to ${storedPath}`);
+
+    if (ocrResult.session_id) {
+      try {
+        const sessionDetail = await runOcrSessionShow({
+          workspaceDir: job.workspaceDir,
+          sessionId: ocrResult.session_id,
+        });
+        const sessionPath = path.join(agentDir, 'review-session.json');
+        fs.writeFileSync(sessionPath, JSON.stringify(sessionDetail ?? {}, null, 2));
+        appendLog(logPath, `OCR session saved to ${sessionPath}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        appendLog(logPath, `Warning: OCR session show failed — ${message}`);
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(logPath, `Warning: saving OCR result failed — ${message}`);

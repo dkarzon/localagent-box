@@ -299,8 +299,8 @@ export function AgentSessionInfo({
             </p>
           ) : review && agent.status === 'completed' ? (
             <p className="text-sm text-on-surface-variant">
-              Review completed. Check logs for OCR output
-              {agent.review?.prNumber ? ` and PR #${agent.review.prNumber} on GitHub` : ''}.
+              Review completed. Results are shown in the conversation panel
+              {agent.review?.prNumber ? ` and posted to PR #${agent.review.prNumber} on GitHub` : ''}.
             </p>
           ) : loop && isActive ? (
             <p className="text-sm text-on-surface-variant">

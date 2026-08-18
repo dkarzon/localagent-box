@@ -10,8 +10,10 @@ import {
   buildOcrLlmEnv,
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
+  parseOcrJsonStdout,
   writeOcrConfig,
   runOcrReview,
+  runOcrSessionShow,
 } from './runner';
 
 function mockChildProcess(stdout: string, exitCode = 0): ChildProcess {
@@ -178,5 +180,25 @@ describe('runOcrReview', () => {
     const timeoutIdx = capturedArgs?.indexOf('--timeout') ?? -1;
     assert.ok(timeoutIdx >= 0);
     assert.equal(capturedArgs?.[timeoutIdx + 1], String(DEFAULT_OCR_FILE_TIMEOUT_MINUTES));
+  });
+});
+
+describe('parseOcrJsonStdout', () => {
+  it('parses the last json object from stdout', () => {
+    const parsed = parseOcrJsonStdout('noise\n{"status":"complete","comments":[]}\n');
+    assert.equal(parsed?.status, 'complete');
+  });
+});
+
+describe('runOcrSessionShow', () => {
+  it('parses session show json output', async () => {
+    const session = await runOcrSessionShow({
+      workspaceDir: os.tmpdir(),
+      sessionId: 'session-123',
+      spawnFn: () =>
+        mockChildProcess('{"status":"partial","items":[{"path":"src/foo.ts","status":"failed"}]}\n'),
+    });
+    assert.equal(session?.status, 'partial');
+    assert.equal((session?.items as Array<{ path: string }>)?.[0]?.path, 'src/foo.ts');
   });
 });
