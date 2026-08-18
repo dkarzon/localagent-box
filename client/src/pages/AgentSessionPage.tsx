@@ -17,6 +17,7 @@ import {
   canCreatePullRequest,
   canReviewBranches,
   getAgentMode,
+  getReviewPullRequestUrl,
   isAgentActive,
   isReviewAgent,
   queueOnBranchPrefill,
@@ -477,6 +478,13 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
       })
     : false;
 
+  const reviewPullRequestUrl = useMemo(() => {
+    if (!agent || !review) {
+      return null;
+    }
+    return getReviewPullRequestUrl(agent, repo, relatedSessions);
+  }, [agent, review, repo, relatedSessions]);
+
   const reviewTranscript = useMemo(() => {
     if (!reviewResult || !agent) {
       return [];
@@ -509,6 +517,15 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             variant="primary"
             className={buttonClass}
             onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
+          >
+            <IconLink className={iconClass} />
+            Open PR
+          </Button>
+        ) : reviewPullRequestUrl ? (
+          <Button
+            variant="primary"
+            className={buttonClass}
+            onClick={() => window.open(reviewPullRequestUrl, '_blank', 'noopener,noreferrer')}
           >
             <IconLink className={iconClass} />
             Open PR
@@ -548,6 +565,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     loadError: session.loadError,
     prBusy,
     relatedSessions,
+    reviewPullRequestUrl,
     onRefreshPullRequest: refreshPullRequest,
   };
 
