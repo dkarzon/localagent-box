@@ -1,5 +1,6 @@
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 
 interface MarkdownMessageProps {
@@ -37,7 +38,11 @@ export function MarkdownMessage({
     <div
       className={`markdown-body break-words${variant === 'on-dark' ? ' markdown-body-on-dark' : ''}`}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
+        components={markdownComponents}
+      >
         {text}
       </ReactMarkdown>
     </div>

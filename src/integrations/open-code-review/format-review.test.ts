@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
 import { describe, it } from 'node:test';
 import { formatReviewMarkdown, formatOcrSessionMarkdown } from './format-review';
 import type { OcrReviewEnvelope } from './types';
@@ -45,8 +43,51 @@ describe('formatReviewMarkdown', () => {
   });
 
   it('formats partial review output with failed files and retry report', () => {
-    const samplePath = path.join(process.cwd(), 'docs', 'pr-review-output.json');
-    const sample = JSON.parse(fs.readFileSync(samplePath, 'utf8')) as OcrReviewEnvelope;
+    const sample: OcrReviewEnvelope = {
+      status: 'partial',
+      message: 'Review partially complete: 10 of 11 selected item(s) failed.',
+      summary: { files_reviewed: 1, comments: 0 },
+      manifest: {
+        input: {
+          requested_from: 'main',
+          requested_head: 'typescript',
+        },
+        coverage: {
+          selected: Array.from({ length: 11 }, (_, index) => ({ path: `src/file-${index}.ts` })),
+          failed: [
+            {
+              path: 'GrowthTrackerTabHeaderBlock.tsx',
+              classification: 'timeout',
+              reason: 'file review exceeded its time limit',
+            },
+            ...Array.from({ length: 9 }, (_, index) => ({
+              path: `src/failed-${index}.ts`,
+              classification: 'timeout',
+              reason: 'file review exceeded its time limit',
+            })),
+          ],
+          completed: [{ path: 'utils/imageSource.d.ts' }],
+        },
+      },
+      retry_report: {
+        total_requests: 11,
+        failed_requests: 11,
+        requests: [
+          {
+            file_path: 'GlobalStyles.d.ts',
+            task_type: 'main_task',
+            outcome: 'failed',
+            attempts: [{ error_class: 'timeout', failure_phase: 'headers' }],
+          },
+          ...Array.from({ length: 10 }, () => ({
+            file_path: 'other.ts',
+            task_type: 'main_task',
+            outcome: 'failed',
+            attempts: [{ error_class: 'timeout' }],
+          })),
+        ],
+      },
+    };
     const markdown = formatReviewMarkdown(sample);
 
     assert.match(markdown, /Review partially complete/);
