@@ -1,0 +1,80 @@
+{
+    "status": "complete",
+    "llm": {
+      "model": "hf.co/AtomicChat/Qwen3.8-27B-GGUF:IQ2_S"
+    },
+    "message": "Review complete: 0 finding(s) across 2 selected item(s).",
+    "summary": {
+      "files_reviewed": 2,
+      "comments": 0,
+      "total_tokens": 150878,
+      "input_tokens": 143016,
+      "output_tokens": 7862,
+      "elapsed": "5m2s"
+    },
+    "tool_calls": {
+      "total": 20,
+      "by_tool": {
+        "code_search": 11,
+        "file_read": 7,
+        "file_read_diff": 2
+      }
+    },
+    "comments": [],
+    "session_id": "c5d9566f-7c22-4fa1-a511-9202db8ec6d9",
+    "manifest": {
+      "schema_version": "ocr.run-manifest/v1",
+      "run_id": "c5d9566f-7c22-4fa1-a511-9202db8ec6d9",
+      "operation": "review",
+      "terminal_state": "complete",
+      "repository": {
+        "identity_sha256": "0e68efdf5ea127a40ccdc06b57d0b59609c1777e4378cddea63058837cdf6cbb"
+      },
+      "input": {
+        "mode": "range",
+        "requested_from": "main",
+        "requested_head": "code-clean3",
+        "resolved_base": "752318db184db86638853026b81bbd2f5f262eda",
+        "resolved_head": "0804cb65d108988aa9e993d434f49eb610dfae2e",
+        "exact_range": "752318db184db86638853026b81bbd2f5f262eda..0804cb65d108988aa9e993d434f49eb610dfae2e",
+        "source_artifact_sha256": "fd7aa57709e9f653a1bd83380738d927a52d0820dfc620498439506c24a099d5"
+      },
+      "execution": {
+        "ocr_version": "v1.9.6",
+        "model": "hf.co/AtomicChat/Qwen3.8-27B-GGUF:IQ2_S",
+        "configured_concurrency": 8,
+        "rule_config_sha256": "4afad74442aafca69595179d239a262461a4d0a26af18bcc366046a3f107991c",
+        "runtime_config_sha256": "be60201e2fd520c58ec637fe05565ad87881e957722f6601a7146d02191cb4df"
+      },
+      "coverage": {
+        "selected": [
+          {
+            "item_id": "06aa776239de554ecbc38c1084138631fccfebe97ceba50df1b5b468e6c0d04b",
+            "path": "src/app/login/page.tsx",
+            "fingerprint": "323263c754fc136af28ba21294a345be17325145426bc3dd7cb77963054b580c"
+          },
+          {
+            "item_id": "4b4101048498658b7bd8710286aa902983aeb9f5310eb19f794bcd5902fe2b68",
+            "path": "src/app/login/login-form.tsx",
+            "fingerprint": "15e35e3d374d252e7f5ba63a7d15a406a16eb1393546bfbcb68df5a0980a6109"
+          }
+        ],
+        "completed": [
+          {
+            "item_id": "06aa776239de554ecbc38c1084138631fccfebe97ceba50df1b5b468e6c0d04b",
+            "path": "src/app/login/page.tsx",
+            "fingerprint": "323263c754fc136af28ba21294a345be17325145426bc3dd7cb77963054b580c"
+          },
+          {
+            "item_id": "4b4101048498658b7bd8710286aa902983aeb9f5310eb19f794bcd5902fe2b68",
+            "path": "src/app/login/login-form.tsx",
+            "fingerprint": "15e35e3d374d252e7f5ba63a7d15a406a16eb1393546bfbcb68df5a0980a6109"
+          }
+        ],
+        "reused": [],
+        "failed": [],
+        "waived": []
+      },
+      "elapsed_ms": 301839
+    }
+  }
