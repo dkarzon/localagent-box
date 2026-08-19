@@ -11,6 +11,7 @@ import {
   runOcrSessionShow,
 } from '../../../integrations/open-code-review/runner';
 import type { OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
+import { extractOcrTokenUsage } from '../../../integrations/open-code-review/token-usage';
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
 import { loadRepoConfig } from './repo-config';
@@ -202,9 +203,18 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, `Warning: ${githubWarning}`);
   }
 
+  const tokenUsage = extractOcrTokenUsage(ocrResult);
+  if (tokenUsage) {
+    appendLog(
+      logPath,
+      `OCR token usage total: inputTokens=${tokenUsage.inputTokens} outputTokens=${tokenUsage.outputTokens}`,
+    );
+  }
+
   updateAgentRecord(agentsStore, job.agentId, {
     status: 'completed',
     finishedAt: new Date().toISOString(),
+    ...(tokenUsage ? { tokenUsage } : {}),
     ...(githubWarning
       ? {
           result: {

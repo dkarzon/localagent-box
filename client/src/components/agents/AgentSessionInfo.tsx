@@ -1,4 +1,4 @@
-import type { Agent } from '../../api/types';
+import type { Agent, AgentPullRequest, AgentTokenUsage } from '../../api/types';
 import {
   canCreatePullRequest,
   getAgentMode,
@@ -39,7 +39,9 @@ export interface AgentSessionInfoProps {
   loadError: string | null;
   prBusy: boolean;
   relatedSessions?: Agent[];
-  reviewPullRequestUrl?: string | null;
+  linkedPullRequest?: AgentPullRequest | null;
+  linkedPullRequestUrl?: string | null;
+  tokenUsage?: AgentTokenUsage | null;
   onRefreshPullRequest: () => void;
 }
 
@@ -53,10 +55,13 @@ export function AgentSessionInfo({
   loadError,
   prBusy,
   relatedSessions = [],
-  reviewPullRequestUrl = null,
+  linkedPullRequest = null,
+  linkedPullRequestUrl = null,
+  tokenUsage: tokenUsageOverride = null,
   onRefreshPullRequest,
 }: AgentSessionInfoProps) {
   const interactive = agent ? isInteractiveAgent(agent) : false;
+  const tokenUsage = tokenUsageOverride ?? agent?.tokenUsage ?? null;
   const loop = agent ? isLoopAgent(agent) : false;
   const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
@@ -89,13 +94,15 @@ export function AgentSessionInfo({
                 ? ([
                     ['Base branch', agent.review?.baseBranch || agent.baseBranch || '—'] as const,
                     ['Head branch', agent.review?.headBranch || agent.agentBranch || '—'] as const,
-                    ...(agent.review?.prNumber || reviewPullRequestUrl
+                    ...(agent.review?.prNumber || linkedPullRequestUrl
                       ? ([
                           [
                             'Linked PR',
                             agent.review?.prNumber
                               ? `#${agent.review.prNumber}`
-                              : 'Open on GitHub',
+                              : linkedPullRequest
+                                ? `#${linkedPullRequest.number}`
+                                : 'Open on GitHub',
                           ] as const,
                         ] as const)
                       : []),
@@ -107,10 +114,16 @@ export function AgentSessionInfo({
                       'Branch',
                       agent.baseBranch || agent.agentBranch || agent.branch || '—',
                     ] as const,
+                    ...(linkedPullRequest && !agent.pullRequest
+                      ? ([['Linked PR', `#${linkedPullRequest.number}`] as const] as const)
+                      : []),
                   ] as const)
                 : ([
                     ['Base branch', agent.baseBranch || '—'] as const,
                     ['Agent branch', agent.agentBranch || agent.branch || '—'] as const,
+                    ...(linkedPullRequest && !agent.pullRequest
+                      ? ([['Linked PR', `#${linkedPullRequest.number}`] as const] as const)
+                      : []),
                   ] as const)),
               ['Duration', formatDuration(agent.startedAt, agent.finishedAt)],
               ['Started', formatRelativeTime(agent.startedAt || agent.createdAt)],
@@ -124,9 +137,9 @@ export function AgentSessionInfo({
               >
                 <dt className="text-on-surface-variant">{label}</dt>
                 <dd className="code-md break-all text-on-surface">
-                  {label === 'Linked PR' && reviewPullRequestUrl ? (
+                  {label === 'Linked PR' && linkedPullRequestUrl ? (
                     <a
-                      href={reviewPullRequestUrl}
+                      href={linkedPullRequestUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-primary hover:text-primary-container"
@@ -142,34 +155,34 @@ export function AgentSessionInfo({
             ))}
           </dl>
 
-          {agent.tokenUsage ? (
+          {tokenUsage ? (
             <div className="rounded border border-surface-container-highest bg-background p-4">
               <p className="mb-2 text-sm font-medium text-on-surface">Token usage</p>
               <dl className="space-y-1.5 text-sm">
                 <div className="flex justify-between gap-4">
                   <dt className="text-on-surface-variant">Input</dt>
-                  <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.inputTokens)}</dd>
+                  <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.inputTokens)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="text-on-surface-variant">Output</dt>
-                  <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.outputTokens)}</dd>
+                  <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.outputTokens)}</dd>
                 </div>
-                {agent.tokenUsage.cacheReadTokens != null && agent.tokenUsage.cacheReadTokens > 0 ? (
+                {tokenUsage.cacheReadTokens != null && tokenUsage.cacheReadTokens > 0 ? (
                   <div className="flex justify-between gap-4">
                     <dt className="text-on-surface-variant">Cache read</dt>
-                    <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.cacheReadTokens)}</dd>
+                    <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.cacheReadTokens)}</dd>
                   </div>
                 ) : null}
-                {agent.tokenUsage.cacheWriteTokens != null && agent.tokenUsage.cacheWriteTokens > 0 ? (
+                {tokenUsage.cacheWriteTokens != null && tokenUsage.cacheWriteTokens > 0 ? (
                   <div className="flex justify-between gap-4">
                     <dt className="text-on-surface-variant">Cache write</dt>
-                    <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.cacheWriteTokens)}</dd>
+                    <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.cacheWriteTokens)}</dd>
                   </div>
                 ) : null}
-                {agent.tokenUsage.cost != null ? (
+                {tokenUsage.cost != null ? (
                   <div className="flex justify-between gap-4 border-t border-surface-low pt-1.5">
                     <dt className="text-on-surface-variant">Cost</dt>
-                    <dd className="code-md text-on-surface">{formatCost(agent.tokenUsage.cost)}</dd>
+                    <dd className="code-md text-on-surface">{formatCost(tokenUsage.cost)}</dd>
                   </div>
                 ) : null}
               </dl>
@@ -310,6 +323,30 @@ export function AgentSessionInfo({
                 Refresh status
               </Button>
             </div>
+          ) : linkedPullRequest ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-on-surface">Pull request</p>
+                <Badge variant={pullRequestStateVariant(linkedPullRequest.state)}>
+                  {linkedPullRequest.state}
+                </Badge>
+              </div>
+              <a
+                href={linkedPullRequest.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary-container"
+              >
+                <IconLink className="size-3.5 shrink-0" />
+                #{linkedPullRequest.number} — {linkedPullRequest.title}
+              </a>
+              <p className="mt-2 text-xs text-muted">
+                Open on this branch from another session in the chain.
+                {linkedPullRequest.createdAt
+                  ? ` Opened ${formatRelativeTime(linkedPullRequest.createdAt)}`
+                  : ''}
+              </p>
+            </div>
           ) : showCreatePr ? (
             <p className="text-sm text-on-surface-variant">
               OpenCode finished and the branch was pushed. Create a pull request to merge these
@@ -327,9 +364,9 @@ export function AgentSessionInfo({
                 <>
                   {' '}
                   and posted to{' '}
-                  {reviewPullRequestUrl ? (
+                  {linkedPullRequestUrl ? (
                     <a
-                      href={reviewPullRequestUrl}
+                      href={linkedPullRequestUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-primary hover:text-primary-container"

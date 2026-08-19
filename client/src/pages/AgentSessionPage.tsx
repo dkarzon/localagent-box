@@ -17,7 +17,7 @@ import {
   canCreatePullRequest,
   canReviewBranches,
   getAgentMode,
-  getReviewPullRequestUrl,
+  getLinkedPullRequest,
   isAgentActive,
   isReviewAgent,
   queueOnBranchPrefill,
@@ -28,6 +28,7 @@ import {
   type StatusVariant,
 } from '../api/types';
 import type { TranscriptEntry } from '../api/agent-events';
+import { extractOcrTokenUsage } from '../lib/ocr-token-usage';
 import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
@@ -154,7 +155,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const loop = session.loop;
   const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
-  const showCreatePr = agent ? canCreatePullRequest(agent) : false;
   const hasOpenPullRequest = agent?.pullRequest?.state === 'open';
 
   const loadLogs = useCallback(async () => {
@@ -456,6 +456,25 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
 
   const repo = agent ? repos.find((r) => r.repoId === agent.repoId) : null;
   const repoLabel = repo ? `${repo.owner}/${repo.name}` : agent?.repoId ?? '—';
+  const linkedPullRequest = useMemo(() => {
+    if (!agent) {
+      return null;
+    }
+    return getLinkedPullRequest(agent, repo, allAgents);
+  }, [agent, repo, allAgents]);
+  const linkedPullRequestUrl = linkedPullRequest?.url ?? null;
+  const sessionTokenUsage = useMemo(() => {
+    if (agent?.tokenUsage) {
+      return agent.tokenUsage;
+    }
+    if (review && reviewResult?.result) {
+      return extractOcrTokenUsage(reviewResult.result);
+    }
+    return null;
+  }, [agent?.tokenUsage, review, reviewResult]);
+  const showCreatePr = agent
+    ? canCreatePullRequest(agent) && !linkedPullRequest
+    : false;
   const statusMessage = session.status || pageStatus;
   const statusVariant = session.status ? session.statusVariant : pageStatusVariant;
   const canFinish = session.canFinish;
@@ -477,13 +496,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         agentsLoaded: allAgentsLoaded,
       })
     : false;
-
-  const reviewPullRequestUrl = useMemo(() => {
-    if (!agent || !review) {
-      return null;
-    }
-    return getReviewPullRequestUrl(agent, repo, relatedSessions);
-  }, [agent, review, repo, relatedSessions]);
 
   const reviewTranscript = useMemo(() => {
     if (!reviewResult || !agent) {
@@ -521,11 +533,11 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             <IconLink className={iconClass} />
             Open PR
           </Button>
-        ) : reviewPullRequestUrl ? (
+        ) : linkedPullRequestUrl ? (
           <Button
             variant="primary"
             className={buttonClass}
-            onClick={() => window.open(reviewPullRequestUrl, '_blank', 'noopener,noreferrer')}
+            onClick={() => window.open(linkedPullRequestUrl, '_blank', 'noopener,noreferrer')}
           >
             <IconLink className={iconClass} />
             Open PR
@@ -565,7 +577,9 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     loadError: session.loadError,
     prBusy,
     relatedSessions,
-    reviewPullRequestUrl,
+    linkedPullRequest,
+    linkedPullRequestUrl,
+    tokenUsage: sessionTokenUsage,
     onRefreshPullRequest: refreshPullRequest,
   };
 
