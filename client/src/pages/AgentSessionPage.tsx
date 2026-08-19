@@ -28,6 +28,7 @@ import {
   type StatusVariant,
 } from '../api/types';
 import type { TranscriptEntry } from '../api/agent-events';
+import { extractOcrTokenUsage } from '../lib/ocr-token-usage';
 import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
@@ -462,6 +463,15 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     return getLinkedPullRequest(agent, repo, allAgents);
   }, [agent, repo, allAgents]);
   const linkedPullRequestUrl = linkedPullRequest?.url ?? null;
+  const sessionTokenUsage = useMemo(() => {
+    if (agent?.tokenUsage) {
+      return agent.tokenUsage;
+    }
+    if (review && reviewResult?.result) {
+      return extractOcrTokenUsage(reviewResult.result);
+    }
+    return null;
+  }, [agent?.tokenUsage, review, reviewResult]);
   const showCreatePr = agent
     ? canCreatePullRequest(agent) && !linkedPullRequest
     : false;
@@ -569,6 +579,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     relatedSessions,
     linkedPullRequest,
     linkedPullRequestUrl,
+    tokenUsage: sessionTokenUsage,
     onRefreshPullRequest: refreshPullRequest,
   };
 

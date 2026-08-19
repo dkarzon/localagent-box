@@ -1,4 +1,4 @@
-import type { Agent, AgentPullRequest } from '../../api/types';
+import type { Agent, AgentPullRequest, AgentTokenUsage } from '../../api/types';
 import {
   canCreatePullRequest,
   getAgentMode,
@@ -41,6 +41,7 @@ export interface AgentSessionInfoProps {
   relatedSessions?: Agent[];
   linkedPullRequest?: AgentPullRequest | null;
   linkedPullRequestUrl?: string | null;
+  tokenUsage?: AgentTokenUsage | null;
   onRefreshPullRequest: () => void;
 }
 
@@ -56,9 +57,11 @@ export function AgentSessionInfo({
   relatedSessions = [],
   linkedPullRequest = null,
   linkedPullRequestUrl = null,
+  tokenUsage: tokenUsageOverride = null,
   onRefreshPullRequest,
 }: AgentSessionInfoProps) {
   const interactive = agent ? isInteractiveAgent(agent) : false;
+  const tokenUsage = tokenUsageOverride ?? agent?.tokenUsage ?? null;
   const loop = agent ? isLoopAgent(agent) : false;
   const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
@@ -152,34 +155,34 @@ export function AgentSessionInfo({
             ))}
           </dl>
 
-          {agent.tokenUsage ? (
+          {tokenUsage ? (
             <div className="rounded border border-surface-container-highest bg-background p-4">
               <p className="mb-2 text-sm font-medium text-on-surface">Token usage</p>
               <dl className="space-y-1.5 text-sm">
                 <div className="flex justify-between gap-4">
                   <dt className="text-on-surface-variant">Input</dt>
-                  <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.inputTokens)}</dd>
+                  <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.inputTokens)}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="text-on-surface-variant">Output</dt>
-                  <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.outputTokens)}</dd>
+                  <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.outputTokens)}</dd>
                 </div>
-                {agent.tokenUsage.cacheReadTokens != null && agent.tokenUsage.cacheReadTokens > 0 ? (
+                {tokenUsage.cacheReadTokens != null && tokenUsage.cacheReadTokens > 0 ? (
                   <div className="flex justify-between gap-4">
                     <dt className="text-on-surface-variant">Cache read</dt>
-                    <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.cacheReadTokens)}</dd>
+                    <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.cacheReadTokens)}</dd>
                   </div>
                 ) : null}
-                {agent.tokenUsage.cacheWriteTokens != null && agent.tokenUsage.cacheWriteTokens > 0 ? (
+                {tokenUsage.cacheWriteTokens != null && tokenUsage.cacheWriteTokens > 0 ? (
                   <div className="flex justify-between gap-4">
                     <dt className="text-on-surface-variant">Cache write</dt>
-                    <dd className="code-md text-on-surface">{formatTokenCount(agent.tokenUsage.cacheWriteTokens)}</dd>
+                    <dd className="code-md text-on-surface">{formatTokenCount(tokenUsage.cacheWriteTokens)}</dd>
                   </div>
                 ) : null}
-                {agent.tokenUsage.cost != null ? (
+                {tokenUsage.cost != null ? (
                   <div className="flex justify-between gap-4 border-t border-surface-low pt-1.5">
                     <dt className="text-on-surface-variant">Cost</dt>
-                    <dd className="code-md text-on-surface">{formatCost(agent.tokenUsage.cost)}</dd>
+                    <dd className="code-md text-on-surface">{formatCost(tokenUsage.cost)}</dd>
                   </div>
                 ) : null}
               </dl>
