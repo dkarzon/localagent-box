@@ -447,23 +447,109 @@ export function buildGitHubPullRequestUrl(
   return `https://github.com/${repo.owner}/${repo.name}/pull/${prNumber}`;
 }
 
+export function getAgentWorkingBranch(agent: Agent): string | null {
+  if (agent.review?.headBranch) {
+    return agent.review.headBranch;
+  }
+  return agent.agentBranch || agent.branch || null;
+}
+
+export function isChainedAgentSession(agent: Agent): boolean {
+  return Boolean(agent.parentAgentId || agent.queue?.predecessorId);
+}
+
+export function findOpenBranchPullRequest(
+  agent: Agent,
+  agents: Agent[],
+): AgentPullRequest | null {
+  const branch = getAgentWorkingBranch(agent);
+  if (!branch) {
+    return null;
+  }
+
+  const visited = new Set<string>();
+  const openPullRequest = (entry: Agent | undefined): AgentPullRequest | null => {
+    if (!entry?.pullRequest || entry.pullRequest.state !== 'open') {
+      return null;
+    }
+    return entry.pullRequest;
+  };
+
+  let currentId: string | null = agent.queue?.predecessorId ?? agent.parentAgentId ?? null;
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    const entry = agents.find((candidate) => candidate.agentId === currentId);
+    const pullRequest = openPullRequest(entry);
+    if (pullRequest) {
+      return pullRequest;
+    }
+    if (!entry) {
+      break;
+    }
+    currentId = entry.queue?.predecessorId ?? entry.parentAgentId ?? null;
+  }
+
+  for (const entry of agents) {
+    if (
+      entry.agentId === agent.agentId ||
+      visited.has(entry.agentId) ||
+      entry.repoId !== agent.repoId ||
+      getAgentWorkingBranch(entry) !== branch
+    ) {
+      continue;
+    }
+    const pullRequest = openPullRequest(entry);
+    if (pullRequest) {
+      return pullRequest;
+    }
+  }
+
+  return null;
+}
+
+export function getLinkedPullRequest(
+  agent: Agent,
+  repo: Repo | null | undefined,
+  agents: Agent[] = [],
+): AgentPullRequest | null {
+  if (agent.pullRequest) {
+    return agent.pullRequest;
+  }
+
+  if (agent.review?.prNumber && repo) {
+    return {
+      number: agent.review.prNumber,
+      url: buildGitHubPullRequestUrl(repo, agent.review.prNumber),
+      state: 'open',
+      title: `PR #${agent.review.prNumber}`,
+      createdAt: agent.createdAt || '',
+      mergedAt: null,
+      updatedAt: agent.finishedAt || agent.createdAt || '',
+    };
+  }
+
+  if (isChainedAgentSession(agent) || isReviewAgent(agent)) {
+    return findOpenBranchPullRequest(agent, agents);
+  }
+
+  return null;
+}
+
+export function getLinkedPullRequestUrl(
+  agent: Agent,
+  repo: Repo | null | undefined,
+  agents: Agent[] = [],
+): string | null {
+  const linked = getLinkedPullRequest(agent, repo, agents);
+  return linked?.url ?? null;
+}
+
 export function getReviewPullRequestUrl(
   agent: Agent,
   repo: Repo | null | undefined,
   relatedAgents: Agent[] = [],
 ): string | null {
-  if (agent.review?.prNumber && repo) {
-    return buildGitHubPullRequestUrl(repo, agent.review.prNumber);
-  }
-
-  if (agent.parentAgentId) {
-    const parent = relatedAgents.find((entry) => entry.agentId === agent.parentAgentId);
-    if (parent?.pullRequest?.url) {
-      return parent.pullRequest.url;
-    }
-  }
-
-  return null;
+  return getLinkedPullRequestUrl(agent, repo, relatedAgents);
 }
 
 export const DEFAULT_API_TOKEN = 'localagent-box';

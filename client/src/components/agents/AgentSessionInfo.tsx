@@ -1,4 +1,4 @@
-import type { Agent } from '../../api/types';
+import type { Agent, AgentPullRequest } from '../../api/types';
 import {
   canCreatePullRequest,
   getAgentMode,
@@ -39,7 +39,8 @@ export interface AgentSessionInfoProps {
   loadError: string | null;
   prBusy: boolean;
   relatedSessions?: Agent[];
-  reviewPullRequestUrl?: string | null;
+  linkedPullRequest?: AgentPullRequest | null;
+  linkedPullRequestUrl?: string | null;
   onRefreshPullRequest: () => void;
 }
 
@@ -53,7 +54,8 @@ export function AgentSessionInfo({
   loadError,
   prBusy,
   relatedSessions = [],
-  reviewPullRequestUrl = null,
+  linkedPullRequest = null,
+  linkedPullRequestUrl = null,
   onRefreshPullRequest,
 }: AgentSessionInfoProps) {
   const interactive = agent ? isInteractiveAgent(agent) : false;
@@ -89,13 +91,15 @@ export function AgentSessionInfo({
                 ? ([
                     ['Base branch', agent.review?.baseBranch || agent.baseBranch || '—'] as const,
                     ['Head branch', agent.review?.headBranch || agent.agentBranch || '—'] as const,
-                    ...(agent.review?.prNumber || reviewPullRequestUrl
+                    ...(agent.review?.prNumber || linkedPullRequestUrl
                       ? ([
                           [
                             'Linked PR',
                             agent.review?.prNumber
                               ? `#${agent.review.prNumber}`
-                              : 'Open on GitHub',
+                              : linkedPullRequest
+                                ? `#${linkedPullRequest.number}`
+                                : 'Open on GitHub',
                           ] as const,
                         ] as const)
                       : []),
@@ -107,10 +111,16 @@ export function AgentSessionInfo({
                       'Branch',
                       agent.baseBranch || agent.agentBranch || agent.branch || '—',
                     ] as const,
+                    ...(linkedPullRequest && !agent.pullRequest
+                      ? ([['Linked PR', `#${linkedPullRequest.number}`] as const] as const)
+                      : []),
                   ] as const)
                 : ([
                     ['Base branch', agent.baseBranch || '—'] as const,
                     ['Agent branch', agent.agentBranch || agent.branch || '—'] as const,
+                    ...(linkedPullRequest && !agent.pullRequest
+                      ? ([['Linked PR', `#${linkedPullRequest.number}`] as const] as const)
+                      : []),
                   ] as const)),
               ['Duration', formatDuration(agent.startedAt, agent.finishedAt)],
               ['Started', formatRelativeTime(agent.startedAt || agent.createdAt)],
@@ -124,9 +134,9 @@ export function AgentSessionInfo({
               >
                 <dt className="text-on-surface-variant">{label}</dt>
                 <dd className="code-md break-all text-on-surface">
-                  {label === 'Linked PR' && reviewPullRequestUrl ? (
+                  {label === 'Linked PR' && linkedPullRequestUrl ? (
                     <a
-                      href={reviewPullRequestUrl}
+                      href={linkedPullRequestUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-primary hover:text-primary-container"
@@ -310,6 +320,30 @@ export function AgentSessionInfo({
                 Refresh status
               </Button>
             </div>
+          ) : linkedPullRequest ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-on-surface">Pull request</p>
+                <Badge variant={pullRequestStateVariant(linkedPullRequest.state)}>
+                  {linkedPullRequest.state}
+                </Badge>
+              </div>
+              <a
+                href={linkedPullRequest.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary-container"
+              >
+                <IconLink className="size-3.5 shrink-0" />
+                #{linkedPullRequest.number} — {linkedPullRequest.title}
+              </a>
+              <p className="mt-2 text-xs text-muted">
+                Open on this branch from another session in the chain.
+                {linkedPullRequest.createdAt
+                  ? ` Opened ${formatRelativeTime(linkedPullRequest.createdAt)}`
+                  : ''}
+              </p>
+            </div>
           ) : showCreatePr ? (
             <p className="text-sm text-on-surface-variant">
               OpenCode finished and the branch was pushed. Create a pull request to merge these
@@ -327,9 +361,9 @@ export function AgentSessionInfo({
                 <>
                   {' '}
                   and posted to{' '}
-                  {reviewPullRequestUrl ? (
+                  {linkedPullRequestUrl ? (
                     <a
-                      href={reviewPullRequestUrl}
+                      href={linkedPullRequestUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-primary hover:text-primary-container"
