@@ -39,6 +39,7 @@ export interface AgentSessionInfoProps {
   loadError: string | null;
   prBusy: boolean;
   relatedSessions?: Agent[];
+  reviewPullRequestUrl?: string | null;
   onRefreshPullRequest: () => void;
 }
 
@@ -52,6 +53,7 @@ export function AgentSessionInfo({
   loadError,
   prBusy,
   relatedSessions = [],
+  reviewPullRequestUrl = null,
   onRefreshPullRequest,
 }: AgentSessionInfoProps) {
   const interactive = agent ? isInteractiveAgent(agent) : false;
@@ -87,8 +89,15 @@ export function AgentSessionInfo({
                 ? ([
                     ['Base branch', agent.review?.baseBranch || agent.baseBranch || '—'] as const,
                     ['Head branch', agent.review?.headBranch || agent.agentBranch || '—'] as const,
-                    ...(agent.review?.prNumber
-                      ? ([['Linked PR', `#${agent.review.prNumber}`] as const] as const)
+                    ...(agent.review?.prNumber || reviewPullRequestUrl
+                      ? ([
+                          [
+                            'Linked PR',
+                            agent.review?.prNumber
+                              ? `#${agent.review.prNumber}`
+                              : 'Open on GitHub',
+                          ] as const,
+                        ] as const)
                       : []),
                   ] as const)
                 : agent.useExistingBranch
@@ -114,7 +123,21 @@ export function AgentSessionInfo({
                 className="flex flex-col gap-0.5 border-b border-surface-low pb-3 last:border-0 last:pb-0"
               >
                 <dt className="text-on-surface-variant">{label}</dt>
-                <dd className="code-md break-all text-on-surface">{value}</dd>
+                <dd className="code-md break-all text-on-surface">
+                  {label === 'Linked PR' && reviewPullRequestUrl ? (
+                    <a
+                      href={reviewPullRequestUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-primary hover:text-primary-container"
+                    >
+                      <IconLink className="size-3.5 shrink-0" />
+                      {value}
+                    </a>
+                  ) : (
+                    value
+                  )}
+                </dd>
               </div>
             ))}
           </dl>
@@ -299,8 +322,26 @@ export function AgentSessionInfo({
             </p>
           ) : review && agent.status === 'completed' ? (
             <p className="text-sm text-on-surface-variant">
-              Review completed. Check logs for OCR output
-              {agent.review?.prNumber ? ` and PR #${agent.review.prNumber} on GitHub` : ''}.
+              Review completed. Results are shown in the conversation panel
+              {agent.review?.prNumber ? (
+                <>
+                  {' '}
+                  and posted to{' '}
+                  {reviewPullRequestUrl ? (
+                    <a
+                      href={reviewPullRequestUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:text-primary-container"
+                    >
+                      PR #{agent.review.prNumber} on GitHub
+                    </a>
+                  ) : (
+                    `PR #${agent.review.prNumber} on GitHub`
+                  )}
+                </>
+              ) : null}
+              .
             </p>
           ) : loop && isActive ? (
             <p className="text-sm text-on-surface-variant">

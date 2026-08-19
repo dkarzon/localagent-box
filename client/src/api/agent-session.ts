@@ -8,6 +8,32 @@ export async function fetchAgentGitStatus(
   return apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/git-status`);
 }
 
+export interface AgentReviewResultResponse {
+  agentId: string;
+  markdown: string;
+  result: Record<string, unknown>;
+  sessionId?: string | null;
+  sessionMarkdown?: string | null;
+  session?: Record<string, unknown> | null;
+}
+
+export async function fetchAgentReviewResult(
+  agentId: string,
+): Promise<AgentReviewResultResponse | null> {
+  const response = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/review-result`);
+  if (response.status === 404) {
+    return null;
+  }
+  const text = await response.text();
+  const body = text
+    ? (JSON.parse(text) as AgentReviewResultResponse & { error?: string })
+    : ({} as AgentReviewResultResponse);
+  if (!response.ok) {
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return body;
+}
+
 export async function fetchAgentMessages(
   agentId: string,
   since = 0,

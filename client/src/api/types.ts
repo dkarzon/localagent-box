@@ -440,4 +440,30 @@ export function canCreatePullRequest(agent: Agent): boolean {
   );
 }
 
+export function buildGitHubPullRequestUrl(
+  repo: Pick<Repo, 'owner' | 'name'>,
+  prNumber: number,
+): string {
+  return `https://github.com/${repo.owner}/${repo.name}/pull/${prNumber}`;
+}
+
+export function getReviewPullRequestUrl(
+  agent: Agent,
+  repo: Repo | null | undefined,
+  relatedAgents: Agent[] = [],
+): string | null {
+  if (agent.review?.prNumber && repo) {
+    return buildGitHubPullRequestUrl(repo, agent.review.prNumber);
+  }
+
+  if (agent.parentAgentId) {
+    const parent = relatedAgents.find((entry) => entry.agentId === agent.parentAgentId);
+    if (parent?.pullRequest?.url) {
+      return parent.pullRequest.url;
+    }
+  }
+
+  return null;
+}
+
 export const DEFAULT_API_TOKEN = 'localagent-box';

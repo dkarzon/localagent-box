@@ -24,6 +24,10 @@ export interface AgentRepository {
   getInboxPath: (agentId: string) => string;
   getEventsPath: (agentId: string) => string;
   getConversationPath: (agentId: string) => string;
+  getReviewResultPath: (agentId: string) => string;
+  readReviewResult: (agentId: string) => Record<string, unknown> | null;
+  getReviewSessionPath: (agentId: string) => string;
+  readReviewSession: (agentId: string) => Record<string, unknown> | null;
   getWorkspaceDir: (workspaceId: string) => string;
   appendInbox: (agentId: string, entry: Record<string, unknown>) => void;
   readLogs: (agentId: string, tailLines?: number) => { logs: string; tail: number };
@@ -72,6 +76,32 @@ export function createAgentRepository(options: {
 
   function getConversationPath(agentId: string): string {
     return pathImpl.join(getAgentDir(agentId), 'conversation.jsonl');
+  }
+
+  function getReviewResultPath(agentId: string): string {
+    return pathImpl.join(getAgentDir(agentId), 'review-result.json');
+  }
+
+  function readReviewResult(agentId: string): Record<string, unknown> | null {
+    getAgent(agentId);
+    const resultPath = getReviewResultPath(agentId);
+    if (!fsImpl.existsSync(resultPath)) {
+      return null;
+    }
+    return JSON.parse(fsImpl.readFileSync(resultPath, 'utf8')) as Record<string, unknown>;
+  }
+
+  function getReviewSessionPath(agentId: string): string {
+    return pathImpl.join(getAgentDir(agentId), 'review-session.json');
+  }
+
+  function readReviewSession(agentId: string): Record<string, unknown> | null {
+    getAgent(agentId);
+    const sessionPath = getReviewSessionPath(agentId);
+    if (!fsImpl.existsSync(sessionPath)) {
+      return null;
+    }
+    return JSON.parse(fsImpl.readFileSync(sessionPath, 'utf8')) as Record<string, unknown>;
   }
 
   function getWorkspaceDir(workspaceId: string): string {
@@ -150,6 +180,10 @@ export function createAgentRepository(options: {
     getInboxPath,
     getEventsPath,
     getConversationPath,
+    getReviewResultPath,
+    readReviewResult,
+    getReviewSessionPath,
+    readReviewSession,
     getWorkspaceDir,
     appendInbox: (agentId, entry) => {
       fsImpl.appendFileSync(getInboxPath(agentId), `${JSON.stringify(entry)}\n`, 'utf8');

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   createAgentPullRequest,
@@ -7,13 +7,19 @@ import {
   retryAgentSession,
   allowAgentSuccessors,
 } from '../api/agents';
+import {
+  fetchAgentReviewResult,
+  type AgentReviewResultResponse,
+} from '../api/agent-session';
 import { apiFetch, authHeaders } from '../api/client';
 import {
   agentModeBadgeVariant,
   canCreatePullRequest,
   canReviewBranches,
   getAgentMode,
+  getReviewPullRequestUrl,
   isAgentActive,
+  isReviewAgent,
   queueOnBranchPrefill,
   type Agent,
   type AppConfig,
@@ -21,6 +27,7 @@ import {
   type Repo,
   type StatusVariant,
 } from '../api/types';
+import type { TranscriptEntry } from '../api/agent-events';
 import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
@@ -41,6 +48,70 @@ interface AgentSessionPageProps {
 }
 
 const LOG_TAIL = 500;
+
+function buildReviewTranscriptEntries(
+  review: AgentReviewResultResponse,
+  agent: Agent,
+  finishedAt?: string | null,
+): TranscriptEntry[] {
+  const ts = finishedAt || new Date().toISOString();
+  const entries: TranscriptEntry[] = [];
+
+  const baseBranch = agent.review?.baseBranch || agent.baseBranch;
+  const headBranch = agent.review?.headBranch || agent.agentBranch || agent.branch;
+  const backgroundParts: string[] = [];
+  if (baseBranch && headBranch) {
+    backgroundParts.push(`Review branches \`${baseBranch}\` → \`${headBranch}\`.`);
+  } else if (headBranch) {
+    backgroundParts.push(`Review branch \`${headBranch}\`.`);
+  }
+  const background = agent.review?.background?.trim();
+  if (background) {
+    backgroundParts.push('', '**Review context**', '', background);
+  }
+  if (backgroundParts.length > 0) {
+    entries.push({
+      id: 'review-context',
+      role: 'user',
+      text: backgroundParts.join('\n').trim(),
+      ts: agent.createdAt || ts,
+    });
+  }
+
+  entries.push({
+    id: 'review-summary',
+    role: 'assistant',
+    text: review.markdown,
+    ts,
+  });
+
+  if (review.sessionMarkdown) {
+    entries.push({
+      id: 'review-session',
+      role: 'assistant',
+      text: review.sessionMarkdown,
+      ts,
+    });
+  }
+
+  entries.push({
+    id: 'review-raw-json',
+    role: 'assistant',
+    text: [
+      '<details>',
+      '<summary>Raw OCR output</summary>',
+      '',
+      '```json',
+      JSON.stringify(review.result, null, 2),
+      '```',
+      '',
+      '</details>',
+    ].join('\n'),
+    ts,
+  });
+
+  return entries;
+}
 
 function composerDisabledReason(agent: Agent): string | undefined {
   if (agent.status === 'queued' && agent.queue?.reason) return agent.queue.reason;
@@ -71,6 +142,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [pageStatus, setPageStatus] = useState('');
   const [pageStatusVariant, setPageStatusVariant] = useState<StatusVariant>('');
+  const [reviewResult, setReviewResult] = useState<AgentReviewResultResponse | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   const desktopHeaderRef = useRef<HTMLDivElement>(null);
   const mobileHeaderRef = useRef<HTMLElement>(null);
@@ -80,6 +152,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const agent = session.agent;
   const interactive = session.interactive;
   const loop = session.loop;
+  const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
   const showCreatePr = agent ? canCreatePullRequest(agent) : false;
   const hasOpenPullRequest = agent?.pullRequest?.state === 'open';
@@ -126,17 +199,48 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     }
   }, [agentId, agent?.parentAgentId]);
 
+  const loadReviewResult = useCallback(async () => {
+    if (!review) {
+      setReviewResult(null);
+      return;
+    }
+    try {
+      const data = await fetchAgentReviewResult(agentId);
+      if (data) {
+        setReviewResult(data);
+      }
+    } catch {
+      /* review output may not be written yet */
+    }
+  }, [agentId, review]);
+
   useEffect(() => {
     loadLogs();
     loadConfig();
     void loadRelatedSessions();
   }, [loadLogs, loadConfig, loadRelatedSessions]);
 
+  useEffect(() => {
+    setReviewResult(null);
+    void loadReviewResult();
+  }, [agentId, loadReviewResult]);
+
+  usePolling(
+    () => {
+      void loadReviewResult();
+    },
+    3000,
+    review && isActive && !reviewResult,
+  );
+
   usePolling(
     () => {
       session.loadAgent();
       loadLogs();
       void loadRelatedSessions();
+      if (review) {
+        void loadReviewResult();
+      }
       if (!session.messagesLoaded || !session.eventsConnected) {
         void session.loadMessages();
       }
@@ -374,6 +478,33 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
       })
     : false;
 
+  const reviewPullRequestUrl = useMemo(() => {
+    if (!agent || !review) {
+      return null;
+    }
+    return getReviewPullRequestUrl(agent, repo, relatedSessions);
+  }, [agent, review, repo, relatedSessions]);
+
+  const reviewTranscript = useMemo(() => {
+    if (!reviewResult || !agent) {
+      return [];
+    }
+    return buildReviewTranscriptEntries(reviewResult, agent, agent?.finishedAt);
+  }, [reviewResult, agent]);
+
+  const displayTranscript = useMemo(() => {
+    if (reviewTranscript.length === 0) {
+      return session.transcript;
+    }
+    return [...reviewTranscript, ...session.transcript];
+  }, [reviewTranscript, session.transcript]);
+
+  const transcriptEmptyMessage = review
+    ? isActive
+      ? 'Running OCR review… results will appear here when complete.'
+      : 'No review output was captured for this session.'
+    : 'Waiting for the first response…';
+
   const renderPrAndReviewActions = (compact: boolean) => {
     const buttonClass = compact ? '!gap-1.5 !px-2.5 !py-1.5 text-xs' : '!gap-2';
     const reviewButtonClass = compact ? '!px-3 !py-1.5 text-xs' : '!gap-2';
@@ -386,6 +517,15 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             variant="primary"
             className={buttonClass}
             onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
+          >
+            <IconLink className={iconClass} />
+            Open PR
+          </Button>
+        ) : reviewPullRequestUrl ? (
+          <Button
+            variant="primary"
+            className={buttonClass}
+            onClick={() => window.open(reviewPullRequestUrl, '_blank', 'noopener,noreferrer')}
           >
             <IconLink className={iconClass} />
             Open PR
@@ -425,6 +565,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     loadError: session.loadError,
     prBusy,
     relatedSessions,
+    reviewPullRequestUrl,
     onRefreshPullRequest: refreshPullRequest,
   };
 
@@ -697,7 +838,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             </div>
           </header>
 
-          <AgentTranscript entries={session.transcript} />
+          <AgentTranscript entries={displayTranscript} emptyMessage={transcriptEmptyMessage} />
           {interactive ? (
             <AgentComposer
               canSend={canSend}

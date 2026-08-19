@@ -69,6 +69,15 @@ const handleGetLogs = withErrorHandling((req, res, ctx, agentId) => {
   });
 });
 
+const handleGetReviewResult = withErrorHandling((_req, res, ctx, agentId) => {
+  const reviewResult = ctx.agentManager.readReviewResult(agentId);
+  if (!reviewResult) {
+    sendJson(res, 404, { error: 'Review result not available yet' });
+    return;
+  }
+  sendJson(res, 200, { agentId, ...reviewResult });
+});
+
 const handleGetMessages = withErrorHandling((req, res, ctx, agentId) => {
   const sinceSeq = parseSinceSeq(req, parseUrl(req));
   const messages = ctx.agentManager.readMessages(agentId);
@@ -175,6 +184,12 @@ const agentsRoute: Route = {
     const logsMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/logs$/);
     if (logsMatch && req.method === 'GET') {
       await handleGetLogs(req, res, ctx, logsMatch[1]);
+      return;
+    }
+
+    const reviewResultMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/review-result$/);
+    if (reviewResultMatch && req.method === 'GET') {
+      await handleGetReviewResult(req, res, ctx, reviewResultMatch[1]);
       return;
     }
 

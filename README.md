@@ -97,6 +97,8 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `AGENT_WORKSPACE` | platform-specific | Directory for ephemeral agent clones |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent workers |
 | `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds, measured from when the worker starts running (not queue wait) |
+| `OCR_REVIEW_TIMEOUT` | `30` | Per-file OCR review deadline in minutes (`0` disables). OCR's own default is 10. |
+| `OCR_LLM_TIMEOUT` | `600` | Per-request OCR LLM HTTP timeout in seconds. OCR's own default is 300. |
 | `OPENCODE_BIN` | `opencode` | OpenCode CLI binary |
 | `OPENCODE_PORT_BASE` | `4100` | Base port for per-agent `opencode serve` |
 | `OPENCODE_STARTUP_TIMEOUT_MS` | `900000` | Max wait for `opencode serve` to become ready |

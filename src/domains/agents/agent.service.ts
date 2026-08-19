@@ -31,6 +31,8 @@ import {
   isDuplicateReview,
   resolveAutoReviewPullRequests,
 } from '../../lib/resolve-auto-review';
+import { formatReviewMarkdown, formatOcrSessionMarkdown } from '../../integrations/open-code-review/format-review';
+import type { OcrReviewEnvelope } from '../../integrations/open-code-review/types';
 import { CodedError, getErrorMessage } from '../../types';
 import type { Agent, AgentJob, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
@@ -88,6 +90,15 @@ export interface AgentService {
     options?: { title?: string; body?: string },
   ) => Promise<Agent>;
   refreshPullRequest: (agentId: string) => Promise<Agent>;
+  readReviewResult: (
+    agentId: string,
+  ) => {
+    result: OcrReviewEnvelope;
+    markdown: string;
+    sessionId: string | null;
+    sessionMarkdown: string | null;
+    session: Record<string, unknown> | null;
+  } | null;
   restoreOnStartup: () => void;
   shutdown: () => Promise<void>;
   maxConcurrent: number;
@@ -1216,6 +1227,33 @@ export function createAgentService(options: {
     }
   }
 
+  function readReviewResult(agentId: string): {
+    result: OcrReviewEnvelope;
+    markdown: string;
+    sessionId: string | null;
+    sessionMarkdown: string | null;
+    session: Record<string, unknown> | null;
+  } | null {
+    const agent = repository.getAgent(agentId);
+    if (getAgentMode(agent) !== 'review') {
+      throw new CodedError('Agent is not a review session', 'INVALID_MODE');
+    }
+    const raw = repository.readReviewResult(agentId);
+    if (!raw) {
+      return null;
+    }
+    const result = raw as OcrReviewEnvelope;
+    const sessionId = result.session_id || null;
+    const session = sessionId ? repository.readReviewSession(agentId) : null;
+    return {
+      result,
+      markdown: formatReviewMarkdown(result),
+      sessionId,
+      session,
+      sessionMarkdown: sessionId ? formatOcrSessionMarkdown(sessionId, session) : null,
+    };
+  }
+
   return {
     createAgent,
     getAgent: (agentId) => present(repository.getAgent(agentId)),
@@ -1224,6 +1262,7 @@ export function createAgentService(options: {
     readEvents: (agentId, sinceSeq) => repository.readEvents(agentId, sinceSeq),
     getLastEventSeq: (agentId) => repository.getLastEventSeq(agentId),
     readMessages: (agentId) => repository.readMessages(agentId),
+    readReviewResult,
     sendMessage,
     finishAgent,
     commitOutstandingChanges,
