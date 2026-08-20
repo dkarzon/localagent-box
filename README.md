@@ -1,7 +1,7 @@
 # Local Agent Box
 
-A self-hosted daemon for running autonomous coding agents — powered by [OpenCode](https://opencode.ai) — against your own GitHub repositories and your own LLM (local via Ollama, or any OpenCode-compatible provider).
-> Spin up, check out, push code — entirely on infrastructure you control.
+A self-hosted daemon for running autonomous coding agents (powered by [OpenCode](https://opencode.ai)) against your own GitHub repositories and your own LLM (local via Ollama, or any OpenCode-compatible provider).
+> Spin up, check out, push code - entirely on infrastructure you control.
 
 ## What this is (and isn't)
 
