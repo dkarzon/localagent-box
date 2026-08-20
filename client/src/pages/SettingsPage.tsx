@@ -88,6 +88,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
   const [interactiveAgentTimeoutSeconds, setInteractiveAgentTimeoutSeconds] = useState(3600);
   const [loopAgentTimeoutSeconds, setLoopAgentTimeoutSeconds] = useState(3600);
   const [loopVerbModels, setLoopVerbModels] = useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
+  const [autoCreatePullRequest, setAutoCreatePullRequest] = useState(true);
   const [autoReviewPullRequests, setAutoReviewPullRequests] = useState(false);
   const [reviewModel, setReviewModel] = useState('');
   const [workspaceRetentionDays, setWorkspaceRetentionDays] = useState(30);
@@ -144,6 +145,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       setInteractiveAgentTimeoutSeconds(config.interactiveAgentTimeoutSeconds ?? 3600);
       setLoopAgentTimeoutSeconds(config.loopAgentTimeoutSeconds ?? 3600);
       setLoopVerbModels(mergeLoopVerbModels(config.loopVerbModels));
+      setAutoCreatePullRequest(config.autoCreatePullRequest !== false);
       setAutoReviewPullRequests(config.autoReviewPullRequests === true);
       setReviewModel(config.reviewModel || '');
       configEverLoadedRef.current = true;
@@ -213,6 +215,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       interactiveAgentTimeoutSeconds,
       loopAgentTimeoutSeconds,
       loopVerbModels,
+      autoCreatePullRequest,
       autoReviewPullRequests,
       reviewModel: reviewModel.trim(),
     };
@@ -231,6 +234,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       setInteractiveAgentTimeoutSeconds(config.interactiveAgentTimeoutSeconds ?? 3600);
       setLoopAgentTimeoutSeconds(config.loopAgentTimeoutSeconds ?? 3600);
       setLoopVerbModels(mergeLoopVerbModels(config.loopVerbModels));
+      setAutoCreatePullRequest(config.autoCreatePullRequest !== false);
       setAutoReviewPullRequests(config.autoReviewPullRequests === true);
       setReviewModel(config.reviewModel || '');
 
@@ -473,7 +477,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
             </SectionCard>
           ) : null}
 
-          {showSection(['opencode', 'model', 'provider']) ? (
+          {showSection(['opencode', 'model', 'provider', 'system prompt']) ? (
             <SectionCard
               title="OpenCode"
               icon={<span className="code-md text-secondary">OC</span>}
@@ -495,15 +499,41 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                   />
                 </Field>
               </div>
+              <Field label="Default System Prompt" className="mt-4">
+                <TextArea
+                  name="systemPrompt"
+                  rows={3}
+                  placeholder="Optional default system prompt prepended for every agent"
+                  value={values.systemPrompt}
+                  onChange={(e) => updateField('systemPrompt', e.target.value)}
+                />
+              </Field>
+              <p className="mt-2 text-sm text-muted">
+                Applies to batch, interactive, and loop agents when neither the create-agent request
+                nor a repo's <code className="code-md text-on-surface-variant">.localagent-box/config.json</code>{' '}
+                sets their own <code className="code-md text-on-surface-variant">systemPrompt</code>. Leave blank
+                to use OpenCode's own default.
+              </p>
             </SectionCard>
           ) : null}
 
-          {showSection(['review', 'code review', 'ocr', 'pull request', 'auto-review']) ? (
+          {showSection(['review', 'code review', 'ocr', 'pull request', 'auto-review', 'auto-create']) ? (
             <SectionCard
-              title="Code review"
+              title="Pull requests & review"
               icon={<span className="code-md text-secondary">CR</span>}
               className="lg:col-span-2"
             >
+              <CheckboxField
+                label="Auto-create pull request when an agent completes"
+                checked={autoCreatePullRequest}
+                onChange={(e) => setAutoCreatePullRequest(e.target.checked)}
+              />
+              <p className="mt-2 text-sm text-muted">
+                When enabled (default), a draft PR is opened automatically once an agent finishes and
+                pushes its branch. Disable to only create PRs manually via the session page. A given
+                agent's create request can override this default.
+              </p>
+              <hr className="my-4 border-surface-container-highest" />
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Review model">
                   <TextInput

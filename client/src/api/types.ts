@@ -120,6 +120,8 @@ export interface AppConfig {
   ollamaBaseUrl?: string;
   opencodeModel?: string;
   opencodeProvider?: string;
+  /** Default system prompt for agents, unless overridden per-repo or per-agent. Empty string is sent as `null` in GET. */
+  systemPrompt?: string | null;
   githubAppId?: string;
   githubAppInstallationId?: string;
   hasGithubAppPrivateKey?: boolean;
@@ -133,6 +135,8 @@ export interface AppConfig {
   loopAgentTimeoutSeconds?: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback chain. */
   loopVerbModels?: LoopVerbModels;
+  /** When true (default), auto-create a PR once an agent completes and pushes. Per-agent create request can override. */
+  autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
   reviewModel?: string;
   ollama?: OllamaStatus;
@@ -260,6 +264,7 @@ export const CONFIG_FIELDS = [
   'ollamaBaseUrl',
   'opencodeModel',
   'opencodeProvider',
+  'systemPrompt',
   'githubAppId',
   'githubAppInstallationId',
   'githubAppPrivateKey',

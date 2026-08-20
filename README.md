@@ -225,8 +225,11 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `interactiveAgentTimeoutSeconds` | Interactive session timeout in seconds from worker start (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
 | `loopAgentTimeoutSeconds` | Loop session timeout in seconds from worker start (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
 | `loopVerbModels` | Per-verb model overrides for loop mode (`INITIAL_PLAN`, `ORIENT`, `ACT`, `REFLECT`). Empty string on a verb uses the fallback chain below. Legacy `OBSERVE`/`PLAN` keys are accepted and folded into `ORIENT`. |
+| `autoCreatePullRequest` | When true (default), automatically open a draft PR once an agent completes and pushes its branch. A per-agent `autoCreatePullRequest` on create overrides this. |
+| `autoReviewPullRequests` | When true, auto-queue a review agent after a coding agent's PR is created (default false). Per-repo `autoReviewPullRequests` overrides this global default. |
+| `reviewModel` | Model used for auto-queued review agents; falls back to `opencodeModel` when empty |
 
-Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.
+All fields above are readable via `GET /api/v1/config` and settable via `PUT /api/v1/config`, and every one of them is editable from the **Settings** page in the UI (API Access, Ollama Status, GitHub Integration, Webhooks, OpenCode, Pull requests & review, and OpenCode permissions cards). Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.
 
 #### Loop verb model resolution
 
@@ -431,6 +434,7 @@ Valid step verbs are `ORIENT`, `ACT`, and `REFLECT` (legacy `OBSERVE`/`PLAN` are
 | `pushOnFailure` | Commit/push even when OpenCode fails (default `false`; batch only) |
 | `model` | Override `opencodeModel` for this agent only |
 | `autoApprovePermissions` | Override Settings auto-approve for OpenCode tool permissions |
+| `autoCreatePullRequest` | Override the Settings `autoCreatePullRequest` default for this agent only |
 
 ### Agent statuses and events
 

@@ -111,17 +111,13 @@ Added [`docs/README.md`](./README.md) as an index that separates **user docs** (
 
 ---
 
-### 8. Hidden / undocumented config behavior — Open
+### 8. Hidden / undocumented config behavior — Done
 
-- **`autoCreatePullRequest`** exists in server config (`src/services/config-store.ts`, `src/domains/agents/agent.service.ts`) but is **not** in `PublicConfig`, README config table, or Settings UI — behavior is invisible to operators (defaults to `true`).
-- **`systemPrompt`** is in server `PublicConfig` and README but **not** in the Settings UI or client `CONFIG_FIELDS` / client `AppConfig` (`client/src/api/types.ts`).
+`autoCreatePullRequest` was already present in server `PublicConfig` (this item was stale on that point) but was missing from the client entirely; `systemPrompt` was missing from the client as well. Both are now wired end-to-end:
 
-**Why it matters:** Silent defaults surprise users; API/UI drift confuses integrators.
-
-**Suggested changes:**
-
-- Expose `autoCreatePullRequest` and `systemPrompt` in Settings and `PublicConfig`, or document them explicitly in README if intentionally API-only.
-- Keep client `CONFIG_FIELDS` / `AppConfig` in sync with server `PublicConfig`.
+- Added `systemPrompt` and `autoCreatePullRequest` to client `AppConfig` and `CONFIG_FIELDS` (`client/src/api/types.ts`).
+- Added a **Default System Prompt** field to the Settings **OpenCode** card, and an **Auto-create pull request when an agent completes** checkbox in a renamed **Pull requests & review** card (previously "Code review") in `client/src/pages/SettingsPage.tsx`, both wired to load/save through `PUT /api/v1/config`.
+- Documented every `PublicConfig` field in the README's [Config fields](../README.md#config-fields) table, including the previously-undocumented `autoCreatePullRequest`, `autoReviewPullRequests`, and `reviewModel`, plus the per-agent `autoCreatePullRequest` override in [Create-agent body](../README.md#create-agent-body).
 
 ---
 
@@ -242,7 +238,7 @@ Worth calling out so the public narrative stays balanced:
 2. Decide and document the **auth/threat model** (done via `SECURITY.md`); align Docker with production token requirements (still open — Docker doesn't set `NODE_ENV=production`).
 3. Clean **README** — done (internal checklist removed; Security, Architecture, GitHub App, and Troubleshooting sections added).
 4. Add **CI test job** (still open); `docs/README.md` index for remaining plan files — done.
-5. Expose or document hidden config (`autoCreatePullRequest`, `systemPrompt` in UI); dedupe shared client/server code when practical. (still open)
+5. Expose or document hidden config (`autoCreatePullRequest`, `systemPrompt` in UI) — done; dedupe shared client/server code when practical (still open).
 
 ---
 
