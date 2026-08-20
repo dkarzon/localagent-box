@@ -1,8 +1,36 @@
 # Local Agent Box
 
-Locally hosted version of a Cursor Cloud Agent.
-> Spin up, check out, push code
+A self-hosted daemon for running autonomous coding agents — powered by [OpenCode](https://opencode.ai) — against your own GitHub repositories and your own LLM (local via Ollama, or any OpenCode-compatible provider).
+> Spin up, check out, push code — entirely on infrastructure you control.
 
+## What this is (and isn't)
+
+- **Is:** a small API + UI you self-host (Docker or bare Node) that clones a repo, runs an OpenCode agent against a prompt, and commits/pushes the result — with batch, interactive, and config-driven loop modes.
+- **Is:** designed for a **trusted local network** (home LAN, VPN, single-tenant internal network) — see [SECURITY.md](./SECURITY.md) before exposing it more broadly.
+- **Isn't:** a multi-tenant SaaS, a sandboxed execution environment, or a hardened public-internet service out of the box. Agents run with full filesystem access to their workspace and no network isolation.
+- **Isn't:** affiliated with, or a redistribution of, any third-party hosted "cloud agent" product — it's an independent, self-hosted alternative built on OpenCode.
+
+## Architecture
+
+```
+   HTTP API + UI (Node/Express, React)
+            │
+            ▼
+     Agent scheduler (main process)
+            │  spawns one child process per running agent
+            ▼
+   Worker (opencode serve + harness)  ──git──▶  GitHub (via GitHub App)
+            │
+            ▼
+   Ephemeral workspace clone (AGENT_WORKSPACE)
+```
+
+- A single Node process serves the REST/SSE API and the built UI, and persists state (`config.json`, `repos.json`, `agents.json`) as JSON files under `DATA_DIR`.
+- Each agent run is a separate child process (`src/workers/agent-worker.ts`) that shallow-clones the target repo into its own workspace, starts a per-agent `opencode serve` instance, and drives it through one of three flows: **batch** (single prompt → commit/push), **interactive** (multi-turn, explicit Finish), or **loop** (config-driven orient/act/reflect harness, see `config/loop.default.json`).
+- GitHub access goes through a **GitHub App** installation token minted per-request (`src/services/github-app.ts`) — no long-lived PAT or SSH key is stored.
+- Agent state, logs, and events stream back to the API over the child process's stdout/IPC and are exposed to the UI via Server-Sent Events.
+
+There is no per-agent sandboxing (container, chroot, network namespace) — see [SECURITY.md](./SECURITY.md) for what that means for your deployment.
 
 ## Quick start
 
@@ -10,7 +38,9 @@ Locally hosted version of a Cursor Cloud Agent.
 docker compose up -d --build
 ```
 
-Open the management UI at [http://localhost:8080](http://localhost:8080). The default API token is `localagent-box` (pre-filled in the UI). Override with the `API_TOKEN` environment variable in production.
+Open the management UI at [http://localhost:8080](http://localhost:8080). The default API token is `localagent-box` (pre-filled in the UI) — this is fine for a quick local trial, but **set a strong `API_TOKEN`** (and read [SECURITY.md](./SECURITY.md)) before running this anywhere reachable by anyone you don't trust.
+
+Next steps: [set up a GitHub App](./docs/github-app-setup.md) so agents can clone, commit, and open PRs against your repos.
 
 ## Local development
 
@@ -21,7 +51,7 @@ The repo has two parts: a **TypeScript Node.js API** in `src/` (compiled to `dis
 - **Node.js** ≥ 20
 - **Git** (clone/verify/push)
 - **Ollama** — optional for health checks; required to run agents against a local model
-- **OpenCode CLI** — `npm install -g opencode-ai` (needed when starting agent jobs locally)
+- **OpenCode CLI** — `npm install -g opencode-ai@v1.18.18` (matches the version pinned in the Dockerfile; needed when starting agent jobs locally)
 
 ### Install dependencies
 
@@ -113,15 +143,34 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `npm run build:ui` | Build UI into `public/` |
 | `npm start` | Run compiled API (`dist/server.js`) |
 
+## GitHub App setup
 
-- [x] Build Docker image with opencode deps
-- [x] Setup opencode config (local Ollama)
-- [x] Use Github App Auth as a replacement for ssh
-- [x] Checkout git repo
-- [x] Create branch
-- [x] Accept opencode command to execute
-- [x] Commit and push code
-- [ ] Document Github App install process
+Agents authenticate to GitHub as an installed **GitHub App** (no PAT or SSH key). See [docs/github-app-setup.md](./docs/github-app-setup.md) for step-by-step instructions: creating the app, scoping permissions (Contents + Pull requests, read/write), installing it on your repos, generating a private key, and wiring the resulting `githubAppId` / `githubAppInstallationId` / `githubAppPrivateKey` into Settings.
+
+## Security
+
+localagent-box is built for a **trusted local network**, not the open internet. Highlights (full detail in [SECURITY.md](./SECURITY.md)):
+
+- Mutating endpoints require a Bearer token; most `GET` endpoints (config, agent logs/transcripts/events, repo metadata) are **intentionally unauthenticated** so the UI and SSE streams work without embedding a token in every request.
+- The default `API_TOKEN` (`localagent-box`) is meant for local trials only — always override it before exposing the service beyond your own machine, and set `NODE_ENV=production` so the server refuses to boot with the default token.
+- Agents run as plain child processes with full access to their workspace and the host's network — there is no per-agent sandbox.
+- If you must reach this from outside a trusted LAN/VPN, put it behind a reverse proxy with its own TLS + auth; never port-forward it directly.
+
+Read [SECURITY.md](./SECURITY.md) before deploying anywhere beyond a local trial.
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---------|---------------------|
+| `401 Unauthorized` on `POST`/`PUT`/`DELETE` calls | Missing or wrong `Authorization: Bearer <API_TOKEN>` header; check the token in Settings or your `API_TOKEN` env var |
+| Server refuses to start in Docker/production | `NODE_ENV=production` with the default `API_TOKEN` (`localagent-box`) still set — pick a real token |
+| Health check shows Ollama as unreachable | `ollamaBaseUrl` isn't reachable from inside the container — on Docker Desktop use `http://host.docker.internal:11434`, not `localhost` |
+| Agent fails immediately with a GitHub/clone error | GitHub App isn't installed on that repo, or `githubAppId`/`githubAppInstallationId`/`githubAppPrivateKey` are wrong — see [docs/github-app-setup.md](./docs/github-app-setup.md#troubleshooting) |
+| Agent finishes but no PR appears | `push` was `false`, or the OpenCode run didn't produce a commit — batch/loop runs fail if nothing was committed; check `GET /agents/:id/logs` |
+| UI can't reach the API in local dev (Option A) | The API must listen on port `8081` in dev — Vite's proxy in `client/vite.config.ts` assumes that port |
+| `npm install` hangs or loops | Use `npm install --ignore-scripts` at the repo root, then `npm install --prefix client` separately (see [Install dependencies](#install-dependencies)) |
+
+For anything else, check `GET /agents/:id/logs` and `GET /agents/:id/events` for the failing session, and [SECURITY.md](./SECURITY.md) if the question is auth/network-related.
 
 ## API v1
 

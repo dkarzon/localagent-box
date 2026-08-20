@@ -351,7 +351,7 @@ export function AgentSessionsPage({
 
       if (slashIndex <= 0 || !ownerPart || !namePart) {
         setStatus(
-          'Enter the repository as owner/name with a slash in the middle (for example dkarzon/localagent-box).',
+          'Enter the repository as owner/name with a slash in the middle (for example your-org/your-repo).',
         );
         setStatusVariant('error');
         return;

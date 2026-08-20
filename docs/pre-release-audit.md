@@ -47,9 +47,11 @@ Additional concerns:
 
 ---
 
-### 3. GitHub App setup is undocumented — Open
+### 3. GitHub App setup is undocumented — Done
 
-README still ends with an unchecked item: “Document Github App install process.” No `docs/github-app-setup.md`. The API and Settings UI assume operators know how to create an app, install it, and paste a PEM key — but there is no step-by-step guide (permissions, webhook settings, org vs user install, etc.).
+Added [`docs/github-app-setup.md`](./github-app-setup.md) with step-by-step app creation, permission scoping, installation, private key generation, and config wiring, linked from the README's new "GitHub App setup" section.
+
+Original problem statement, kept for context: README used to end with an unchecked item: “Document Github App install process.” No `docs/github-app-setup.md`. The API and Settings UI assume operators know how to create an app, install it, and paste a PEM key — but there was no step-by-step guide (permissions, webhook settings, org vs user install, etc.).
 
 **Why it matters:** This is the main setup friction; without docs, first-run failure is likely and public posts will generate support noise.
 
@@ -65,8 +67,8 @@ README still ends with an unchecked item: “Document Github App install process
 |------|--------|--------|
 | `.opencode/opencode.json` | References `@tarquinen/opencode-dcp@latest` and `.agents/skills` — author-specific dev config | Open |
 | `.localagent-box/loop-plan.md` | Internal planning note | **Done** (removed) |
-| `client/src/pages/RepositoriesPage.tsx` | Placeholder `dkarzon` | Open |
-| `client/src/pages/AgentSessionsPage.tsx` | Example `dkarzon/localagent-box` | Open |
+| `client/src/pages/RepositoriesPage.tsx` | Placeholder `dkarzon` | **Done** (now `your-org`) |
+| `client/src/pages/AgentSessionsPage.tsx` | Example `dkarzon/localagent-box` | **Done** (now `your-org/your-repo`) |
 
 **Why it matters:** First impressions; new users may think ponytail plugins/skills are required. Personal placeholders look unfinished.
 
@@ -80,16 +82,11 @@ README still ends with an unchecked item: “Document Github App install process
 
 ## High — polish before public launch
 
-### 5. README quality and structure — Open
+### 5. README quality and structure — Done
 
-- Lines 115–122 are still an **internal build checklist** mixed into user docs (`- [x] Build Docker image…`).
-- Tagline still references **“Cursor Cloud Agent”** — consider a trademark disclaimer or neutral wording for public messaging.
-- Strong API reference, but missing: architecture overview, security section, GitHub App guide, troubleshooting, “what this is / isn’t.”
-
-**Suggested changes:**
-
-- Move the build checklist to `docs/pre-release-checklist.md` or remove it from README.
-- Add sections: Security, Architecture (brief), GitHub App setup (link), Troubleshooting.
+- Internal build checklist moved to [`docs/pre-release-checklist.md`](./pre-release-checklist.md); README no longer contains it.
+- Tagline no longer references “Cursor Cloud Agent” — reworded to neutral, self-hosted-tool language, plus an explicit "What this is (and isn't)" section noting it's an independent project.
+- Added **Architecture**, **Security**, **GitHub App setup**, and **Troubleshooting** sections to the README (Security and GitHub App sections link out to `SECURITY.md` and `docs/github-app-setup.md` respectively for full detail).
 
 ---
 
@@ -106,19 +103,11 @@ There are **14 server test files** (`npm test`) and a Docker publish workflow (`
 
 ---
 
-### 7. Stale internal documentation — Partial
+### 7. Stale internal documentation — Done
 
 `docs/architecture-recommendations.md` is **gone** (was stale: “zero tests,” “no graceful shutdown,” etc.).
 
-Still open:
-
-- No `docs/README.md` index separating **user docs** vs **design history**.
-- Several `*.plan.md` files remain (`initial-build.plan.md`, `loop-verb-models.plan.md`, `pr-code-review.plan.md`) and read like internal sprint notes.
-
-**Suggested changes:**
-
-- Add `docs/README.md` index separating **user docs** vs **design history**.
-- Archive or clearly label remaining plan files as historical.
+Added [`docs/README.md`](./README.md) as an index that separates **user docs** (GitHub App setup, repo config, security, main README) from **design history** (this audit, the pre-release checklist, and the remaining `*.plan.md` files), so the plan files are now clearly labeled as historical rather than left to read like undifferentiated sprint notes.
 
 ---
 
@@ -178,13 +167,9 @@ State lives in `config.json`, `repos.json`, `agents.json` via synchronous read/w
 
 ---
 
-### 12. OpenCode version pinning inconsistency — Open
+### 12. OpenCode version pinning inconsistency — Done
 
-Dockerfile pins `opencode-ai@v1.15.13`; README says `npm install -g opencode-ai` with no version. Behavior may differ between Docker and local dev.
-
-**Suggested changes:**
-
-- Pin the same version in README and document upgrade policy.
+README's local-dev prerequisites now pin `opencode-ai@v1.18.18`, matching the Dockerfile. Still no documented upgrade policy for bumping this version in both places together.
 
 ---
 
@@ -253,16 +238,18 @@ Worth calling out so the public narrative stays balanced:
 
 ## Suggested pre-release order
 
-1. Add **`SECURITY.md`**, GitHub App setup guide; remove remaining dev artifacts and personal placeholders. (`LICENSE` done.)
-2. Decide and document the **auth/threat model**; align Docker with production token requirements.
-3. Clean **README** (remove internal checklist; add security + setup sections).
-4. Add **CI test job**; add `docs/README.md` index for remaining plan files.
-5. Expose or document hidden config (`autoCreatePullRequest`, `systemPrompt` in UI); dedupe shared client/server code when practical.
+1. Add **`SECURITY.md`** (done), GitHub App setup guide (done); remove remaining dev artifacts (`.opencode/opencode.json` still open) — personal placeholders in client pages fixed. (`LICENSE` done.)
+2. Decide and document the **auth/threat model** (done via `SECURITY.md`); align Docker with production token requirements (still open — Docker doesn't set `NODE_ENV=production`).
+3. Clean **README** — done (internal checklist removed; Security, Architecture, GitHub App, and Troubleshooting sections added).
+4. Add **CI test job** (still open); `docs/README.md` index for remaining plan files — done.
+5. Expose or document hidden config (`autoCreatePullRequest`, `systemPrompt` in UI); dedupe shared client/server code when practical. (still open)
 
 ---
 
 ## Related docs
 
-- [pre-release-checklist.md](./pre-release-checklist.md) — shorter admin/product checklist *(file currently missing)*
+- [README.md](./README.md) — docs index (user docs vs. design history)
+- [github-app-setup.md](./github-app-setup.md) — GitHub App creation and configuration guide
+- [pre-release-checklist.md](./pre-release-checklist.md) — original internal build checklist, moved out of the main README
 - [DESIGN.md](./DESIGN.md) — UI/design tokens
 - Plan / history notes still in-tree: `initial-build.plan.md`, `loop-verb-models.plan.md`, `pr-code-review.plan.md`, `one-shot-batch-options.md`

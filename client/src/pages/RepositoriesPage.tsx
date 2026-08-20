@@ -169,7 +169,7 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
           <form onSubmit={registerRepo} className="grid gap-4">
             <Field label="Owner">
               <TextInput
-                placeholder="e.g., dkarzon"
+                placeholder="e.g., your-org"
                 required
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
