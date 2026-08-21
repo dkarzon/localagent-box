@@ -1,6 +1,6 @@
 import type { OcrComment, OcrCoverageItem, OcrReviewEnvelope } from './types';
 
-function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
+export function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
   if (Array.isArray(result.comments) && result.comments.length > 0) {
     return result.comments.filter((comment) => comment.content?.trim());
   }
@@ -219,8 +219,8 @@ function appendToolCalls(lines: string[], result: OcrReviewEnvelope): void {
   }
 }
 
-function appendFinding(lines: string[], comment: OcrComment): void {
-  lines.push(`#### ${formatLocation(comment)}`, '', comment.content.trim());
+function appendFindingBody(lines: string[], comment: OcrComment): void {
+  lines.push(comment.content.trim());
 
   if (comment.suggestion_code?.trim()) {
     lines.push('', '**Suggestion:**', '```suggestion', comment.suggestion_code.trim(), '```');
@@ -239,8 +239,83 @@ function appendFinding(lines: string[], comment: OcrComment): void {
       '</details>',
     );
   }
+}
 
+function appendFinding(lines: string[], comment: OcrComment): void {
+  lines.push(`#### ${formatLocation(comment)}`, '');
+  appendFindingBody(lines, comment);
   lines.push('');
+}
+
+export function formatFindingCommentBody(comment: OcrComment): string {
+  const lines: string[] = [];
+  appendFindingBody(lines, comment);
+  return lines.join('\n').trim();
+}
+
+export interface GithubLineReviewComment {
+  path: string;
+  body: string;
+  line: number;
+  start_line?: number;
+}
+
+export interface GithubFileReviewComment {
+  path: string;
+  body: string;
+}
+
+export function partitionReviewComments(result: OcrReviewEnvelope): {
+  lineComments: GithubLineReviewComment[];
+  fileComments: GithubFileReviewComment[];
+  unplacedComments: OcrComment[];
+} {
+  const comments = normalizeComments(result);
+  const lineComments: GithubLineReviewComment[] = [];
+  const fileComments: GithubFileReviewComment[] = [];
+  const unplacedComments: OcrComment[] = [];
+
+  for (const comment of comments) {
+    const filePath = comment.path || comment.file;
+    if (!filePath || filePath === 'unknown') {
+      unplacedComments.push(comment);
+      continue;
+    }
+
+    const body = formatFindingCommentBody(comment);
+    if (!body) {
+      continue;
+    }
+
+    const start = comment.start_line;
+    const end = comment.end_line ?? start;
+
+    if (typeof end === 'number' && end > 0) {
+      const lineComment: GithubLineReviewComment = { path: filePath, body, line: end };
+      if (typeof start === 'number' && start > 0 && start < end) {
+        lineComment.start_line = start;
+      }
+      lineComments.push(lineComment);
+    } else {
+      fileComments.push({ path: filePath, body });
+    }
+  }
+
+  return { lineComments, fileComments, unplacedComments };
+}
+
+function appendUnplacedFindings(lines: string[], comments: OcrComment[]): void {
+  if (comments.length === 0) {
+    return;
+  }
+
+  lines.push('', '### Findings without file location', '');
+  for (const comment of comments.slice(0, 25)) {
+    appendFinding(lines, comment);
+  }
+  if (comments.length > 25) {
+    lines.push(`_…and ${comments.length - 25} more finding(s)._`, '');
+  }
 }
 
 function formatRetryAttemptSummary(
@@ -322,7 +397,10 @@ function appendRetryReport(lines: string[], result: OcrReviewEnvelope): void {
   appendRetryRequestTable(lines, result);
 }
 
-export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
+function buildReviewMarkdownCore(
+  result: OcrReviewEnvelope,
+  options: { includeFindings: boolean },
+): string {
   const lines: string[] = ['## Code Review', ''];
 
   const stats = getRunStats(result);
@@ -349,7 +427,7 @@ export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
   appendCoverageSummary(lines, result);
   appendRunStats(lines, result);
 
-  if (comments.length > 0) {
+  if (options.includeFindings && comments.length > 0) {
     lines.push('', '### Findings', '');
 
     for (const comment of comments.slice(0, 25)) {
@@ -406,6 +484,21 @@ export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
 
   lines.push('', `<sub>${footerParts.join(' · ')}</sub>`);
 
+  return lines.join('\n').trim();
+}
+
+/** Full review markdown for local session UI (includes inline findings list). */
+export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
+  return buildReviewMarkdownCore(result, { includeFindings: true });
+}
+
+/** Summary-only markdown for the GitHub PR review body (findings posted as file comments). */
+export function formatReviewSummaryMarkdown(result: OcrReviewEnvelope): string {
+  const { unplacedComments } = partitionReviewComments(result);
+  const lines = buildReviewMarkdownCore(result, { includeFindings: false }).split('\n');
+  if (unplacedComments.length > 0) {
+    appendUnplacedFindings(lines, unplacedComments);
+  }
   return lines.join('\n').trim();
 }
 

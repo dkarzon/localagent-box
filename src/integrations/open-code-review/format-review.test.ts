@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { formatReviewMarkdown, formatOcrSessionMarkdown } from './format-review';
+import {
+  formatFindingCommentBody,
+  formatReviewMarkdown,
+  formatReviewSummaryMarkdown,
+  formatOcrSessionMarkdown,
+  partitionReviewComments,
+} from './format-review';
 import type { OcrReviewEnvelope } from './types';
 
 describe('formatReviewMarkdown', () => {
@@ -196,5 +202,80 @@ describe('formatReviewMarkdown', () => {
 
     assert.match(markdown, /Looks good overall\./);
     assert.match(markdown, /No issues found/);
+  });
+});
+
+describe('formatReviewSummaryMarkdown', () => {
+  it('omits inline findings when they have file paths', () => {
+    const result: OcrReviewEnvelope = {
+      status: 'complete',
+      summary: { files_reviewed: 2, comments: 2 },
+      comments: [
+        { path: 'src/foo.ts', content: 'Issue one.', start_line: 10 },
+        { path: 'src/bar.ts', content: 'Issue two.', start_line: 20 },
+      ],
+    };
+
+    const summary = formatReviewSummaryMarkdown(result);
+    assert.match(summary, /2 finding\(s\)/);
+    assert.doesNotMatch(summary, /### Findings/);
+    assert.doesNotMatch(summary, /Issue one\./);
+    assert.doesNotMatch(summary, /Issue two\./);
+  });
+
+  it('keeps findings without file paths in the summary', () => {
+    const summary = formatReviewSummaryMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 1, comments: 1 },
+      comments: [{ content: 'General concern without a file path.' }],
+    });
+
+    assert.match(summary, /Findings without file location/);
+    assert.match(summary, /General concern without a file path\./);
+  });
+});
+
+describe('partitionReviewComments', () => {
+  it('splits line and file comments', () => {
+    const partitioned = partitionReviewComments({
+      comments: [
+        {
+          path: 'src/foo.ts',
+          content: 'Line issue.',
+          start_line: 42,
+          end_line: 47,
+        },
+        {
+          path: 'src/bar.ts',
+          content: 'File issue.',
+        },
+        { content: 'No path.' },
+      ],
+    });
+
+    assert.equal(partitioned.lineComments.length, 1);
+    assert.equal(partitioned.lineComments[0].path, 'src/foo.ts');
+    assert.equal(partitioned.lineComments[0].line, 47);
+    assert.equal(partitioned.lineComments[0].start_line, 42);
+    assert.match(partitioned.lineComments[0].body, /Line issue\./);
+
+    assert.equal(partitioned.fileComments.length, 1);
+    assert.equal(partitioned.fileComments[0].path, 'src/bar.ts');
+
+    assert.equal(partitioned.unplacedComments.length, 1);
+  });
+});
+
+describe('formatFindingCommentBody', () => {
+  it('includes suggestion blocks for GitHub review comments', () => {
+    const body = formatFindingCommentBody({
+      path: 'src/foo.ts',
+      content: 'Use a lock.',
+      suggestion_code: 'mu.Lock()',
+    });
+
+    assert.match(body, /Use a lock\./);
+    assert.match(body, /```suggestion/);
+    assert.match(body, /mu\.Lock\(\)/);
   });
 });

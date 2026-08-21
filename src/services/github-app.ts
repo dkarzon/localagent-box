@@ -41,6 +41,33 @@ export interface CreatePullRequestInput {
   body?: string;
 }
 
+export interface PullRequestReviewCommentInput {
+  path: string;
+  body: string;
+  line?: number;
+  side?: 'LEFT' | 'RIGHT';
+  start_line?: number;
+  start_side?: 'LEFT' | 'RIGHT';
+  subject_type?: 'line' | 'file';
+}
+
+export interface CreatePullRequestReviewInput {
+  body: string;
+  event?: 'COMMENT';
+  comments?: PullRequestReviewCommentInput[];
+}
+
+export interface CreatePullRequestReviewCommentInput {
+  commit_id: string;
+  path: string;
+  body: string;
+  line?: number;
+  side?: 'LEFT' | 'RIGHT';
+  start_line?: number;
+  start_side?: 'LEFT' | 'RIGHT';
+  subject_type?: 'line' | 'file';
+}
+
 export interface GithubAppService {
   assertConfigured: (config: AppConfig) => void;
   getCredentialSummary: (config: AppConfig) => GithubCredentialSummary;
@@ -65,7 +92,14 @@ export interface GithubAppService {
     owner: string,
     repo: string,
     prNumber: number,
-    input: { body: string; event?: 'COMMENT' },
+    input: CreatePullRequestReviewInput,
+  ) => Promise<{ id: string; html_url: string }>;
+  createPullRequestReviewComment: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    input: CreatePullRequestReviewCommentInput,
   ) => Promise<{ id: string; html_url: string }>;
   redactSecrets: (text: string | undefined | null) => string | undefined | null;
   createAppJwt: (appId: string, privateKeyPem: string) => string;
@@ -254,17 +288,86 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     owner: string,
     repo: string,
     prNumber: number,
-    input: { body: string; event?: 'COMMENT' },
+    input: CreatePullRequestReviewInput,
   ): Promise<{ id: string; html_url: string }> {
+    const payload: Record<string, unknown> = {
+      body: input.body,
+      event: (input.event || 'COMMENT') as string,
+    };
+
+    if (input.comments && input.comments.length > 0) {
+      payload.comments = input.comments.map((comment) => {
+        const item: Record<string, unknown> = {
+          path: comment.path,
+          body: comment.body,
+        };
+        if (typeof comment.line === 'number') {
+          item.line = comment.line;
+        }
+        if (comment.side) {
+          item.side = comment.side;
+        }
+        if (typeof comment.start_line === 'number') {
+          item.start_line = comment.start_line;
+        }
+        if (comment.start_side) {
+          item.start_side = comment.start_side;
+        }
+        if (comment.subject_type) {
+          item.subject_type = comment.subject_type;
+        }
+        return item;
+      });
+    }
+
     const result = await githubApiRequest<Record<string, unknown>>(
       config,
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/reviews`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          body: input.body,
-          event: (input.event || 'COMMENT') as string,
-        }),
+        body: JSON.stringify(payload),
+      },
+    );
+    return {
+      id: String(result.id ?? ''),
+      html_url: String(result.html_url ?? ''),
+    };
+  }
+
+  async function createPullRequestReviewComment(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    input: CreatePullRequestReviewCommentInput,
+  ): Promise<{ id: string; html_url: string }> {
+    const payload: Record<string, unknown> = {
+      commit_id: input.commit_id,
+      path: input.path,
+      body: input.body,
+    };
+    if (typeof input.line === 'number') {
+      payload.line = input.line;
+    }
+    if (input.side) {
+      payload.side = input.side;
+    }
+    if (typeof input.start_line === 'number') {
+      payload.start_line = input.start_line;
+    }
+    if (input.start_side) {
+      payload.start_side = input.start_side;
+    }
+    if (input.subject_type) {
+      payload.subject_type = input.subject_type;
+    }
+
+    const result = await githubApiRequest<Record<string, unknown>>(
+      config,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/comments`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
       },
     );
     return {
@@ -289,6 +392,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     createPullRequest,
     getPullRequest,
     createPullRequestReview,
+    createPullRequestReviewComment,
     findPullRequestByHead,
     redactSecrets,
     createAppJwt,

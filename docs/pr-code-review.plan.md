@@ -41,7 +41,7 @@ Integrate [Open Code Review (OCR)](https://alibaba.github.io/open-code-review/#/
 | 4 | New agent mode: `review` (auto-spawn + manual) |
 | 5 | Branch-range scope: `repoId` + `baseBranch` + `headBranch` (API-friendly) |
 | 6 | Always post to GitHub when a matching PR exists; always store results on session |
-| 7 | Summary-only review body; GitHub event type `COMMENT` |
+| 7 | Summary review body on GitHub; findings posted as per-file/line PR review comments |
 | 8 | Optional `background` on create; auto-spawn pre-fills from parent agent; repo preamble in `.localagent-box/config.json` |
 | 9 | Separate `reviewModel` in Settings; falls back to `opencodeModel` |
 | 10 | Global toggle default **off**; repo unset inherits global |
@@ -126,7 +126,7 @@ When PR branch is force-pushed (new head SHA), auto-review runs again — dedup 
 
 ## Open items (defer, don't block v1)
 
-- **Line-level review comments** — revisit if summary-only feels thin
+- **Line-level review comments** — **Done** — findings with line numbers are posted on the diff; path-only findings use file-level comments
 - **Review verdict** (`REQUEST_CHANGES` / `APPROVE`) — policy decision for later
 - **`ocr viewer` WebUI** — optional embed for browsing session logs
 - **Custom OCR `rule.json` per repo** — via `.localagent-box/review-rules.json` if needed
