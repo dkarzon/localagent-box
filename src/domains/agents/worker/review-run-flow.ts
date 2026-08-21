@@ -2,7 +2,11 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import { formatReviewMarkdown } from '../../../integrations/open-code-review/format-review';
+import {
+  formatReviewMarkdown,
+  formatReviewSummaryMarkdown,
+  partitionReviewComments,
+} from '../../../integrations/open-code-review/format-review';
 import {
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
@@ -181,19 +185,98 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   try {
     if (foundPrNumber && repo) {
       appendLog(logPath, `Posting review to GitHub for PR #${foundPrNumber}`);
-      const reviewBody = formatReviewMarkdown(ocrResult);
-      const reviewResponse = await githubApp.createPullRequestReview(
-        config,
-        repo.owner,
-        repo.name,
-        foundPrNumber,
-        {
-          body: reviewBody,
-          event: 'COMMENT',
-        },
-      );
+      const { lineComments, fileComments } = partitionReviewComments(ocrResult);
+      const reviewBody = formatReviewSummaryMarkdown(ocrResult);
+
+      if (lineComments.length > 0) {
+        appendLog(
+          logPath,
+          `Posting ${lineComments.length} line comment(s) and ${fileComments.length} file comment(s)`,
+        );
+      } else if (fileComments.length > 0) {
+        appendLog(logPath, `Posting ${fileComments.length} file comment(s)`);
+      }
+
+      const lineCommentPayload = lineComments.map((comment) => ({
+        path: comment.path,
+        body: comment.body,
+        line: comment.line,
+        ...(comment.side ? { side: comment.side } : {}),
+        ...(typeof comment.start_line === 'number' ? { start_line: comment.start_line } : {}),
+        ...(comment.start_side ? { start_side: comment.start_side } : {}),
+      }));
+
+      let reviewResponse: { id: string; html_url: string };
+      let postFileCommentsSeparately = true;
+      try {
+        reviewResponse = await githubApp.createPullRequestReview(
+          config,
+          repo.owner,
+          repo.name,
+          foundPrNumber,
+          {
+            body: reviewBody,
+            event: 'COMMENT',
+            comments: lineCommentPayload,
+          },
+        );
+      } catch (lineCommentErr) {
+        if (lineComments.length === 0) {
+          throw lineCommentErr;
+        }
+        const lineCommentMessage =
+          lineCommentErr instanceof Error ? lineCommentErr.message : String(lineCommentErr);
+        appendLog(
+          logPath,
+          `Warning: line comments failed — ${lineCommentMessage}, retrying with summary-only review`,
+        );
+        postFileCommentsSeparately = false;
+        reviewResponse = await githubApp.createPullRequestReview(
+          config,
+          repo.owner,
+          repo.name,
+          foundPrNumber,
+          {
+            body: formatReviewMarkdown(ocrResult),
+            event: 'COMMENT',
+          },
+        );
+      }
       githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
       appendLog(logPath, `GitHub PR #${foundPrNumber} review posted`);
+
+      if (postFileCommentsSeparately && fileComments.length > 0 && headSha) {
+        let postedFileComments = 0;
+        for (const comment of fileComments) {
+          try {
+            await githubApp.createPullRequestReviewComment(
+              config,
+              repo.owner,
+              repo.name,
+              foundPrNumber,
+              {
+                commit_id: headSha,
+                path: comment.path,
+                body: comment.body,
+                subject_type: 'file',
+              },
+            );
+            postedFileComments += 1;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            appendLog(
+              logPath,
+              `Warning: file comment on ${comment.path} failed — ${message}`,
+            );
+          }
+        }
+        appendLog(logPath, `Posted ${postedFileComments} file-level comment(s)`);
+      } else if (postFileCommentsSeparately && fileComments.length > 0 && !headSha) {
+        appendLog(
+          logPath,
+          `Warning: ${fileComments.length} file comment(s) skipped — head SHA unavailable`,
+        );
+      }
     } else {
       appendLog(logPath, `No matching PR found for branch ${headBranch}, skipping GitHub post`);
     }
