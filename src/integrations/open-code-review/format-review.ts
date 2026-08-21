@@ -257,7 +257,9 @@ export interface GithubLineReviewComment {
   path: string;
   body: string;
   line: number;
+  side?: 'LEFT' | 'RIGHT';
   start_line?: number;
+  start_side?: 'LEFT' | 'RIGHT';
 }
 
 export interface GithubFileReviewComment {
@@ -291,9 +293,10 @@ export function partitionReviewComments(result: OcrReviewEnvelope): {
     const end = comment.end_line ?? start;
 
     if (typeof end === 'number' && end > 0) {
-      const lineComment: GithubLineReviewComment = { path: filePath, body, line: end };
+      const lineComment: GithubLineReviewComment = { path: filePath, body, line: end, side: 'RIGHT' };
       if (typeof start === 'number' && start > 0 && start < end) {
         lineComment.start_line = start;
+        lineComment.start_side = 'RIGHT';
       }
       lineComments.push(lineComment);
     } else {
@@ -399,7 +402,7 @@ function appendRetryReport(lines: string[], result: OcrReviewEnvelope): void {
 
 function buildReviewMarkdownCore(
   result: OcrReviewEnvelope,
-  options: { includeFindings: boolean },
+  options: { includeFindings: boolean; unplacedComments?: OcrComment[] },
 ): string {
   const lines: string[] = ['## Code Review', ''];
 
@@ -437,6 +440,8 @@ function buildReviewMarkdownCore(
     if (comments.length > 25) {
       lines.push(`_…and ${comments.length - 25} more finding(s)._`, '');
     }
+  } else if (options.unplacedComments && options.unplacedComments.length > 0) {
+    appendUnplacedFindings(lines, options.unplacedComments);
   }
 
   if (coverage?.failed && coverage.failed.length > 0) {
@@ -495,11 +500,7 @@ export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
 /** Summary-only markdown for the GitHub PR review body (findings posted as file comments). */
 export function formatReviewSummaryMarkdown(result: OcrReviewEnvelope): string {
   const { unplacedComments } = partitionReviewComments(result);
-  const lines = buildReviewMarkdownCore(result, { includeFindings: false }).split('\n');
-  if (unplacedComments.length > 0) {
-    appendUnplacedFindings(lines, unplacedComments);
-  }
-  return lines.join('\n').trim();
+  return buildReviewMarkdownCore(result, { includeFindings: false, unplacedComments });
 }
 
 export function formatReviewBackgroundMessage(options: {

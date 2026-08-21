@@ -232,6 +232,10 @@ describe('formatReviewSummaryMarkdown', () => {
 
     assert.match(summary, /Findings without file location/);
     assert.match(summary, /General concern without a file path\./);
+    const footerIndex = summary.indexOf('<sub>localagent-box');
+    const findingsIndex = summary.indexOf('Findings without file location');
+    assert.ok(findingsIndex >= 0 && footerIndex >= 0);
+    assert.ok(findingsIndex < footerIndex);
   });
 });
 
@@ -257,6 +261,8 @@ describe('partitionReviewComments', () => {
     assert.equal(partitioned.lineComments[0].path, 'src/foo.ts');
     assert.equal(partitioned.lineComments[0].line, 47);
     assert.equal(partitioned.lineComments[0].start_line, 42);
+    assert.equal(partitioned.lineComments[0].side, 'RIGHT');
+    assert.equal(partitioned.lineComments[0].start_side, 'RIGHT');
     assert.match(partitioned.lineComments[0].body, /Line issue\./);
 
     assert.equal(partitioned.fileComments.length, 1);

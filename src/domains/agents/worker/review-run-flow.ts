@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import {
+  formatReviewMarkdown,
   formatReviewSummaryMarkdown,
   partitionReviewComments,
 } from '../../../integrations/open-code-review/format-review';
@@ -196,22 +197,49 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
         appendLog(logPath, `Posting ${fileComments.length} file comment(s)`);
       }
 
-      const reviewResponse = await githubApp.createPullRequestReview(
-        config,
-        repo.owner,
-        repo.name,
-        foundPrNumber,
-        {
-          body: reviewBody,
-          event: 'COMMENT',
-          comments: lineComments.map((comment) => ({
-            path: comment.path,
-            body: comment.body,
-            line: comment.line,
-            ...(typeof comment.start_line === 'number' ? { start_line: comment.start_line } : {}),
-          })),
-        },
-      );
+      const lineCommentPayload = lineComments.map((comment) => ({
+        path: comment.path,
+        body: comment.body,
+        line: comment.line,
+        ...(comment.side ? { side: comment.side } : {}),
+        ...(typeof comment.start_line === 'number' ? { start_line: comment.start_line } : {}),
+        ...(comment.start_side ? { start_side: comment.start_side } : {}),
+      }));
+
+      let reviewResponse: { id: string; html_url: string };
+      try {
+        reviewResponse = await githubApp.createPullRequestReview(
+          config,
+          repo.owner,
+          repo.name,
+          foundPrNumber,
+          {
+            body: reviewBody,
+            event: 'COMMENT',
+            comments: lineCommentPayload,
+          },
+        );
+      } catch (lineCommentErr) {
+        if (lineComments.length === 0) {
+          throw lineCommentErr;
+        }
+        const lineCommentMessage =
+          lineCommentErr instanceof Error ? lineCommentErr.message : String(lineCommentErr);
+        appendLog(
+          logPath,
+          `Warning: line comments failed — ${lineCommentMessage}, retrying with summary-only review`,
+        );
+        reviewResponse = await githubApp.createPullRequestReview(
+          config,
+          repo.owner,
+          repo.name,
+          foundPrNumber,
+          {
+            body: formatReviewMarkdown(ocrResult),
+            event: 'COMMENT',
+          },
+        );
+      }
       githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
       appendLog(logPath, `GitHub PR #${foundPrNumber} review posted`);
 
