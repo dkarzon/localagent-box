@@ -207,6 +207,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       }));
 
       let reviewResponse: { id: string; html_url: string };
+      let postFileCommentsSeparately = true;
       try {
         reviewResponse = await githubApp.createPullRequestReview(
           config,
@@ -229,6 +230,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           logPath,
           `Warning: line comments failed — ${lineCommentMessage}, retrying with summary-only review`,
         );
+        postFileCommentsSeparately = false;
         reviewResponse = await githubApp.createPullRequestReview(
           config,
           repo.owner,
@@ -243,7 +245,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
       appendLog(logPath, `GitHub PR #${foundPrNumber} review posted`);
 
-      if (fileComments.length > 0 && headSha) {
+      if (postFileCommentsSeparately && fileComments.length > 0 && headSha) {
         let postedFileComments = 0;
         for (const comment of fileComments) {
           try {
@@ -269,7 +271,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           }
         }
         appendLog(logPath, `Posted ${postedFileComments} file-level comment(s)`);
-      } else if (fileComments.length > 0 && !headSha) {
+      } else if (postFileCommentsSeparately && fileComments.length > 0 && !headSha) {
         appendLog(
           logPath,
           `Warning: ${fileComments.length} file comment(s) skipped — head SHA unavailable`,
