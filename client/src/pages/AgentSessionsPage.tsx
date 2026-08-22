@@ -512,7 +512,7 @@ export function AgentSessionsPage({
         </div>
       </div>
 
-      <div className="mb-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div className="mb-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Sessions" value={agents.length} />
         <StatCard
           label="Total Tokens"
