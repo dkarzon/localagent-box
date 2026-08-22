@@ -654,9 +654,6 @@ export function AgentSessionsPage({
                         </p>
                         <p className="mt-0.5 text-xs capitalize text-muted">
                           {getAgentMode(agent)}
-                          {isReviewAgent(agent) && agent.review?.headBranch
-                            ? ` · ${agent.review.headBranch}`
-                            : ''}
                         </p>
                       </td>
                       <td className="px-6 py-4">
