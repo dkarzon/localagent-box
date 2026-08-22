@@ -34,6 +34,31 @@ There is no per-agent sandboxing (container, chroot, network namespace) — see 
 
 ## Quick start
 
+### Prebuilt image (recommended)
+
+Pull the published image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/dkarzon/localagent-box:latest
+```
+
+Full run instructions, Compose example, and **required environment variables** (`API_TOKEN`, `NODE_ENV`, `OLLAMA_BASE_URL`, volumes): [docs/docker-hosting.md](./docs/docker-hosting.md).
+
+Minimal example:
+
+```bash
+docker volume create localagent-data
+docker volume create localagent-workspace
+docker run -d --name localagent-box --restart unless-stopped -p 8080:8080 \
+  -e NODE_ENV=production -e API_TOKEN=your-secret-token \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  --add-host=host.docker.internal:host-gateway \
+  -v localagent-data:/data -v localagent-workspace:/workspace \
+  ghcr.io/dkarzon/localagent-box:latest
+```
+
+### Build from source
+
 ```bash
 docker compose up -d --build
 ```
@@ -102,9 +127,11 @@ npm start
 
 Open [http://localhost:8080](http://localhost:8080).
 
-### Option C - Local Docker build and run
+### Option C — Local Docker build and run
 
-Run once to create the volume (shared across docker sessions)
+To use the **prebuilt GHCR image** instead of building locally, see [docs/docker-hosting.md](./docs/docker-hosting.md).
+
+Run once to create the volumes (shared across docker sessions):
 ```bash
 docker build --tag 'localagent-box' .
 ```
