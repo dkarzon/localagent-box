@@ -2,6 +2,7 @@
 
 ## User docs
 
+- [code-review.md](./code-review.md) — PR review mode using Open Code Review (OCR): auto-review, API, GitHub posting
 - [docker-hosting.md](./docker-hosting.md) — run the prebuilt `ghcr.io/dkarzon/localagent-box` image (required env vars, volumes, Compose)
 - [github-app-setup.md](./github-app-setup.md) — creating, installing, and configuring the GitHub App localagent-box authenticates as
 - [repo-config.md](./repo-config.md) — per-repo `.localagent-box/` configuration (loop harness overrides, etc.)

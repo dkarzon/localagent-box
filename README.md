@@ -26,7 +26,7 @@ A self-hosted daemon for running autonomous coding agents (powered by [OpenCode]
 ```
 
 - A single Node process serves the REST/SSE API and the built UI, and persists state (`config.json`, `repos.json`, `agents.json`) as JSON files under `DATA_DIR`.
-- Each agent run is a separate child process (`src/workers/agent-worker.ts`) that shallow-clones the target repo into its own workspace, starts a per-agent `opencode serve` instance, and drives it through one of three flows: **batch** (single prompt → commit/push), **interactive** (multi-turn, explicit Finish), or **loop** (config-driven orient/act/reflect harness, see `config/loop.default.json`).
+- Each agent run is a separate child process (`src/workers/agent-worker.ts`) that shallow-clones the target repo into its own workspace, starts a per-agent `opencode serve` instance (batch, interactive, and loop modes), or runs [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) (`review` mode), and drives it through one of four flows: **batch** (single prompt → commit/push), **interactive** (multi-turn, explicit Finish), **loop** (config-driven orient/act/reflect harness, see `config/loop.default.json`), or **review** (branch-range PR review via OCR → optional GitHub PR comments).
 - GitHub access goes through a **GitHub App** installation token minted per-request (`src/services/github-app.ts`) — no long-lived PAT or SSH key is stored.
 - Agent state, logs, and events stream back to the API over the child process's stdout/IPC and are exposed to the UI via Server-Sent Events.
 
@@ -194,6 +194,8 @@ Read [SECURITY.md](./SECURITY.md) before deploying anywhere beyond a local trial
 | Health check shows Ollama as unreachable | `ollamaBaseUrl` isn't reachable from inside the container — on Docker Desktop use `http://host.docker.internal:11434`, not `localhost` |
 | Agent fails immediately with a GitHub/clone error | GitHub App isn't installed on that repo, or `githubAppId`/`githubAppInstallationId`/`githubAppPrivateKey` are wrong — see [docs/github-app-setup.md](./docs/github-app-setup.md#troubleshooting) |
 | Agent finishes but no PR appears | `push` was `false`, or the OpenCode run didn't produce a commit — batch/loop runs fail if nothing was committed; check `GET /agents/:id/logs` |
+| Review agent fails immediately | Ollama not configured or unreachable — OCR requires `ollamaBaseUrl`; check Settings and [docs/code-review.md](./docs/code-review.md) |
+| Review completes but nothing on GitHub | No PR exists for `headBranch`, or GitHub App lacks pull request write — check logs for "No matching PR" or GitHub warnings |
 | UI can't reach the API in local dev (Option A) | The API must listen on port `8081` in dev — Vite's proxy in `client/vite.config.ts` assumes that port |
 | `npm install` hangs or loops | Use `npm install --ignore-scripts` at the repo root, then `npm install --prefix client` separately (see [Install dependencies](#install-dependencies)) |
 
@@ -216,6 +218,7 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `POST` | `/api/v1/repos` | Yes | Register repo `{ owner, name, defaultBranch }` |
 | `GET` | `/api/v1/repos/:repoId` | No | Get registered repo metadata |
 | `DELETE` | `/api/v1/repos/:repoId` | Yes | Remove registered repo |
+| `PUT` | `/api/v1/repos/:repoId` | Yes | Update repo settings (`autoReviewPullRequests`: `true`, `false`, or `null` to inherit) |
 | `POST` | `/api/v1/repos/:repoId/verify` | Yes | Test shallow clone for registered repo |
 | `GET` | `/api/v1/agents` | No | List agents (`?repoId=`, `?status=` filters) |
 | `POST` | `/api/v1/agents` | Yes | Start repo-scoped agent |
@@ -253,8 +256,8 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `loopAgentTimeoutSeconds` | Loop session timeout in seconds from worker start (default `3600`; separate from `AGENT_TIMEOUT` for batch workers) |
 | `loopVerbModels` | Per-verb model overrides for loop mode (`INITIAL_PLAN`, `ORIENT`, `ACT`, `REFLECT`). Empty string on a verb uses the fallback chain below. Legacy `OBSERVE`/`PLAN` keys are accepted and folded into `ORIENT`. |
 | `autoCreatePullRequest` | When true (default), automatically open a draft PR once an agent completes and pushes its branch. A per-agent `autoCreatePullRequest` on create overrides this. |
-| `autoReviewPullRequests` | When true, auto-queue a review agent after a coding agent's PR is created (default false). Per-repo `autoReviewPullRequests` overrides this global default. |
-| `reviewModel` | Model used for auto-queued review agents; falls back to `opencodeModel` when empty |
+| `autoReviewPullRequests` | When true, auto-queue a review agent after a coding agent's PR is created (default false). Per-repo `autoReviewPullRequests` overrides this global default. See [docs/code-review.md](./docs/code-review.md). |
+| `reviewModel` | Model used for auto-queued and manual review agents (Open Code Review); falls back to `opencodeModel` when empty |
 
 All fields above are readable via `GET /api/v1/config` and settable via `PUT /api/v1/config`, and every one of them is editable from the **Settings** page in the UI (API Access, Ollama Status, GitHub Integration, Webhooks, OpenCode, Pull requests & review, and OpenCode permissions cards). Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.
 
@@ -335,13 +338,14 @@ Repo metadata is persisted in `DATA_DIR/repos.json`. Clones happen in ephemeral 
 
 ### Agents
 
-Agents support three modes:
+Agents support four modes:
 
 | Mode | Behavior |
 |------|----------|
 | **`batch`** (default) | Single prompt → `opencode serve` (session orchestrator) → auto commit/push → terminal status. Best for API, CI, and one-shot UI runs. |
 | **`interactive`** | Multi-turn session on the same OpenCode server. Follow-up messages when `status` is `awaiting_input`; call **Finish** to commit/push. |
 | **`loop`** | Config-driven harness: observe → plan → act → reflect cycles until the model emits `LOOP_COMPLETE: true` on REFLECT or host caps are hit. Create-time `prompt` is the **goal**; step prompts come from `loop.json`. Optional per-verb models in Settings (`loopVerbModels`). Single commit/push at end (or early **Finish**). |
+| **`review`** | Branch-range PR review via [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) (`ocr review`). Clones and checks out `headBranch`, diffs against `baseBranch`, posts findings to GitHub when a matching PR exists. No OpenCode session; no commit/push. See [docs/code-review.md](./docs/code-review.md). |
 
 Omit `mode` or set `"mode": "batch"` for the existing headless behavior.
 
@@ -391,6 +395,18 @@ curl -X POST http://localhost:8080/api/v1/agents \
     "push": true
   }'
 
+# Review — Open Code Review on a branch range (posts to GitHub PR when one exists)
+curl -X POST http://localhost:8080/api/v1/agents \
+  -H "Authorization: Bearer localagent-box" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repoId": "your-org-your-repo",
+    "mode": "review",
+    "baseBranch": "main",
+    "headBranch": "agent/task-42",
+    "background": "Focus on security and edge cases."
+  }'
+
 curl http://localhost:8080/api/v1/agents/<agentId>
 
 curl "http://localhost:8080/api/v1/agents/<agentId>/logs?tail=100"
@@ -423,7 +439,7 @@ curl -X POST http://localhost:8080/api/v1/agents/<agentId>/delete \
   -H "Authorization: Bearer localagent-box"
 ```
 
-Each agent gets an isolated git workspace under `AGENT_WORKSPACE` (default `{DATA_DIR}/workspace/agents/<workspaceId>/` on Windows, `/workspace/agents/<workspaceId>/` in Docker). Agent metadata, logs, events, and per-agent OpenCode config live under `{DATA_DIR}/agents/{agentId}/`. All modes use `opencode serve` with the session orchestrator; interactive workers poll an inbox for follow-ups until Finish; loop workers drive multi-step harness cycles from config. Multiple sessions may share an `agentBranch`; at most one worker runs per `(repoId, agentBranch)` and a later session starts only after the previous one on that branch completed and pushed.
+Each agent gets an isolated git workspace under `AGENT_WORKSPACE` (default `{DATA_DIR}/workspace/agents/<workspaceId>/` on Windows, `/workspace/agents/<workspaceId>/` in Docker). Agent metadata, logs, events, and per-agent OpenCode config live under `{DATA_DIR}/agents/{agentId}/`. Batch, interactive, and loop modes use `opencode serve` with the session orchestrator; interactive workers poll an inbox for follow-ups until Finish; loop workers drive multi-step harness cycles from config; **review** workers run Open Code Review instead of OpenCode. Multiple sessions may share an `agentBranch`; at most one worker runs per `(repoId, agentBranch)` and a later session starts only after the previous one on that branch completed and pushed.
 
 #### Loop harness config (`loop.json`)
 
@@ -453,8 +469,11 @@ Valid step verbs are `ORIENT`, `ACT`, and `REFLECT` (legacy `OBSERVE`/`PLAN` are
 | `prompt` | User task prompt (required); for loop mode this is the **goal** |
 | `agentBranch` | Branch to create and work on (optional; defaults to `localagent-{sessionId}` using the new agent id). Ignored when `useExistingBranch` is true. |
 | `useExistingBranch` | When `true`, shallow-clone and check out `baseBranch` on the remote instead of creating a new `agentBranch` (default `false`) |
-| `mode` | `batch` (default), `interactive`, or `loop` |
-| `baseBranch` | Base to clone (default: repo `defaultBranch` or `main`) |
+| `mode` | `batch` (default), `interactive`, `loop`, or `review` |
+| `baseBranch` | Base to clone (default: repo `defaultBranch` or `main`); for `review`, the diff **from** branch |
+| `headBranch` | Review mode only — branch to check out and review (diff **to** branch); required for `review` |
+| `background` | Review mode only — optional context passed to Open Code Review |
+| `parentAgentId` | Review mode only — link to a parent coding session (auto-spawn sets this) |
 | `systemPrompt` | Optional per-agent system prompt |
 | `commitMessage` | Git commit message (default `Agent: <agentBranch>`; used on Finish for interactive) |
 | `push` | Push branch after commit (default `true`) |
@@ -465,7 +484,7 @@ Valid step verbs are `ORIENT`, `ACT`, and `REFLECT` (legacy `OBSERVE`/`PLAN` are
 
 ### Agent statuses and events
 
-Statuses include `queued`, `running`, `awaiting_input`, `processing`, `completing`, `completed`, `failed`, and `cancelled`. Interactive agents move through `awaiting_input` between turns; batch agents typically go `queued` → `running` → `completed` or `failed`; loop agents stay in `processing` between harness steps (no `awaiting_input`). `GET /agents` and `GET /agents/:id` include a derived `queue` object with wait reason, predecessor, and `canRetry` / `canAllowSuccessors` for shared-branch chains. The sessions list and session page show that wait reason; a failed or cancelled chunk can **Retry** in place or **Start next queued**, and **Queue another on this branch** prefills a new session on the same head.
+Statuses include `queued`, `running`, `awaiting_input`, `processing`, `completing`, `completed`, `failed`, and `cancelled`. Interactive agents move through `awaiting_input` between turns; batch agents typically go `queued` → `running` → `completed` or `failed`; loop agents stay in `processing` between harness steps (no `awaiting_input`); review agents stay in `processing` while OCR runs (no `awaiting_input` or Finish). `GET /agents` and `GET /agents/:id` include a derived `queue` object with wait reason, predecessor, and `canRetry` / `canAllowSuccessors` for shared-branch chains. The sessions list and session page show that wait reason; a failed or cancelled chunk can **Retry** in place or **Start next queued**, and **Queue another on this branch** prefills a new session on the same head. Completed coding sessions with a pushed branch expose **Review branches** when review is allowed.
 
 SSE event types: `session.status`, `assistant.delta`, `assistant.message`, `tool.start`, `tool.end`, `permission.requested`, `error`, `log.line`, plus loop events `loop.step.start`, `loop.step.end`, and `loop.iteration.end`. The stream closes ~1.5s after a terminal status.
 

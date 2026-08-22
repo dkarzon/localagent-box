@@ -19,7 +19,8 @@ Prompt and behavioural overrides that let each repository customise how agents i
   "systemPrompt": "...",
   "batchContextPrompt": "...",
   "interactiveContextPrompt": "...",
-  "loopContextPrompt": "..."
+  "loopContextPrompt": "...",
+  "reviewBackground": "..."
 }
 ```
 
@@ -44,6 +45,10 @@ Replaces the default interactive-mode context paragraph. Default:
 ### `loopContextPrompt` *(string)*
 
 Replaces the default loop-mode context paragraph, which instructs agents about multi-iteration orchestration and the completion marker format. Default begins with "Loop: unattended multi-step harness…".
+
+### `reviewBackground` *(string)*
+
+Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) as repository-level review instructions when running `mode: review` agents. Merged into OCR's `-b` background alongside per-session `background` and parent-agent context. See [code-review.md](./code-review.md).
 
 ## `.localagent-box/loop.json` — Loop Agent Configuration
 

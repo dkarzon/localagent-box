@@ -40,7 +40,7 @@ Open [http://localhost:8080](http://localhost:8080). Enter the same `API_TOKEN` 
 
 **First container start** may take several minutes while OpenCode’s SQLite database is pre-migrated into the data volume. Later starts reuse that template and boot much faster. Watch logs with `docker logs -f localagent-box`.
 
-Next: [set up a GitHub App](./github-app-setup.md) so agents can clone, commit, and open PRs.
+Next: [set up a GitHub App](./github-app-setup.md) so agents can clone, commit, and open PRs. Optional: enable [automatic PR reviews](./code-review.md) with Open Code Review.
 
 ## Docker Compose
 
@@ -115,6 +115,7 @@ GitHub App credentials (`githubAppId`, `githubAppInstallationId`, `githubAppPriv
 | `OPENCODE_PROVIDER` | — | Bootstrap provider id (default `ollama`) |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent worker processes |
 | `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds (from worker start, not queue wait) |
+| `OCR_BIN` | `ocr` | Open Code Review CLI (preinstalled in the image; see [code-review.md](./code-review.md)) |
 | `OCR_REVIEW_TIMEOUT` | `30` | Per-file OCR review deadline in minutes (`0` disables) |
 | `OCR_LLM_TIMEOUT` | `600` | Per-request OCR LLM HTTP timeout in seconds |
 | `OPENCODE_BIN` | `opencode` | OpenCode CLI (preinstalled in the image) |
