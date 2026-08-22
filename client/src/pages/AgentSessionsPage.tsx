@@ -480,10 +480,6 @@ export function AgentSessionsPage({
     });
   }, [sortedAgents, filter, searchQuery, repos]);
 
-  const completedCount = agents.filter((a) => a.status === 'completed').length;
-  const successRate =
-    agents.length > 0 ? Math.round((completedCount / agents.length) * 1000) / 10 : 0;
-  const activeCount = agents.filter((a) => isAgentActive(a)).length;
   const tokenStats = useMemo(() => computeGlobalTokenStats(agents), [agents]);
   const totalTokens = agentTokenTotal(tokenStats.overall);
   const totalCost = tokenStats.overall.cost ?? 0;
@@ -516,8 +512,7 @@ export function AgentSessionsPage({
         </div>
       </div>
 
-      <div className="mb-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        <StatCard label="Success Rate" value={`${successRate}%`} />
+      <div className="mb-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Sessions" value={agents.length} />
         <StatCard
           label="Total Tokens"
@@ -551,7 +546,6 @@ export function AgentSessionsPage({
             ) : null
           }
         />
-        <StatCard label="Active Nodes" value={activeCount} accent />
       </div>
 
       {tokenStats.byRepo.length > 0 ? (
