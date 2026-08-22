@@ -531,7 +531,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             onClick={() => window.open(agent.pullRequest!.url, '_blank', 'noopener,noreferrer')}
           >
             <IconLink className={iconClass} />
-            Open PR
+            View PR
           </Button>
         ) : linkedPullRequestUrl ? (
           <Button
@@ -540,7 +540,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             onClick={() => window.open(linkedPullRequestUrl, '_blank', 'noopener,noreferrer')}
           >
             <IconLink className={iconClass} />
-            Open PR
+            View PR
           </Button>
         ) : showCreatePr ? (
           <Button
