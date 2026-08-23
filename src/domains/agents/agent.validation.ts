@@ -21,6 +21,7 @@ export interface CreateAgentPayload {
   autoApprovePermissions?: boolean;
   model?: string;
   loopVerbModels?: Record<string, string>;
+  loopMaxIterations?: number;
   mode: AgentMode;
   autoCreatePullRequest?: boolean;
   // Review-specific fields (mode: 'review')
@@ -70,6 +71,16 @@ export function parseCreateAgentPayload(
     mode === 'loop' && typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
       ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
       : undefined;
+  let loopMaxIterations: number | undefined;
+  if (mode === 'loop') {
+    if (body.loopMaxIterations !== undefined) {
+      const rawMaxIterations = body.loopMaxIterations;
+      if (typeof rawMaxIterations !== 'number' || !Number.isFinite(rawMaxIterations) || rawMaxIterations < 1) {
+        throw new Error('loopMaxIterations must be a positive number');
+      }
+      loopMaxIterations = rawMaxIterations;
+    }
+  }
   const resolvedAgentBranch =
     isReview && headBranch
       ? headBranch
@@ -96,6 +107,7 @@ export function parseCreateAgentPayload(
       typeof body.autoApprovePermissions === 'boolean' ? body.autoApprovePermissions : undefined,
     model,
     loopVerbModels,
+    loopMaxIterations,
     mode,
     autoCreatePullRequest:
       typeof body.autoCreatePullRequest === 'boolean' ? body.autoCreatePullRequest : undefined,

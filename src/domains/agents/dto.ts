@@ -12,6 +12,7 @@ export interface CreateAgentRequest {
   pushOnFailure?: unknown;
   model?: unknown;
   loopVerbModels?: unknown;
+  loopMaxIterations?: unknown;
   mode?: unknown;
   sessionId?: unknown;
   // Review-specific fields (mode: 'review')

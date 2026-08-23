@@ -434,6 +434,9 @@ export function createAgentService(options: {
       autoApprovePermissions: payload.autoApprovePermissions,
       model: payload.model || null,
       ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
+      ...(payload.loopMaxIterations !== undefined
+        ? { loopMaxIterations: payload.loopMaxIterations }
+        : {}),
       status: 'queued',
       commitSha: null,
       pushed: false,

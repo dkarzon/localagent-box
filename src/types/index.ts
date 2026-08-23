@@ -270,6 +270,8 @@ export interface Agent {
   model: string | null;
   /** Per-verb model overrides for this loop run (create-time snapshot) */
   loopVerbModels?: LoopVerbModels;
+  /** Per-session iteration cap for loop mode (create-time snapshot); omitted = global/repo default */
+  loopMaxIterations?: number;
   /** Distinct models actually invoked during a loop run's lifecycle */
   modelsUsed?: string[] | null;
   status: AgentStatus;
@@ -328,6 +330,8 @@ export interface AgentJob {
   model?: string;
   /** Per-verb model overrides for this loop run */
   loopVerbModels?: LoopVerbModels;
+  /** Per-session iteration cap for loop mode (create-time snapshot); omitted = global/repo default */
+  loopMaxIterations?: number;
   /** Review mode head branch (set by worker-spawner when mode is 'review') */
   headBranch?: string;
   /** Review mode background context */

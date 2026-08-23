@@ -96,6 +96,9 @@ export function createWorkerSpawner(options: {
       autoApprovePermissions: agent.autoApprovePermissions,
       model: agent.model || undefined,
       ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
+      ...(agent.loopMaxIterations !== undefined
+        ? { loopMaxIterations: agent.loopMaxIterations }
+        : {}),
       // Pass review-specific fields if present (review mode)
       ...(mode === 'review' && agent.review?.headBranch
         ? { headBranch: agent.review.headBranch as unknown as string }

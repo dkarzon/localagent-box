@@ -151,6 +151,27 @@ export function loadLoopConfig(
   };
 }
 
+/**
+ * Apply the per-session iteration cap to the loaded loop config.
+ * The override wins when set; otherwise the global/server or repo-level default applies.
+ */
+export function applySessionMaxIterations(
+  config: LoopConfig,
+  sessionMaxIterations?: number,
+): { config: LoopConfig; overridden: boolean } {
+  if (sessionMaxIterations === undefined) {
+    return { config, overridden: false };
+  }
+  if (
+    typeof sessionMaxIterations !== 'number' ||
+    !Number.isFinite(sessionMaxIterations) ||
+    sessionMaxIterations < 1
+  ) {
+    throw new Error('loopMaxIterations must be a positive number');
+  }
+  return { config: { ...config, maxIterations: sessionMaxIterations }, overridden: true };
+}
+
 export function interpolateStepPrompt(template: string, vars: InterpolateVars): string {
   return template
     .replaceAll('{{goal}}', vars.goal)
