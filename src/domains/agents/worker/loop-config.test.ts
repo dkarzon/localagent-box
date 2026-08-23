@@ -182,10 +182,10 @@ describe('applySessionMaxIterations', () => {
       completionMarker: 'LOOP_COMPLETE',
       steps: [{ verb: 'ACT', prompt: '{{goal}}' }],
     });
-    for (const invalid of [0, -1, 'five', Infinity, NaN]) {
+    for (const invalid of [0, -1, 2.5, 'five', Infinity, NaN]) {
       assert.throws(
         () => applySessionMaxIterations(base, invalid as unknown as number),
-        /loopMaxIterations must be a positive number/,
+        /loopMaxIterations must be a positive integer/,
       );
     }
   });

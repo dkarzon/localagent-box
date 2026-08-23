@@ -162,7 +162,7 @@ describe('parseCreateAgentPayload', () => {
   });
 
   it('rejects invalid loopMaxIterations values for loop mode', () => {
-    for (const loopMaxIterations of [0, -1, 'five', '10', Infinity]) {
+    for (const loopMaxIterations of [0, -1, 2.5, 'five', '10', Infinity]) {
       assert.throws(
         () =>
           parseCreateAgentPayload(
@@ -170,7 +170,7 @@ describe('parseCreateAgentPayload', () => {
             repo,
             'abc123',
           ),
-        /loopMaxIterations must be a positive number/,
+        /loopMaxIterations must be a positive integer/,
       );
     }
   });

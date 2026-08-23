@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { assertPositiveInteger } from '../../../lib/validation';
 import type { LoopOpenCodeAgent, LoopStepConfig, LoopVerb } from '../../../types';
 
 export const LOOP_VERBS: readonly LoopVerb[] = ['ORIENT', 'ACT', 'REFLECT'];
@@ -56,9 +57,7 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     throw new Error(`loop.json version must be 1, got ${String(obj.version)}`);
   }
 
-  if (typeof obj.maxIterations !== 'number' || !Number.isFinite(obj.maxIterations) || obj.maxIterations < 1) {
-    throw new Error('loop.json maxIterations must be a positive number');
-  }
+  const maxIterations = assertPositiveInteger(obj.maxIterations, 'loop.json maxIterations');
 
   if (typeof obj.completionMarker !== 'string' || !obj.completionMarker.trim()) {
     throw new Error('loop.json completionMarker must be a non-empty string');
@@ -116,7 +115,7 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
 
   return {
     version: 1,
-    maxIterations: obj.maxIterations,
+    maxIterations,
     completionMarker: obj.completionMarker.trim(),
     initialPlanPrompt,
     ...(failOnMaxIterations !== undefined ? { failOnMaxIterations } : {}),
@@ -162,14 +161,8 @@ export function applySessionMaxIterations(
   if (sessionMaxIterations === undefined) {
     return { config, overridden: false };
   }
-  if (
-    typeof sessionMaxIterations !== 'number' ||
-    !Number.isFinite(sessionMaxIterations) ||
-    sessionMaxIterations < 1
-  ) {
-    throw new Error('loopMaxIterations must be a positive number');
-  }
-  return { config: { ...config, maxIterations: sessionMaxIterations }, overridden: true };
+  const maxIterations = assertPositiveInteger(sessionMaxIterations, 'loopMaxIterations');
+  return { config: { ...config, maxIterations }, overridden: true };
 }
 
 export function interpolateStepPrompt(template: string, vars: InterpolateVars): string {

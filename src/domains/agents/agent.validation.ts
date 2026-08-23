@@ -1,4 +1,5 @@
 import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
+import { assertPositiveInteger } from '../../lib/validation';
 import { validateRepoId } from '../repos/repo.repository';
 import {
   validateAgentMode,
@@ -74,11 +75,7 @@ export function parseCreateAgentPayload(
   let loopMaxIterations: number | undefined;
   if (mode === 'loop') {
     if (body.loopMaxIterations !== undefined) {
-      const rawMaxIterations = body.loopMaxIterations;
-      if (typeof rawMaxIterations !== 'number' || !Number.isFinite(rawMaxIterations) || rawMaxIterations < 1) {
-        throw new Error('loopMaxIterations must be a positive number');
-      }
-      loopMaxIterations = rawMaxIterations;
+      loopMaxIterations = assertPositiveInteger(body.loopMaxIterations, 'loopMaxIterations');
     }
   }
   const resolvedAgentBranch =
