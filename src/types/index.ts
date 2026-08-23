@@ -69,6 +69,8 @@ export interface PublicConfig {
   interactiveAgentTimeoutSeconds: number;
   loopAgentTimeoutSeconds: number;
   loopVerbModels: LoopVerbModels;
+  /** Bundled server default from config/loop.default.json */
+  loopDefaultMaxIterations: number;
 }
 
 export interface OllamaModel {

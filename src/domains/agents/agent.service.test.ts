@@ -270,8 +270,10 @@ describe('createAgentService (loop mode)', () => {
     });
 
     assert.equal(agent.loopMaxIterations, 7);
+    assert.equal(agent.loop?.maxIterations, 7);
     assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, 7);
     assert.equal(service.getAgent(agent.agentId).loopMaxIterations, 7);
+    assert.equal(service.getAgent(agent.agentId).loop?.maxIterations, 7);
   });
 
   it('leaves loopMaxIterations unset so the global/repo default applies', () => {

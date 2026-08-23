@@ -460,7 +460,12 @@ export function createAgentService(options: {
         : {}),
       ...((mode as import('../../types').AgentMode) === 'loop'
         ? {
-            loop: buildLoopState('queued'),
+            loop: buildLoopState(
+              'queued',
+              payload.loopMaxIterations !== undefined
+                ? { maxIterations: payload.loopMaxIterations }
+                : undefined,
+            ),
           }
         : {}),
       ...((mode as import('../../types').AgentMode) === 'review'

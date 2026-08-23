@@ -1,4 +1,5 @@
 import type { AppConfig, ConfigPartial, LoopVerbModels, PublicConfig } from '../types';
+import { loadServerDefaultLoopConfig } from '../domains/agents/worker/loop-config';
 import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -112,6 +113,7 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       autoReviewPullRequests: config.autoReviewPullRequests === true,
       reviewModel: config.reviewModel || '',
       loopVerbModels: config.loopVerbModels,
+      loopDefaultMaxIterations: loadServerDefaultLoopConfig().maxIterations,
     };
   }
 
