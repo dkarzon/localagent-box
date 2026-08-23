@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseCreateAgentPayload } from './agent.validation';
-import type { Repo } from '../../types';
+import { CodedError, type Repo } from '../../types';
 
 const repo: Repo = {
   repoId: 'acme-demo',
@@ -170,7 +170,12 @@ describe('parseCreateAgentPayload', () => {
             repo,
             'abc123',
           ),
-        /loopMaxIterations must be a positive integer/,
+        (err: unknown) => {
+          assert.ok(err instanceof CodedError);
+          assert.equal(err.code, 'VALIDATION_ERROR');
+          assert.match(String(err.message), /loopMaxIterations must be a positive integer/);
+          return true;
+        },
       );
     }
   });

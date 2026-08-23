@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { CodedError } from '../types';
 import { assertPositiveInteger, validateAgentMode } from './validation';
 
 describe('validateAgentMode', () => {
@@ -28,7 +29,15 @@ describe('assertPositiveInteger', () => {
 
   it('rejects non-integers and invalid values', () => {
     for (const value of [0, -1, 2.5, NaN, Infinity, '5']) {
-      assert.throws(() => assertPositiveInteger(value, 'count'), /count must be a positive integer/);
+      assert.throws(
+        () => assertPositiveInteger(value, 'count'),
+        (err: unknown) => {
+          assert.ok(err instanceof CodedError);
+          assert.equal(err.code, 'VALIDATION_ERROR');
+          assert.match(String(err.message), /count must be a positive integer/);
+          return true;
+        },
+      );
     }
   });
 });

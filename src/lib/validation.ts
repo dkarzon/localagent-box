@@ -222,7 +222,7 @@ export function assertPositiveInteger(value: unknown, fieldName: string): number
     !Number.isInteger(value) ||
     value < 1
   ) {
-    throw new Error(`${fieldName} must be a positive integer`);
+    throw validationError(`${fieldName} must be a positive integer`);
   }
   return value;
 }
