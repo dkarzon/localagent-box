@@ -6,7 +6,6 @@ import {
   hasNonEmptyLoopVerbModel,
   hasResolvableLoopModel,
   isAgentActive,
-  isReviewAgent,
   LOOP_VERB_LABELS,
   LOOP_VERB_MODELS_DEFAULT,
   LOOP_VERBS,
