@@ -32,10 +32,12 @@ export function withLoopFields(agent: Agent): Agent {
   if (getAgentMode(agent) !== 'loop') {
     return agent;
   }
+  const loopOverrides =
+    agent.loopMaxIterations !== undefined ? { maxIterations: agent.loopMaxIterations } : {};
   return {
     ...agent,
     mode: 'loop',
-    loop: buildLoopState(agent.status, agent.loop, agent),
+    loop: buildLoopState(agent.status, { ...agent.loop, ...loopOverrides }, agent),
   };
 }
 

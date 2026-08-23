@@ -6,7 +6,6 @@ import {
   hasNonEmptyLoopVerbModel,
   hasResolvableLoopModel,
   isAgentActive,
-  isReviewAgent,
   LOOP_VERB_LABELS,
   LOOP_VERB_MODELS_DEFAULT,
   LOOP_VERBS,
@@ -97,6 +96,8 @@ export function AgentSessionsPage({
     useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
   const [loopRunVerbModels, setLoopRunVerbModels] =
     useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
+  const [loopMaxIterationsOverride, setLoopMaxIterationsOverride] = useState('');
+  const [loopDefaultMaxIterations, setLoopDefaultMaxIterations] = useState<number | null>(null);
   const [loopOverridesOpen, setLoopOverridesOpen] = useState(false);
   const [reviewHeadBranch, setReviewHeadBranch] = useState('');
   const [reviewBackground, setReviewBackground] = useState('');
@@ -187,6 +188,9 @@ export function AgentSessionsPage({
       setLoopAutoApproveDefault(config.loopAutoApprovePermissions !== false);
       setInteractiveAutoApproveDefault(config.interactiveAutoApprovePermissions === true);
       setSettingsLoopVerbModels(mergeLoopVerbModels(config.loopVerbModels));
+      setLoopDefaultMaxIterations(
+        typeof config.loopDefaultMaxIterations === 'number' ? config.loopDefaultMaxIterations : null,
+      );
       setConfigLoaded(true);
     } catch {
       setDefaultModel('');
@@ -311,6 +315,7 @@ export function AgentSessionsPage({
 
   const resetLoopRunVerbModels = () => {
     setLoopRunVerbModels(LOOP_VERB_MODELS_DEFAULT);
+    setLoopMaxIterationsOverride('');
     setLoopOverridesOpen(false);
   };
 
@@ -367,6 +372,19 @@ export function AgentSessionsPage({
 
     try {
       const runLoopVerbModels = mode === 'loop' ? compactRunLoopVerbModels() : undefined;
+      let loopMaxIterations: number | undefined;
+      if (mode === 'loop') {
+        const trimmedOverride = loopMaxIterationsOverride.trim();
+        if (trimmedOverride) {
+          const parsed = Number(trimmedOverride);
+          if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+            setStatus('Max iterations must be a positive whole number.');
+            setStatusVariant('error');
+            return;
+          }
+          loopMaxIterations = parsed;
+        }
+      }
 
       const result = await apiFetch<{ agentId: string; workspaceId?: string }>('/api/v1/agents', {
         method: 'POST',
@@ -390,6 +408,7 @@ export function AgentSessionsPage({
                 commitMessage: commitMessage.trim(),
                 ...(model.trim() ? { model: model.trim() } : {}),
                 ...(runLoopVerbModels ? { loopVerbModels: runLoopVerbModels } : {}),
+                ...(loopMaxIterations !== undefined ? { loopMaxIterations } : {}),
                 push,
                 pushOnFailure,
                 ...(autoApproveExplicit ? { autoApprovePermissions } : {}),
@@ -918,6 +937,27 @@ export function AgentSessionsPage({
                   </Select>
                   <p className="mt-1 text-xs text-muted">
                     Used when this run and Settings both leave a verb blank.
+                  </p>
+                </Field>
+                <Field label="Max iterations">
+                  <TextInput
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder={
+                      loopDefaultMaxIterations != null
+                        ? `Default (${loopDefaultMaxIterations})`
+                        : 'Default (server / repo)'
+                    }
+                    value={loopMaxIterationsOverride}
+                    onChange={(e) => setLoopMaxIterationsOverride(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    Leave blank to use the server default
+                    {loopDefaultMaxIterations != null ? ` (${loopDefaultMaxIterations})` : ''} or a
+                    repo override from <code className="code-md">.localagent-box/loop.json</code>.
+                    Set a value here to cap this session only.
                   </p>
                 </Field>
                 <div className="rounded border border-surface-container-highest bg-background p-4">

@@ -259,6 +259,36 @@ describe('createAgentService (loop mode)', () => {
     assert.equal(agent.loop!.canFinish, false);
   });
 
+  it('persists loopMaxIterations set on creation and returns it on select', () => {
+    const { service, repository } = createTestContext();
+
+    const agent = service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Refactor auth module',
+      mode: 'loop',
+      loopMaxIterations: 7,
+    });
+
+    assert.equal(agent.loopMaxIterations, 7);
+    assert.equal(agent.loop?.maxIterations, 7);
+    assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, 7);
+    assert.equal(service.getAgent(agent.agentId).loopMaxIterations, 7);
+    assert.equal(service.getAgent(agent.agentId).loop?.maxIterations, 7);
+  });
+
+  it('leaves loopMaxIterations unset so the global/repo default applies', () => {
+    const { service, repository } = createTestContext();
+
+    const agent = service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Refactor auth module',
+      mode: 'loop',
+    });
+
+    assert.equal(agent.loopMaxIterations, undefined);
+    assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, undefined);
+  });
+
   it('returns derived loop fields when fetching an active loop agent', () => {
     const { service, repository } = createTestContext();
     const agentId = 'loopproc0001';

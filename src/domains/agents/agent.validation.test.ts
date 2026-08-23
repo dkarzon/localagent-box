@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseCreateAgentPayload } from './agent.validation';
-import type { Repo } from '../../types';
+import { CodedError, type Repo } from '../../types';
 
 const repo: Repo = {
   repoId: 'acme-demo',
@@ -122,5 +122,61 @@ describe('parseCreateAgentPayload', () => {
 
     assert.equal(payload.mode, 'batch');
     assert.equal(payload.loopVerbModels, undefined);
+  });
+
+  it('accepts loopMaxIterations for loop mode', () => {
+    const payload = parseCreateAgentPayload(
+      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop', loopMaxIterations: 42 },
+      repo,
+      'abc123',
+    );
+
+    assert.equal(payload.mode, 'loop');
+    assert.equal(payload.loopMaxIterations, 42);
+  });
+
+  it('defaults loopMaxIterations to undefined so repo/server defaults apply', () => {
+    const payload = parseCreateAgentPayload(
+      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop' },
+      repo,
+      'abc123',
+    );
+
+    assert.equal(payload.loopMaxIterations, undefined);
+  });
+
+  it('ignores loopMaxIterations for batch mode', () => {
+    const payload = parseCreateAgentPayload(
+      {
+        repoId: 'acme-demo',
+        prompt: 'Do work',
+        mode: 'batch',
+        loopMaxIterations: 5,
+      },
+      repo,
+      'abc123',
+    );
+
+    assert.equal(payload.mode, 'batch');
+    assert.equal(payload.loopMaxIterations, undefined);
+  });
+
+  it('rejects invalid loopMaxIterations values for loop mode', () => {
+    for (const loopMaxIterations of [0, -1, 2.5, 'five', '10', Infinity]) {
+      assert.throws(
+        () =>
+          parseCreateAgentPayload(
+            { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop', loopMaxIterations },
+            repo,
+            'abc123',
+          ),
+        (err: unknown) => {
+          assert.ok(err instanceof CodedError);
+          assert.equal(err.code, 'VALIDATION_ERROR');
+          assert.match(String(err.message), /loopMaxIterations must be a positive integer/);
+          return true;
+        },
+      );
+    }
   });
 });

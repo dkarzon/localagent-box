@@ -214,3 +214,15 @@ export function validateOptionalBoolean(value: unknown, fieldName: string): bool
 export function buildRepoId(owner: unknown, name: unknown): string {
   return `${validateOwner(owner)}-${validateRepoName(name)}`;
 }
+
+export function assertPositiveInteger(value: unknown, fieldName: string): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < 1
+  ) {
+    throw validationError(`${fieldName} must be a positive integer`);
+  }
+  return value;
+}

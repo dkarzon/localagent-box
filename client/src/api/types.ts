@@ -135,6 +135,8 @@ export interface AppConfig {
   loopAgentTimeoutSeconds?: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback chain. */
   loopVerbModels?: LoopVerbModels;
+  /** Bundled server default from config/loop.default.json */
+  loopDefaultMaxIterations?: number;
   /** When true (default), auto-create a PR once an agent completes and pushes. Per-agent create request can override. */
   autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
@@ -236,6 +238,8 @@ export interface Agent {
   useExistingBranch?: boolean;
   model?: string | null;
   loopVerbModels?: LoopVerbModels;
+  /** Per-session iteration cap for loop mode; omitted = global/repo default */
+  loopMaxIterations?: number;
   createdAt?: string;
   startedAt?: string;
   finishedAt?: string;

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { assertPositiveInteger } from '../../../lib/validation';
 import type { LoopOpenCodeAgent, LoopStepConfig, LoopVerb } from '../../../types';
 
 export const LOOP_VERBS: readonly LoopVerb[] = ['ORIENT', 'ACT', 'REFLECT'];
@@ -56,9 +57,7 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
     throw new Error(`loop.json version must be 1, got ${String(obj.version)}`);
   }
 
-  if (typeof obj.maxIterations !== 'number' || !Number.isFinite(obj.maxIterations) || obj.maxIterations < 1) {
-    throw new Error('loop.json maxIterations must be a positive number');
-  }
+  const maxIterations = assertPositiveInteger(obj.maxIterations, 'loop.json maxIterations');
 
   if (typeof obj.completionMarker !== 'string' || !obj.completionMarker.trim()) {
     throw new Error('loop.json completionMarker must be a non-empty string');
@@ -116,7 +115,7 @@ export function validateLoopConfig(raw: unknown): LoopConfig {
 
   return {
     version: 1,
-    maxIterations: obj.maxIterations,
+    maxIterations,
     completionMarker: obj.completionMarker.trim(),
     initialPlanPrompt,
     ...(failOnMaxIterations !== undefined ? { failOnMaxIterations } : {}),
@@ -149,6 +148,21 @@ export function loadLoopConfig(
     config: loadServerDefaultLoopConfig(fsImpl),
     configSource: 'server-default',
   };
+}
+
+/**
+ * Apply the per-session iteration cap to the loaded loop config.
+ * The override wins when set; otherwise the global/server or repo-level default applies.
+ */
+export function applySessionMaxIterations(
+  config: LoopConfig,
+  sessionMaxIterations?: number,
+): { config: LoopConfig; overridden: boolean } {
+  if (sessionMaxIterations === undefined) {
+    return { config, overridden: false };
+  }
+  const maxIterations = assertPositiveInteger(sessionMaxIterations, 'loopMaxIterations');
+  return { config: { ...config, maxIterations }, overridden: true };
 }
 
 export function interpolateStepPrompt(template: string, vars: InterpolateVars): string {

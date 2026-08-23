@@ -17,6 +17,7 @@ import {
   updateAgentRecord,
 } from './agent-state-writer';
 import {
+  applySessionMaxIterations,
   interpolateStepPrompt,
   loadLoopConfig,
   parseCompletionSignal,
@@ -299,7 +300,16 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     throw new Error(`Failed to load loop config: ${message}`);
   }
 
-  const { config: loopConfig, configSource } = loadedConfig;
+  const { config: effectiveLoopConfig, overridden: sessionOverrideApplied } =
+    applySessionMaxIterations(loadedConfig.config, job.loopMaxIterations);
+  const loopConfig = effectiveLoopConfig;
+  const configSource = loadedConfig.configSource;
+  if (sessionOverrideApplied) {
+    appendLog(
+      logPath,
+      `Loop maxIterations session override: ${loadedConfig.config.maxIterations} -> ${loopConfig.maxIterations} (source=${configSource})`,
+    );
+  }
   const repoPromptOverrides = loadRepoConfig(job.workspaceDir);
   const loopCheckCommand = repoPromptOverrides?.checkCommand?.trim() || null;
   const hasInitialPlan = Boolean(loopConfig.initialPlanPrompt?.trim());

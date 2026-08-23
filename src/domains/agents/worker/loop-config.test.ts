@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  applySessionMaxIterations,
   interpolateStepPrompt,
   loadLoopConfig,
   loadServerDefaultLoopConfig,
@@ -124,6 +125,69 @@ describe('loadLoopConfig', () => {
     assert.equal(loaded.config.completionMarker, 'DONE');
     assert.equal(loaded.config.steps.length, 1);
     assert.equal(loaded.config.steps[0].prompt, 'Custom {{goal}} step');
+  });
+});
+
+describe('applySessionMaxIterations', () => {
+  it('returns the loaded config unchanged when the session override is unset', () => {
+    const base = validateLoopConfig({
+      version: 1,
+      maxIterations: 5,
+      completionMarker: 'LOOP_COMPLETE',
+      steps: [{ verb: 'ACT', prompt: '{{goal}}' }],
+    });
+    const result = applySessionMaxIterations(base, undefined);
+    assert.equal(result.overridden, false);
+    assert.equal(result.config, base);
+    assert.equal(result.config.maxIterations, 5);
+  });
+
+  it('lets the session override win over the repo/server default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-config-session-'));
+    const repoDir = path.join(dir, '.localagent-box');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'loop.json'),
+      JSON.stringify({
+        version: 1,
+        maxIterations: 2,
+        completionMarker: 'DONE',
+        steps: [{ verb: 'ACT', prompt: 'Custom {{goal}} step' }],
+      }),
+      'utf8',
+    );
+    const loaded = loadLoopConfig(dir);
+    assert.equal(loaded.config.maxIterations, 2);
+
+    const result = applySessionMaxIterations(loaded.config, 7);
+    assert.equal(result.overridden, true);
+    assert.equal(result.config.maxIterations, 7);
+    // Loaded config for other sessions is untouched.
+    assert.equal(loaded.config.maxIterations, 2);
+  });
+
+  it('applies the session override even when there is no repo-level config (server default)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-config-session-'));
+    const loaded = loadLoopConfig(dir);
+    const result = applySessionMaxIterations(loaded.config, 3);
+    assert.equal(result.overridden, true);
+    assert.equal(result.config.maxIterations, 3);
+    assert.equal(loaded.config.maxIterations, loaded.config.maxIterations);
+  });
+
+  it('rejects invalid session override values', () => {
+    const base = validateLoopConfig({
+      version: 1,
+      maxIterations: 5,
+      completionMarker: 'LOOP_COMPLETE',
+      steps: [{ verb: 'ACT', prompt: '{{goal}}' }],
+    });
+    for (const invalid of [0, -1, 2.5, 'five', Infinity, NaN]) {
+      assert.throws(
+        () => applySessionMaxIterations(base, invalid as unknown as number),
+        /loopMaxIterations must be a positive integer/,
+      );
+    }
   });
 });
 

@@ -434,6 +434,9 @@ export function createAgentService(options: {
       autoApprovePermissions: payload.autoApprovePermissions,
       model: payload.model || null,
       ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
+      ...(payload.loopMaxIterations !== undefined
+        ? { loopMaxIterations: payload.loopMaxIterations }
+        : {}),
       status: 'queued',
       commitSha: null,
       pushed: false,
@@ -457,7 +460,12 @@ export function createAgentService(options: {
         : {}),
       ...((mode as import('../../types').AgentMode) === 'loop'
         ? {
-            loop: buildLoopState('queued'),
+            loop: buildLoopState(
+              'queued',
+              payload.loopMaxIterations !== undefined
+                ? { maxIterations: payload.loopMaxIterations }
+                : undefined,
+            ),
           }
         : {}),
       ...((mode as import('../../types').AgentMode) === 'review'

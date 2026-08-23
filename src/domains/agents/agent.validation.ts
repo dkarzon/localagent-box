@@ -1,4 +1,5 @@
 import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
+import { assertPositiveInteger } from '../../lib/validation';
 import { validateRepoId } from '../repos/repo.repository';
 import {
   validateAgentMode,
@@ -21,6 +22,7 @@ export interface CreateAgentPayload {
   autoApprovePermissions?: boolean;
   model?: string;
   loopVerbModels?: Record<string, string>;
+  loopMaxIterations?: number;
   mode: AgentMode;
   autoCreatePullRequest?: boolean;
   // Review-specific fields (mode: 'review')
@@ -70,6 +72,12 @@ export function parseCreateAgentPayload(
     mode === 'loop' && typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
       ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
       : undefined;
+  let loopMaxIterations: number | undefined;
+  if (mode === 'loop') {
+    if (body.loopMaxIterations !== undefined) {
+      loopMaxIterations = assertPositiveInteger(body.loopMaxIterations, 'loopMaxIterations');
+    }
+  }
   const resolvedAgentBranch =
     isReview && headBranch
       ? headBranch
@@ -96,6 +104,7 @@ export function parseCreateAgentPayload(
       typeof body.autoApprovePermissions === 'boolean' ? body.autoApprovePermissions : undefined,
     model,
     loopVerbModels,
+    loopMaxIterations,
     mode,
     autoCreatePullRequest:
       typeof body.autoCreatePullRequest === 'boolean' ? body.autoCreatePullRequest : undefined,
