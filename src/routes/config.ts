@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { sendJson, readJsonBody, requireAuth } from '../lib/http';
 import { withErrorHandling } from '../lib/error-handler';
+import { maybePopulateBotGitIdentity } from '../lib/github-bot-identity';
+import { getLogger } from '../lib/logger';
 import type { ConfigPartial, Route, ServerContext } from '../types';
 import { CodedError } from '../types';
 import { getLoopVerbModelsDefault } from '../services/config-store';
@@ -62,20 +64,27 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
   }
 
   const saved = ctx.configStore.saveConfig(partial);
+  const withBotIdentity = await maybePopulateBotGitIdentity(saved, ctx.githubApp, {
+    onFailure: (err) => {
+      getLogger().warn({ err }, 'Failed to auto-populate GitHub App bot git identity');
+    },
+  });
+  const finalConfig =
+    withBotIdentity === saved ? saved : ctx.configStore.saveConfig(withBotIdentity);
   let opencode = null;
 
-  if (saved.ollamaBaseUrl) {
-    opencode = ctx.opencodeConfig.writeOpenCodeConfig(saved);
+  if (finalConfig.ollamaBaseUrl) {
+    opencode = ctx.opencodeConfig.writeOpenCodeConfig(finalConfig);
   }
 
-  if (saved.gitUserName || saved.gitUserEmail) {
-    ctx.gitService.applyGitConfig(saved);
+  if (finalConfig.gitUserName || finalConfig.gitUserEmail) {
+    ctx.gitService.applyGitConfig(finalConfig);
   }
 
-  const ollama = await ctx.ollamaProbe.probe(saved.ollamaBaseUrl);
+  const ollama = await ctx.ollamaProbe.probe(finalConfig.ollamaBaseUrl);
 
   sendJson(res, 200, {
-    ...ctx.configStore.toPublicConfig(saved),
+    ...ctx.configStore.toPublicConfig(finalConfig),
     ollama,
     opencode: opencode
       ? { path: opencode.path, model: opencode.config.model }

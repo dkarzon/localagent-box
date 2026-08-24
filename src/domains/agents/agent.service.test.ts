@@ -174,6 +174,10 @@ function createTestContext(options?: {
     redactSecrets: (text) => text,
     createAppJwt: () => '',
     normalizePrivateKey: (key) => key,
+    resolveBotGitIdentity: async () => ({
+      gitUserName: 'test[bot]',
+      gitUserEmail: '1+test[bot]@users.noreply.github.com',
+    }),
   };
 
   const gitService: GitService = {

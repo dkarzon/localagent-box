@@ -15,6 +15,7 @@ import { createOllamaProbe } from './services/ollama-probe';
 import { createOllamaChat } from './services/ollama-client';
 import { createGithubAppService } from './services/github-app';
 import { createGitService } from './services/git-service';
+import { maybePopulateBotGitIdentity } from './lib/github-bot-identity';
 import { createRepoService } from './domains/repos/repo.service';
 import { createAgentService } from './domains/agents/agent.service';
 import healthRoute from './routes/health';
@@ -250,6 +251,27 @@ function startServer(): void {
   }).catch((err) => {
     logger.warn({ err }, 'Ollama startup probe failed');
   });
+
+  const startupConfig = ctx.configRepository.load();
+  maybePopulateBotGitIdentity(startupConfig, ctx.githubApp, {
+    onFailure: (err) => {
+      logger.warn({ err }, 'Failed to auto-populate GitHub App bot git identity on startup');
+    },
+  })
+    .then((withBotIdentity) => {
+      if (withBotIdentity === startupConfig) {
+        return;
+      }
+      const saved = ctx.configRepository.save(withBotIdentity);
+      ctx.gitService.applyGitConfig(saved);
+      logger.info(
+        { gitUserName: saved.gitUserName },
+        'Auto-populated git author from GitHub App bot identity',
+      );
+    })
+    .catch((err) => {
+      logger.warn({ err }, 'GitHub App bot identity startup check failed');
+    });
 
   const server = http.createServer((req, res) => {
     handleRequest(req, res, ctx, env.publicDir).catch((err) => {

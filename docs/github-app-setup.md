@@ -42,7 +42,7 @@ Open the localagent-box UI and go to **Settings** in the left sidebar, then fill
 | **App ID** | App ID from step 2 |
 | **Installation ID** | Installation ID from step 3 |
 | **Private Key (PEM)** | Full contents of the `.pem` file from step 2 |
-| **Git User Name** / **Git User Email** | Commit author identity used for agent commits |
+| **Git User Name** / **Git User Email** | Commit author identity used for agent commits. Left blank when saving GitHub App credentials and localagent-box will look up the app's `[bot]` user and noreply email automatically. |
 
 Enter your **Bearer Token** in the **API Access** card at the top of the page first (it's required to save settings) — this is the same value as your `API_TOKEN` environment variable. Once the GitHub fields are filled in, click **Commit System Changes** at the bottom of the page to save.
 

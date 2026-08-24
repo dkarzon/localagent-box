@@ -32,6 +32,31 @@ export interface GithubCredentialSummary {
   gitUserConfigured: boolean;
 }
 
+export interface BotGitIdentity {
+  gitUserName: string;
+  gitUserEmail: string;
+}
+
+/** True when GitHub App credentials are set but both git author fields are blank. */
+export function needsBotGitIdentity(config: AppConfig): boolean {
+  return Boolean(
+    config.githubAppId &&
+      config.githubAppInstallationId &&
+      config.githubAppPrivateKey &&
+      !config.gitUserName.trim() &&
+      !config.gitUserEmail.trim(),
+  );
+}
+
+/** Build the git author identity GitHub uses to attribute commits to a GitHub App bot. */
+export function formatBotGitIdentity(slug: string, botUserId: number): BotGitIdentity {
+  const login = `${slug}[bot]`;
+  return {
+    gitUserName: login,
+    gitUserEmail: `${botUserId}+${login}@users.noreply.github.com`,
+  };
+}
+
 export interface CreatePullRequestInput {
   owner: string;
   repo: string;
@@ -104,6 +129,7 @@ export interface GithubAppService {
   redactSecrets: (text: string | undefined | null) => string | undefined | null;
   createAppJwt: (appId: string, privateKeyPem: string) => string;
   normalizePrivateKey: (privateKey: string) => string;
+  resolveBotGitIdentity: (config: AppConfig) => Promise<BotGitIdentity>;
 }
 
 export function normalizePrivateKey(privateKey: string): string {
@@ -202,6 +228,53 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
 
   function buildAuthenticatedCloneUrl(owner: string, name: string, token: string): string {
     return `https://x-access-token:${encodeURIComponent(token)}@github.com/${owner}/${name}.git`;
+  }
+
+  async function githubAppJwtRequest<T>(config: AppConfig, path: string): Promise<T> {
+    assertConfigured(config);
+    const jwt = createAppJwt(config.githubAppId, config.githubAppPrivateKey);
+    const response = await fetchImpl(`${GITHUB_API}${path}`, {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        ...GITHUB_HEADERS,
+      },
+    });
+
+    const body = (await response.json().catch(() => ({}))) as T & { message?: string };
+    if (!response.ok) {
+      const message = body.message || `GitHub API returned HTTP ${response.status}`;
+      throw new Error(message);
+    }
+
+    return body;
+  }
+
+  async function resolveBotGitIdentity(config: AppConfig): Promise<BotGitIdentity> {
+    assertConfigured(config);
+
+    const app = await githubAppJwtRequest<{ slug?: string; name?: string }>(config, '/app');
+    const slug = app.slug?.trim() || app.name?.trim();
+    if (!slug) {
+      throw new Error('GitHub App response did not include a slug');
+    }
+
+    const botLogin = `${slug}[bot]`;
+    const botUser = await fetchImpl(`${GITHUB_API}/users/${encodeURIComponent(botLogin)}`, {
+      headers: GITHUB_HEADERS,
+    }).then(async (response) => {
+      const body = (await response.json().catch(() => ({}))) as { id?: number; message?: string };
+      if (!response.ok) {
+        const message = body.message || `GitHub API returned HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      return body;
+    });
+
+    if (typeof botUser.id !== 'number') {
+      throw new Error(`GitHub bot user ${botLogin} was not found`);
+    }
+
+    return formatBotGitIdentity(slug, botUser.id);
   }
 
   async function githubApiRequest<T>(
@@ -397,6 +470,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     redactSecrets,
     createAppJwt,
     normalizePrivateKey,
+    resolveBotGitIdentity,
   };
 
 }

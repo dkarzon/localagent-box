@@ -457,6 +457,10 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                   />
                 </Field>
               </div>
+              <p className="mt-2 text-sm text-muted">
+                Leave blank to auto-fill from your GitHub App&apos;s <code className="code-md">[bot]</code>{' '}
+                identity when you save. Set manually only if you need a custom commit author.
+              </p>
             </SectionCard>
           ) : null}
 
