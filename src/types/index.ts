@@ -252,6 +252,37 @@ export interface AgentTokenUsage {
   cost?: number;
 }
 
+/** `setup` block of the repo's .localagent-box/environment.json */
+export interface RepoEnvironmentSetupConfig {
+  command: string;
+  timeoutMs?: number;
+  /** Default true — a non-zero exit fails the agent (applied at runtime) */
+  failOnError?: boolean;
+}
+
+/**
+ * Parsed .localagent-box/environment.json content (Phase 1 fields).
+ * Unknown top-level keys are ignored by the loader.
+ */
+export interface RepoEnvironmentConfig {
+  /** Currently supported schema version */
+  version: 1;
+  setup?: RepoEnvironmentSetupConfig;
+}
+
+export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
+
+/** Host bootstrap result state; persisted on the Agent record (P1-T5) */
+export interface AgentBootstrapState {
+  status: BootstrapStatus;
+  command?: string;
+  durationMs?: number;
+  exitCode?: number;
+  /** Last ~50 lines of command output (same cap as loop checks) */
+  outputTail?: string;
+  error?: string;
+}
+
 export interface Agent {
   agentId: string;
   workspaceId: string;
@@ -308,6 +339,8 @@ export interface Agent {
   review?: AgentReviewMetadata | null;
   /** Cumulative token usage across all assistant messages in this session */
   tokenUsage?: AgentTokenUsage;
+  /** Host-run workspace bootstrap (setup command) before the agent starts */
+  bootstrap?: AgentBootstrapState;
   /** Derived wait/retry info; not persisted */
   queue?: AgentQueueState;
 }
