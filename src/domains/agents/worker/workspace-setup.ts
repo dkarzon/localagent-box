@@ -14,7 +14,7 @@ import { appendLog, readAgentStatus, updateAgentRecord } from './agent-state-wri
 import type { WorkerContext } from './worker-context';
 import { getAgentMode } from './worker-context';
 
-const LOCALAGENT_BOX_IGNORE_ENTRY = '.localagent-box/';
+const LOCALAGENT_BOX_IGNORE_ENTRY = '.localagent-box/loop-plan.md';
 
 export function ensureLocalagentBoxIgnored(workspaceDir: string): void {
   const gitignorePath = path.join(workspaceDir, '.gitignore');

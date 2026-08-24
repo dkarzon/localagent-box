@@ -4,6 +4,6 @@ dist/
 data/
 public/assets/
 public/index.html
-.localagent-box/
+.localagent-box/loop-plan.md
 .env
 .env.local
