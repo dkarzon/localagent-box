@@ -86,10 +86,10 @@ export function loadEnvironmentConfig(
   try {
     return validateEnvironmentConfig(readJsonFile(repoPath));
   } catch (err) {
+    const cause = err instanceof Error ? err : new Error(String(err));
     throw new Error(
-      `Failed to load ${environmentConfigRelative}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `Failed to load ${environmentConfigRelative}: ${cause.message}`,
+      { cause },
     );
   }
 }
