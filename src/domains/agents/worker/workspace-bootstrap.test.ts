@@ -723,4 +723,90 @@ describe('runWorkspaceBootstrap', () => {
       assert.equal(h.agent.bootstrap?.source, 'explicit');
     });
   });
+
+  describe('dependency cache explicit cacheKey (P3-T6)', () => {
+    const NODEJS_CATALOG: Record<string, RuntimeProfile> = {
+      ...FAKE_CATALOG,
+      nodejs: {
+        detect: ['package.json'],
+        defaultSetup: 'npm ci --ignore-scripts',
+        tools: [],
+        cacheDirs: [],
+      },
+    };
+
+    it('addresses the cache entry by the explicit cacheKey from environment.json', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'npm ci --ignore-scripts' },
+          cacheKey: 'myrepo-node22-pnpm9',
+        }),
+      );
+
+      const restoreDirs: string[] = [];
+      const snapshotDirs: string[] = [];
+      await runBootstrap(h, {
+        loadProfiles: () => NODEJS_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci --ignore-scripts',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+        restoreCache: async (cacheDir) => {
+          restoreDirs.push(cacheDir);
+          return false;
+        },
+        snapshotCache: async (cacheDir) => {
+          snapshotDirs.push(cacheDir);
+        },
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+
+      assert.equal(h.runCalls.length, 1);
+      assert.equal(restoreDirs.length, 1);
+      assert.equal(snapshotDirs.length, 1);
+      const expected = path.join('/tmp/dep-cache-root', 'acme-demo', 'myrepo-node22-pnpm9');
+      assert.equal(restoreDirs[0], expected);
+      assert.equal(snapshotDirs[0], expected);
+    });
+
+    it('falls back to the hashed key when cacheKey is absent', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, setup: { command: 'npm ci --ignore-scripts' } }),
+      );
+
+      const restoreDirs: string[] = [];
+      await runBootstrap(h, {
+        loadProfiles: () => NODEJS_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci --ignore-scripts',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+        restoreCache: async (cacheDir) => {
+          restoreDirs.push(cacheDir);
+          return false;
+        },
+        snapshotCache: async () => undefined,
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+
+      assert.equal(restoreDirs.length, 1);
+      const entry = path.basename(restoreDirs[0]);
+      assert.notEqual(entry, 'unknown');
+      assert.equal(entry.length, 64);
+      assert.equal(restoreDirs[0].endsWith(path.join('acme-demo', entry)), true);
+    });
+  });
 });

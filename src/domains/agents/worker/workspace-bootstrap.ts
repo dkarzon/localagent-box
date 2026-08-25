@@ -2,11 +2,11 @@ import path from 'path';
 import type { Agent, AgentBootstrapState, AppConfig } from '../../../types';
 import type { JsonStore } from '../../../lib/json-store';
 import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writer';
-import { computeCacheKey } from './dep-cache-key';
+import { computeCacheKey, type DepCacheKey } from './dep-cache-key';
 import { getDepCacheDirs, restoreDepCache, snapshotDepCache } from './dep-cache';
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
 import { detectProfiles, resolveSetupCommand } from './environment-detect';
-import { loadRuntimeProfiles, type RuntimeProfile } from './runtime-profiles';
+import { loadRuntimeProfiles } from './runtime-profiles';
 import { runWorkspaceCommand } from './workspace-command';
 
 /** Default timeout applied to a repo's setup command (10 min). */
@@ -75,6 +75,8 @@ export async function runWorkspaceBootstrap(
   const { workspaceDir, logPath, agentId, agentsStore } = options;
   const runCommand = options.runCommand ?? runWorkspaceCommand;
   const loadProfiles = options.loadProfiles ?? loadRuntimeProfiles;
+  const restore = options.restoreCache ?? restoreDepCache;
+  const snapshot = options.snapshotCache ?? snapshotDepCache;
   const config = options.config;
   const profileCatalog = loadProfiles();
   const enabledProfiles = config?.enabledRuntimeProfiles;
@@ -115,7 +117,7 @@ export async function runWorkspaceBootstrap(
   // cache is configured or no profile caches its workspace dirs (phase 3
   // caches nodejs / nodejs-pnpm only).
   const depCache = options.depCache;
-  const cacheableProfile =
+  const cacheableProfile: string | undefined =
     depCache !== undefined
       ? (profiles.find((name) => getDepCacheDirs(name).length > 0) ??
         detectProfiles(workspaceDir, profileCatalog).find(
@@ -131,8 +133,13 @@ export async function runWorkspaceBootstrap(
         workspaceDir,
         profiles,
         catalog: profileCatalog,
+        explicitCacheKey: envConfig?.cacheKey,
       });
       cacheDir = path.join(depCache.root, cacheKey.relativePath);
+      appendLog(
+        logPath,
+        `Dependency cache key: ${cacheKey.relativePath} (method=${cacheKey.method})`,
+      );
     } catch (err) {
       appendLog(
         logPath,
@@ -176,14 +183,17 @@ export async function runWorkspaceBootstrap(
   const durationMs = Date.now() - startedAt;
 
   if (result.success) {
-    if (cacheDir !== null) {
+    if (cacheDir !== null && cacheableProfile !== undefined) {
       try {
         await snapshot(
           cacheDir,
           workspaceDir,
           cacheableProfile,
-          { command, profiles },
-          cacheKey,
+          {
+            command,
+            profiles,
+            lockfileHash: cacheKey?.lockfileHash,
+          },
         );
         appendLog(logPath, `Dependency cache snapshot updated at ${cacheDir}`);
       } catch (err) {

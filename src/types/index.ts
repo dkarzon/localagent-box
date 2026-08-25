@@ -287,6 +287,12 @@ export interface RepoEnvironmentConfig {
   profiles?: string[];
   /** Opt out of lockfile auto-detection; defaults to true */
   autoDetect?: boolean;
+  /**
+   * Explicit dependency-cache key (P3-T6). When set, the cache entry under
+   * `{dep-cache-root}/{repoId}` is addressed by this key (sanitized to
+   * alphanumerics + hyphens) instead of a hash of the lockfile contents.
+   */
+  cacheKey?: string;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';

@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import path from 'path';
 import { sendJson, readJsonBody, requireAuth, parseUrl } from '../lib/http';
 import { withErrorHandling } from '../lib/error-handler';
 import { getServerEnv } from '../config/env';
@@ -92,6 +91,22 @@ const reposRoute: Route = {
   match: (_method, pathname) => pathname.startsWith('/api/v1/repos'),
   handle: async (req, res, ctx) => {
     const { pathname } = parseUrl(req);
+
+    const depCacheMatch = pathname.match(/^\/api\/v1\/repos\/([^/]+)\/dep-cache$/);
+    if (depCacheMatch) {
+      const repoId = depCacheMatch[1];
+      if (req.method === 'GET') {
+        await handleListDepCache(req, res, ctx, repoId);
+        return;
+      }
+      if (req.method === 'DELETE') {
+        if (!requireAuth(req, res)) {
+          return;
+        }
+        await handlePurgeDepCache(req, res, ctx, repoId);
+        return;
+      }
+    }
 
     const verifyMatch = pathname.match(/^\/api\/v1\/repos\/([^/]+)\/verify$/);
     if (verifyMatch && req.method === 'POST') {

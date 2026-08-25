@@ -85,7 +85,7 @@ When present, declares the host-run setup step.
 
 #### `setup.command` *(string, required)*
 
-The shell command run in the workspace root before the agent starts. Workspaces are fresh-cloned before every agent run, so this command runs every time (a dependency cache is planned — see [agent-bootstrap.plan.md](./agent-bootstrap.plan.md)). A non-zero exit fails the agent start by default (see `setup.failOnError`).
+The shell command run in the workspace root before the agent starts. Workspaces are fresh-cloned before every agent run; when the [dependency cache](#dependency-cache-`cacheKey`) is enabled the host restores the cached dependencies before running this command. A non-zero exit fails the agent start by default (see `setup.failOnError`).
 
 #### `setup.timeoutMs` *(number, optional)*
 
@@ -117,7 +117,34 @@ Controls lockfile inference for repos that have a file but **no** `setup.command
 - `true` (default, or omitted) — infer a profile from the workspace lockfiles (see [Detection order](#detection-order)).
 - `false` — skip detection; bootstrap is skipped for the run.
 
-> `autoDetect: false` does **not** affect `setup.command` (still runs) or `profiles` (still resolved).
+ > `autoDetect: false` does **not** affect `setup.command` (still runs) or `profiles` (still resolved).
+
+### Dependency cache — `cacheKey` *(string, optional)*
+
+Speeds up repeat agent runs by persisting installed dependencies (`node_modules/` for the `nodejs` / `nodejs-pnpm` profiles) in a cache volume. The cache is **off by default**; the operator must enable it (`DEP_CACHE_ENABLED=1`, root defaults to `<dataDir>/dep-cache`, override with `DEP_CACHE_ROOT`).
+
+Cache entries live under `{dep-cache-root}/{repo}/{cacheKey}`. When the cache is enabled and a cacheable profile resolves, the host:
+
+1. Restores the cached `node_modules` into the fresh clone **before** the setup command runs (logged as `Dependency cache hit/miss`).
+2. After a successful setup command, re-snapshots the workspace back into the cache.
+
+How `cacheKey` is derived when the cache is enabled:
+
+| Source | Determination |
+|--------|---------------|
+| Explicit `cacheKey` (below) | Sanitized to alphanumerics and hyphens (leading `-` and anything non-path-safe stripped, capped at 200 chars); keys that sanitize to empty (`""`, path-traversal names) fall back to hashing. |
+| Nothing usable in the file | SHA-256 over the active profiles' lockfile contents plus the profile names; when no lockfile exists at all, the key is the stable `unknown` segment. |
+
+```jsonc
+// .localagent-box/environment.json
+{
+  "version": 1,
+  "profiles": ["nodejs-pnpm"],
+  "cacheKey": "acme-monorepo-pnpm9"
+}
+```
+
+Use `cacheKey` when you want a stable, human-readable cache slot that doesn't change with every lockfile churn (e.g. pin it to a toolchain pin or a dependency batch name). When the lockfile changes but the key doesn't, the host still runs the setup command, so the entry is refreshed. Keys are composed of a per-repo segment + a per-key segment, so the same key in different repos is shared.
 
 ### Runtime profile catalog
 

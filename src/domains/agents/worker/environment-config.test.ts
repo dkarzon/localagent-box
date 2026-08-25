@@ -168,6 +168,32 @@ describe('validateEnvironmentConfig', () => {
     );
   });
 
+  it('accepts an optional cacheKey', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      cacheKey: 'acme-monorepo-pnpm9',
+    });
+    assert.deepEqual(result, { version: 1, cacheKey: 'acme-monorepo-pnpm9' });
+  });
+
+  it('rejects non-string cacheKey values', () => {
+    for (const cacheKey of [42, null, true, ['a'], { a: 1 }]) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, cacheKey }),
+        /environment\.json cacheKey must be a non-empty string when provided/,
+      );
+    }
+  });
+
+  it('rejects empty or whitespace-only cacheKey', () => {
+    for (const cacheKey of ['', '   ']) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, cacheKey }),
+        /environment\.json cacheKey must be a non-empty string when provided/,
+      );
+    }
+  });
+
   it('ignores unknown keys without error', () => {
     const result = validateEnvironmentConfig({
       version: 1,
