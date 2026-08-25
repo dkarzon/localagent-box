@@ -312,6 +312,12 @@ export interface AgentBootstrapState {
   /** Last ~50 lines of command output (same cap as loop checks) */
   outputTail?: string;
   error?: string;
+  /**
+   * Whether the workspace dependencies were restored from the persistent
+   * dependency cache before the setup command ran (P3-T4). Omitted when the
+   * cache is disabled.
+   */
+  cacheHit?: boolean;
 }
 
 export interface Agent {
