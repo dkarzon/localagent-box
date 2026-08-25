@@ -29,6 +29,10 @@ export interface ServerEnv {
   bootstrapAutoDetect: boolean;
   /** Global override for `setup.timeoutMs` in ms; 0 disables the override. */
   bootstrapGlobalSetupTimeoutMs: number;
+  /** Enable the persistent dependency cache for repeat bootstrap runs (opt-in, default false). */
+  depCacheEnabled: boolean;
+  /** Root directory for the dependency cache (defaults to dataDir/dep-cache when unset). */
+  depCacheRoot: string;
 }
 
 let cachedEnv: ServerEnv | null = null;
@@ -53,6 +57,14 @@ function resolveAgentWorkspace(dataDir: string): string {
     return path.join(dataDir, 'workspace', 'agents');
   }
   return '/workspace/agents';
+}
+
+function resolveDepCacheRoot(vars: Record<string, string>, dataDir: string): string {
+  const root = process.env.DEP_CACHE_ROOT ?? vars.DEP_CACHE_ROOT ?? '';
+  if (root.trim() !== '') {
+    return root;
+  }
+  return path.join(dataDir, 'dep-cache');
 }
 
 function loadDotenv(): Record<string, string> {
@@ -112,6 +124,8 @@ export function loadServerEnv(): ServerEnv {
       process.env.BOOTSTRAP_SETUP_TIMEOUT_MS ?? fileVars.BOOTSTRAP_SETUP_TIMEOUT_MS,
       0,
     ),
+    depCacheEnabled: parseBool(process.env.DEP_CACHE_ENABLED ?? fileVars.DEP_CACHE_ENABLED),
+    depCacheRoot: resolveDepCacheRoot(fileVars, dataDir),
   };
 }
 

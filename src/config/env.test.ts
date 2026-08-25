@@ -92,3 +92,24 @@ test('bootstrap env vars are parsed', () => {
   assert.equal(env.bootstrapAutoDetect, true);
   assert.equal(env.bootstrapGlobalSetupTimeoutMs, 120_000);
 });
+
+test('dep-cache env vars default to disabled and dataDir/dep-cache', () => {
+  delete process.env.DEP_CACHE_ENABLED;
+  delete process.env.DEP_CACHE_ROOT;
+  process.env.DATA_DIR = '/tmp/fake-data-dir';
+  resetServerEnvCache();
+
+  const env = loadServerEnv();
+  assert.equal(env.depCacheEnabled, false);
+  assert.equal(env.depCacheRoot, path.join('/tmp/fake-data-dir', 'dep-cache'));
+});
+
+test('dep-cache env vars are parsed', () => {
+  process.env.DEP_CACHE_ENABLED = 'true';
+  process.env.DEP_CACHE_ROOT = '/data/dep-cache';
+  resetServerEnvCache();
+
+  const env = loadServerEnv();
+  assert.equal(env.depCacheEnabled, true);
+  assert.equal(env.depCacheRoot, '/data/dep-cache');
+});
