@@ -1,4 +1,4 @@
-import type { Agent, AgentBootstrapState } from '../../../types';
+import type { Agent, AgentBootstrapState, AppConfig } from '../../../types';
 import type { JsonStore } from '../../../lib/json-store';
 import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writer';
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
@@ -14,6 +14,16 @@ export interface RunWorkspaceBootstrapOptions {
   logPath: string;
   agentId: string;
   agentsStore: JsonStore<{ agents: Agent[] }>;
+  /**
+   * Server config used for the profile gate (P2-T4): `enabledRuntimeProfiles`
+   * (undefined or empty = all catalog profiles allowed), `bootstrapAutoDetect`
+   * for file-less auto-detect, and `globalSetupTimeoutMs` to override
+   * `setup.timeoutMs`.
+   */
+  config?: Pick<
+    AppConfig,
+    'enabledRuntimeProfiles' | 'bootstrapAutoDetect' | 'globalSetupTimeoutMs'
+  >;
   /** Injectable for tests; defaults to the shared `runWorkspaceCommand`. */
   runCommand?: typeof runWorkspaceCommand;
   /** Injectable for tests; defaults to the bundled runtime profile catalog. */
@@ -27,11 +37,15 @@ export interface RunWorkspaceBootstrapOptions {
  * plus in the worker log.
  *
  * Resolution (P2-T3):
- * - No `.localagent-box/environment.json` → skipped (opt-in bootstrap: a
- *   missing file never triggers auto-detect, keeping phase-1 behavior for
- *   unconfigured repos safe for rollout).
+ * - No `.localagent-box/environment.json` → skipped, unless the server config
+ *   sets `bootstrapAutoDetect: true` (`BOOTSTRAP_AUTO_DETECT`), which enables
+ *   lockfile-only auto-detect for unconfigured repos (P2-T4).
  * - `environment.json` present → `resolveSetupCommand` runs; `source: 'none'`
  *   (no usable config entry) → skipped.
+ *
+ * Profile gate (P2-T4): requested and detected profiles are filtered against
+ * `config.enabledRuntimeProfiles` (undefined or empty = all catalog profiles
+ * enabled); disabled profiles are skipped with a warning in the worker log.
  *
  * Throws when the setup command fails with `failOnError` left at its
  * default (`true`); caller is expected to fail the agent start.
@@ -42,23 +56,34 @@ export async function runWorkspaceBootstrap(
   const { workspaceDir, logPath, agentId, agentsStore } = options;
   const runCommand = options.runCommand ?? runWorkspaceCommand;
   const loadProfiles = options.loadProfiles ?? loadRuntimeProfiles;
+  const config = options.config;
+  const profileCatalog = loadProfiles();
+  const enabledProfiles = config?.enabledRuntimeProfiles;
+  const enabledProfileNames =
+    enabledProfiles === undefined || enabledProfiles.length === 0
+      ? undefined
+      : enabledProfiles;
 
   const envConfig = loadEnvironmentConfig(workspaceDir);
-  if (envConfig === null) {
+  if (envConfig === null && config?.bootstrapAutoDetect !== true) {
     return { status: 'skipped' };
   }
 
   const resolved = resolveSetupCommand(
-    envConfig,
+    envConfig ?? { version: 1 },
     workspaceDir,
-    loadProfiles(),
+    profileCatalog,
+    enabledProfileNames,
+    (profile) => {
+      appendLog(logPath, `Bootstrap: skipping disabled runtime profile '${profile}'`);
+    },
   );
   if (resolved.source === 'none' || resolved.command === '') {
     return { status: 'skipped' };
   }
   const { command, source } = resolved;
   const profiles = resolved.profiles;
-  const failOnError = envConfig.setup?.failOnError;
+  const failOnError = envConfig?.setup?.failOnError;
 
   appendLog(
     logPath,
@@ -70,7 +95,12 @@ export async function runWorkspaceBootstrap(
     bootstrap: { status: 'running', command, profiles, source },
   });
 
-  const timeoutMsToUse = envConfig.setup?.timeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
+  const serverTimeoutMs = config?.globalSetupTimeoutMs;
+  const repoTimeoutMs = envConfig?.setup?.timeoutMs;
+  const timeoutMsToUse =
+    typeof serverTimeoutMs === 'number' && serverTimeoutMs > 0
+      ? serverTimeoutMs
+      : repoTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
   const startedAt = Date.now();
   const result = await runCommand(workspaceDir, command, { timeoutMs: timeoutMsToUse });
   const durationMs = Date.now() - startedAt;

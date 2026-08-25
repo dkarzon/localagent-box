@@ -44,6 +44,18 @@ export interface AppConfig {
   loopAgentTimeoutSeconds: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback. */
   loopVerbModels: LoopVerbModels;
+  /**
+   * Workspace bootstrap run from the worker process (P2-T4). These keys are
+   * populated from operator environment (`BOOTSTRAP_AUTO_DETECT`,
+   * `BOOTSTRAP_SETUP_TIMEOUT_MS`) before the context is created and are not
+   * part of the user-editable settings saved to `config.json`.
+   */
+  /** Explicit profile names enabled for bootstrap resolution; omitted/empty = all catalog profiles. */
+  enabledRuntimeProfiles?: string[];
+  /** Default false — run lockfile auto-detect even without `.localagent-box/environment.json`. */
+  bootstrapAutoDetect?: boolean;
+  /** Global override for `setup.timeoutMs` in ms; ignored when non-positive. */
+  globalSetupTimeoutMs?: number;
 }
 
 export type ConfigPartial = Partial<AppConfig>;

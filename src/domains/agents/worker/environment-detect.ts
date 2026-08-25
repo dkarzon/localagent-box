@@ -102,15 +102,20 @@ export function detectProfiles(
  * 4. Nothing matched → `'none'`.
  *
  * When `enabledProfileNames` is provided, requested and detected profiles
- * outside the list are skipped (server-side profile gate; undefined = all
- * enabled).
+ * outside the list are skipped (server-side profile gate; undefined/empty =
+ * all enabled). `onProfileSkipped` is invoked for each profile skipped by
+ * that gate so the caller can surface it in logs.
  */
 export function resolveSetupCommand(
   config: RepoEnvironmentConfig | null,
   workspaceDir: string,
   profiles: Record<string, RuntimeProfile>,
   enabledProfileNames?: readonly string[],
+  onProfileSkipped?: (profileName: string, reason: 'disabled' | 'unknown') => void,
 ): ResolvedSetupCommand {
+  const isGated = enabledProfileNames !== undefined && enabledProfileNames.length > 0;
+  const enabledSet = isGated ? new Set(enabledProfileNames) : undefined;
+
   if (config !== null) {
     const setup = config.setup;
     if (setup !== undefined) {
@@ -122,9 +127,10 @@ export function resolveSetupCommand(
   if (requested !== undefined && requested.length > 0) {
     for (const name of requested) {
       const profile = profiles[name];
-      if (profile !== undefined && isProfileEnabled(name, enabledProfileNames)) {
+      if (profile !== undefined && (enabledSet === undefined || enabledSet.has(name))) {
         return { command: profile.defaultSetup, profiles: [name], source: 'profile' };
       }
+      onProfileSkipped?.(name, profile !== undefined ? 'disabled' : 'unknown');
     }
     return { command: '', profiles: [], source: 'none' };
   }
@@ -133,20 +139,16 @@ export function resolveSetupCommand(
     return { command: '', profiles: [], source: 'none' };
   }
 
-  const detected = detectProfiles(workspaceDir, profiles).filter((name) =>
-    isProfileEnabled(name, enabledProfileNames),
-  );
-  if (detected.length > 0) {
-    const name = detected[0];
+  for (const name of detectProfiles(workspaceDir, profiles)) {
     const profile = profiles[name];
-    if (profile !== undefined) {
+    if (profile === undefined) {
+      continue;
+    }
+    if (enabledSet === undefined || enabledSet.has(name)) {
       return { command: profile.defaultSetup, profiles: [name], source: 'detect' };
     }
+    onProfileSkipped?.(name, 'disabled');
   }
 
   return { command: '', profiles: [], source: 'none' };
-}
-
-function isProfileEnabled(name: string, enabledProfileNames?: readonly string[]): boolean {
-  return enabledProfileNames === undefined || enabledProfileNames.includes(name);
 }

@@ -71,6 +71,12 @@ function writeConfig(workspaceDir: string, json: string): void {
  * bundled catalog (whose `defaultSetup` would shell out during real runs).
  */
 const FAKE_CATALOG: Record<string, RuntimeProfile> = {
+  pnpm: {
+    detect: ['pnpm-lock.yaml'],
+    defaultSetup: 'pnpm setup --fake',
+    tools: [],
+    cacheDirs: [],
+  },
   pkg: {
     detect: ['package.json'],
     defaultSetup: 'npm ci --ignore-scripts',
@@ -149,6 +155,65 @@ function touchFile(dir: string, name: string): void {
 describe('runWorkspaceBootstrap', () => {
   it('exports the default setup timeout', () => {
     assert.equal(DEFAULT_SETUP_TIMEOUT_MS, 600_000);
+  });
+
+  it('auto-detects lockfile profiles when BOOTSTRAP_AUTO_DETECT is on (config.bootstrapAutoDetect)', async () => {
+    const h = makeHarness();
+    touchFile(h.workspaceDir, 'package.json');
+
+    const state = await runBootstrap(h, {
+      config: { bootstrapAutoDetect: true },
+      loadProfiles: () => FAKE_CATALOG,
+      runCommand: fakeRunCommand(h, {
+        command: 'npm ci --ignore-scripts',
+        exitCode: 0,
+        outputTail: 'added 12 packages',
+        timedOut: false,
+        success: true,
+      }),
+    });
+
+    assert.equal(state.status, 'completed');
+    assert.equal(state.source, 'detect');
+    assert.deepEqual(state.profiles, ['pkg']);
+  });
+
+  it('skips lockfile auto-detect without environment.json when BOOTSTRAP_AUTO_DETECT is off (default)', async () => {
+    const h = makeHarness();
+    touchFile(h.workspaceDir, 'package.json');
+
+    const state = await runBootstrap(h, {
+      loadProfiles: () => FAKE_CATALOG,
+      runCommand: fakeRunCommand(h, {
+        command: 'should-not-run',
+        exitCode: 0,
+        outputTail: 'ok',
+        timedOut: false,
+        success: true,
+      }),
+    });
+
+    assert.deepEqual(state, { status: 'skipped' });
+    assert.equal(h.runCalls.length, 0);
+  });
+
+  it('skips file-less auto-detect for empty workspaces even when enabled', async () => {
+    const h = makeHarness();
+
+    const state = await runBootstrap(h, {
+      config: { bootstrapAutoDetect: true },
+      loadProfiles: () => FAKE_CATALOG,
+      runCommand: fakeRunCommand(h, {
+        command: 'should-not-run',
+        exitCode: 0,
+        outputTail: 'ok',
+        timedOut: false,
+        success: true,
+      }),
+    });
+
+    assert.deepEqual(state, { status: 'skipped' });
+    assert.equal(h.runCalls.length, 0);
   });
 
   it('returns skipped when environment.json does not exist', async () => {
@@ -496,7 +561,145 @@ describe('runWorkspaceBootstrap', () => {
       assert.equal(h.runCalls.length, 0);
     });
 
-    it('propagates profiles/source on a failed bootstrap', async () => {
+    describe('server config profile gate (P2-T4)', () => {
+    it('disables profiles not in enabledRuntimeProfiles (source=none -> skipped)', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, profiles: ['pkg'] }));
+
+      const state = await runBootstrap(h, {
+        config: { enabledRuntimeProfiles: ['go'] },
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'should-not-run',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.deepEqual(state, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+      assert.match(
+        fs.readFileSync(h.logPath, 'utf8'),
+        /Bootstrap: skipping disabled runtime profile 'pkg'/,
+      );
+    });
+
+    it('still resolves an enabled profile when enabledRuntimeProfiles is a subset', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, profiles: ['go'] }));
+
+      const state = await runBootstrap(h, {
+        config: { enabledRuntimeProfiles: ['go'] },
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'go mod download',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'go mod download');
+      assert.deepEqual(state.profiles, ['go']);
+    });
+
+    it('defaults to all catalog profiles enabled when enabledRuntimeProfiles is undefined', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, profiles: ['pkg'] }));
+
+      const state = await runBootstrap(h, {
+        config: {},
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci --ignore-scripts',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.deepEqual(state.profiles, ['pkg']);
+    });
+
+    it('filters detected profiles against enabledRuntimeProfiles (source=detect)', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'pnpm-lock.yaml');
+      touchFile(h.workspaceDir, 'package.json');
+      touchFile(h.workspaceDir, 'go.mod');
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1 }));
+
+      const state = await runBootstrap(h, {
+        config: { enabledRuntimeProfiles: ['go'] },
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'go mod download',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      // pnpm is disabled by the gate (reported); go (go.mod) is enabled and
+      // wins detection so pkg is never reached.
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'go mod download');
+      assert.deepEqual(state.profiles, ['go']);
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Bootstrap: skipping disabled runtime profile 'pnpm'/);
+      assert.match(log, /Bootstrap: source=detect profiles=\[go\] command=go mod download/);
+    });
+
+    it('globalSetupTimeoutMs overrides the repo setup.timeoutMs', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, setup: { command: 'npm ci', timeoutMs: 300_000 } }),
+      );
+
+      await runBootstrap(h, {
+        config: { globalSetupTimeoutMs: 45_000 },
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(h.runCalls[0].timeoutMs, 45_000);
+    });
+
+    it('keeps the repo setup.timeoutMs when globalSetupTimeoutMs is not set', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, setup: { command: 'npm ci', timeoutMs: 300_000 } }),
+      );
+
+      await runBootstrap(h, {
+        config: {},
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(h.runCalls[0].timeoutMs, 300_000);
+    });
+  });
+
+  it('propagates profiles/source on a failed bootstrap', async () => {
       const h = makeHarness();
       writeConfig(
         h.workspaceDir,

@@ -213,4 +213,45 @@ describe('resolveSetupCommand', () => {
     const resolved = resolveSetupCommand({ version: 1 }, dir, CATALOG, ['go', 'python']);
     assert.deepEqual(resolved, { command: '', profiles: [], source: 'none' });
   });
+
+  it('reports skipped profiles via the onProfileSkipped callback', () => {
+    const dir = tmpWorkspace(['pnpm-lock.yaml', 'package.json']);
+    const skipped: Array<{ profile: string; reason: string }> = [];
+    const resolved = resolveSetupCommand(
+      { version: 1 },
+      dir,
+      CATALOG,
+      ['go'],
+      (profile, reason) => {
+        skipped.push({ profile, reason });
+      },
+    );
+    // Both detected profiles are disabled by the gate, so resolution is none.
+    assert.deepEqual(resolved, { command: '', profiles: [], source: 'none' });
+    assert.deepEqual(skipped, [
+      { profile: 'nodejs-pnpm', reason: 'disabled' },
+      { profile: 'nodejs', reason: 'disabled' },
+    ]);
+  });
+
+  it('reports disabled and unknown requested profiles distinctly', () => {
+    const dir = tmpWorkspace([]);
+    const skipped: Array<{ profile: string; reason: string }> = [];
+    const resolved = resolveSetupCommand(
+      { version: 1, profiles: ['go', 'nodejs-pnpm', 'not-a-profile'] },
+      dir,
+      CATALOG,
+      ['nodejs-pnpm'],
+      (profile, reason) => {
+        skipped.push({ profile, reason });
+      },
+    );
+    // nodejs-pnpm is enabled and wins; the others are skipped in order.
+    assert.deepEqual(resolved, {
+      command: 'corepack enable && pnpm install --frozen-lockfile',
+      profiles: ['nodejs-pnpm'],
+      source: 'profile',
+    });
+    assert.deepEqual(skipped, [{ profile: 'go', reason: 'disabled' }]);
+  });
 });
