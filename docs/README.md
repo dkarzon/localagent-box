@@ -17,10 +17,10 @@ These documents record decisions and planning made during development. They aren
 - [pre-release-audit.md](./pre-release-audit.md) — open-source readiness review and checklist
 - [pre-release-checklist.md](./pre-release-checklist.md) — original internal build checklist
 - [one-shot-batch-options.md](./one-shot-batch-options.md)
-- [initial-build.plan.md](./initial-build.plan.md)
-- [loop-handoff.plan.md](./loop-handoff.plan.md)
-- [loop-verb-models.plan.md](./loop-verb-models.plan.md)
-- [loop-token-efficiency.plan.md](./loop-token-efficiency.plan.md)
-- [pr-code-review.plan.md](./pr-code-review.plan.md)
-- [question-tool-handling.plan.md](./question-tool-handling.plan.md)
-- [shared-branch-queue.plan.md](./shared-branch-queue.plan.md)
+- [initial-build.plan.md](./plans/initial-build.plan.md)
+- [loop-handoff.plan.md](./plans/loop-handoff.plan.md)
+- [loop-verb-models.plan.md](./plans/loop-verb-models.plan.md)
+- [loop-token-efficiency.plan.md](./plans/loop-token-efficiency.plan.md)
+- [pr-code-review.plan.md](./plans/pr-code-review.plan.md)
+- [question-tool-handling.plan.md](./plans/question-tool-handling.plan.md)
+- [shared-branch-queue.plan.md](./plans/shared-branch-queue.plan.md)

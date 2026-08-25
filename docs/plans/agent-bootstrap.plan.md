@@ -529,7 +529,7 @@ await runWorkspaceBootstrap({
 1. Add section **`.localagent-box/environment.json` — Workspace Bootstrap`** after the `config.json` section.
 2. Document Phase 1 fields only: `version`, `setup.command`, `setup.timeoutMs`, `setup.failOnError`.
 3. Note: runs once per agent start, before OpenCode; failure fails the agent by default.
-4. Include minimal example and link to `docs/agent-bootstrap.plan.md`.
+4. Include minimal example and link to `docs/plans/agent-bootstrap.plan.md`.
 
 **Acceptance criteria:**
 

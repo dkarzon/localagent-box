@@ -85,7 +85,7 @@ When present, declares the host-run setup step.
 
 #### `setup.command` *(string, required)*
 
-The shell command run in the workspace root before the agent starts. Workspaces are fresh-cloned before every agent run, so this command runs every time (a dependency cache is planned — see [agent-bootstrap.plan.md](./agent-bootstrap.plan.md)). A non-zero exit fails the agent start by default (see `setup.failOnError`).
+The shell command run in the workspace root before the agent starts. Workspaces are fresh-cloned before every agent run, so this command runs every time (a dependency cache is planned — see [agent-bootstrap.plan.md](./plans/agent-bootstrap.plan.md)). A non-zero exit fails the agent start by default (see `setup.failOnError`).
 
 #### `setup.timeoutMs` *(number, optional)*
 
