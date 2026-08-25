@@ -2,6 +2,8 @@ import type { Agent, AgentBootstrapState } from '../../../types';
 import type { JsonStore } from '../../../lib/json-store';
 import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writer';
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
+import { resolveSetupCommand } from './environment-detect';
+import { loadRuntimeProfiles } from './runtime-profiles';
 import { runWorkspaceCommand } from './workspace-command';
 
 /** Default timeout applied to a repo's setup command (10 min). */
@@ -14,37 +16,61 @@ export interface RunWorkspaceBootstrapOptions {
   agentsStore: JsonStore<{ agents: Agent[] }>;
   /** Injectable for tests; defaults to the shared `runWorkspaceCommand`. */
   runCommand?: typeof runWorkspaceCommand;
+  /** Injectable for tests; defaults to the bundled runtime profile catalog. */
+  loadProfiles?: () => Record<string, import('./runtime-profiles').RuntimeProfile>;
 }
 
 /**
- * Host-run workspace bootstrap: load `.localagent-box/environment.json`, run the
- * repo's setup command before the agent starts, and record the outcome on the
- * agent record plus in the worker log.
+ * Host-run workspace bootstrap: resolve the repo's setup command
+ * (explicit `setup.command` → `profiles` → lockfile auto-detect), run it
+ * before the agent starts, and record the outcome on the agent record
+ * plus in the worker log.
  *
- * No-op (skipped) when the repo declares no environment config or no
- * `setup.command`. Throws when the setup command fails with `failOnError` left
- * at its default (`true`); caller is expected to fail the agent start.
+ * Resolution (P2-T3):
+ * - No `.localagent-box/environment.json` → skipped (opt-in bootstrap: a
+ *   missing file never triggers auto-detect, keeping phase-1 behavior for
+ *   unconfigured repos safe for rollout).
+ * - `environment.json` present → `resolveSetupCommand` runs; `source: 'none'`
+ *   (no usable config entry) → skipped.
+ *
+ * Throws when the setup command fails with `failOnError` left at its
+ * default (`true`); caller is expected to fail the agent start.
  */
 export async function runWorkspaceBootstrap(
   options: RunWorkspaceBootstrapOptions,
 ): Promise<AgentBootstrapState> {
   const { workspaceDir, logPath, agentId, agentsStore } = options;
   const runCommand = options.runCommand ?? runWorkspaceCommand;
+  const loadProfiles = options.loadProfiles ?? loadRuntimeProfiles;
 
   const envConfig = loadEnvironmentConfig(workspaceDir);
-  const setup = envConfig?.setup;
-  if (!setup) {
+  if (envConfig === null) {
     return { status: 'skipped' };
   }
-  const { command, timeoutMs, failOnError } = setup;
 
+  const resolved = resolveSetupCommand(
+    envConfig,
+    workspaceDir,
+    loadProfiles(),
+  );
+  if (resolved.source === 'none' || resolved.command === '') {
+    return { status: 'skipped' };
+  }
+  const { command, source } = resolved;
+  const profiles = resolved.profiles;
+  const failOnError = envConfig.setup?.failOnError;
+
+  appendLog(
+    logPath,
+    `Bootstrap: source=${source} profiles=[${profiles.join(', ')}] command=${command}`,
+  );
   appendLog(logPath, 'Running workspace bootstrap…');
   appendLog(logPath, `${environmentConfigRelative} command: ${command}`);
   updateAgentRecord(agentsStore, agentId, {
-    bootstrap: { status: 'running', command },
+    bootstrap: { status: 'running', command, profiles, source },
   });
 
-  const timeoutMsToUse = timeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
+  const timeoutMsToUse = envConfig.setup?.timeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
   const startedAt = Date.now();
   const result = await runCommand(workspaceDir, command, { timeoutMs: timeoutMsToUse });
   const durationMs = Date.now() - startedAt;
@@ -55,6 +81,8 @@ export async function runWorkspaceBootstrap(
     const state: AgentBootstrapState = {
       status: 'completed',
       command,
+      profiles,
+      source,
       durationMs,
       exitCode: result.exitCode,
       outputTail: result.outputTail,
@@ -78,6 +106,8 @@ export async function runWorkspaceBootstrap(
   const failedState: AgentBootstrapState = {
     status: 'failed',
     command,
+    profiles,
+    source,
     durationMs,
     exitCode,
     outputTail,

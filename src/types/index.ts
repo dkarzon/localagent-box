@@ -276,10 +276,22 @@ export interface RepoEnvironmentConfig {
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
 
-/** Host bootstrap result state; persisted on the Agent record (P1-T5) */
+/** Where the bootstrap setup command came from. */
+export type AgentBootstrapSource = 'explicit' | 'profile' | 'detect' | 'none';
+
+/**
+ * Host bootstrap result state; persisted on the Agent record (P1-T5).
+ * `profiles` / `source` are set whenever a setup command is resolved
+ * (P2-T3): phase-2 detection/profiling, or phase-1 explicit `setup.command`.
+ */
 export interface AgentBootstrapState {
   status: BootstrapStatus;
+  /** Setup command resolved and run (or run pending when `status === 'running'`) */
   command?: string;
+  /** Profile name(s) resolved to the command; `[]` for explicit / `'none'` */
+  profiles?: string[];
+  /** How the command was resolved; omitted when nothing was resolved */
+  source?: AgentBootstrapSource;
   durationMs?: number;
   exitCode?: number;
   /** Last ~50 lines of command output (same cap as loop checks) */

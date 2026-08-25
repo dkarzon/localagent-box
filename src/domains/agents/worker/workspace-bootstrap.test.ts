@@ -9,6 +9,7 @@ import {
   DEFAULT_SETUP_TIMEOUT_MS,
   runWorkspaceBootstrap,
 } from './workspace-bootstrap';
+import type { RuntimeProfile } from './runtime-profiles';
 
 type FakeRunCommand = (
   workspaceDir: string,
@@ -53,15 +54,36 @@ interface Harness {
     workspaceDir: string;
     command: string;
     timeoutMs?: number;
+    /** Copy of the bootstrap state on the agent record before this run. */
     agentRecordBefore: AgentBootstrapState | undefined;
   }>;
 }
 
-function writeConfig(dir: string, content: string): void {
-  const repoDir = path.join(dir, '.localagent-box');
+/** Write `.localagent-box/environment.json` with the given raw JSON. */
+function writeConfig(workspaceDir: string, json: string): void {
+  const repoDir = path.join(workspaceDir, '.localagent-box');
   fs.mkdirSync(repoDir, { recursive: true });
-  fs.writeFileSync(path.join(repoDir, 'environment.json'), content, 'utf8');
+  fs.writeFileSync(path.join(repoDir, 'environment.json'), json, 'utf8');
 }
+
+/**
+ * Fake runtime profiles so detection/profiling tests do not depend on the
+ * bundled catalog (whose `defaultSetup` would shell out during real runs).
+ */
+const FAKE_CATALOG: Record<string, RuntimeProfile> = {
+  pkg: {
+    detect: ['package.json'],
+    defaultSetup: 'npm ci --ignore-scripts',
+    tools: [],
+    cacheDirs: [],
+  },
+  go: {
+    detect: ['go.mod'],
+    defaultSetup: 'go mod download',
+    tools: [],
+    cacheDirs: [],
+  },
+};
 
 function makeHarness(): Harness {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-bootstrap-'));
@@ -92,11 +114,36 @@ function fakeRunCommand(
       workspaceDir,
       command,
       timeoutMs: options?.timeoutMs,
-      agentRecordBefore: h.agent.bootstrap,
+      agentRecordBefore: h.agent.bootstrap ? { ...h.agent.bootstrap } : undefined,
     });
     return result;
   };
   return fn as unknown as typeof runWorkspaceCommand;
+}
+
+const SUCCESS: WorkspaceCommandResult = {
+  command: '',
+  exitCode: 0,
+  outputTail: 'ok',
+  timedOut: false,
+  success: true,
+};
+
+function runBootstrap(
+  h: Harness,
+  extra: Partial<Parameters<typeof runWorkspaceBootstrap>[0]> = {},
+): Promise<AgentBootstrapState> {
+  return runWorkspaceBootstrap({
+    workspaceDir: h.workspaceDir,
+    logPath: h.logPath,
+    agentId: h.agent.agentId,
+    agentsStore: h.agentsStore,
+    ...extra,
+  });
+}
+
+function touchFile(dir: string, name: string): void {
+  fs.writeFileSync(path.join(dir, name), '', 'utf8');
 }
 
 describe('runWorkspaceBootstrap', () => {
@@ -106,12 +153,7 @@ describe('runWorkspaceBootstrap', () => {
 
   it('returns skipped when environment.json does not exist', async () => {
     const h = makeHarness();
-    const state = await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
-    });
+    const state = await runBootstrap(h);
     assert.deepEqual(state, { status: 'skipped' });
     assert.equal(h.agent.bootstrap, undefined);
     assert.equal(h.runCalls.length, 0);
@@ -121,20 +163,9 @@ describe('runWorkspaceBootstrap', () => {
     const h = makeHarness();
     writeConfig(h.workspaceDir, JSON.stringify({ version: 1 }));
 
-    const state = await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
-      runCommand: fakeRunCommand(h, {
-        command: 'npm ci',
-        exitCode: 0,
-        outputTail: 'ok',
-        timedOut: false,
-        success: true,
-      }),
+    const state = await runBootstrap(h, {
+      runCommand: fakeRunCommand(h, SUCCESS),
     });
-
     assert.deepEqual(state, { status: 'skipped' });
     assert.equal(h.runCalls.length, 0);
     assert.equal(h.agent.bootstrap, undefined);
@@ -147,11 +178,7 @@ describe('runWorkspaceBootstrap', () => {
       JSON.stringify({ version: 1, setup: { command: 'npm ci && npm run build' } }),
     );
 
-    const state = await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
+    const state = await runBootstrap(h, {
       runCommand: fakeRunCommand(h, {
         command: 'npm ci && npm run build',
         exitCode: 0,
@@ -166,6 +193,8 @@ describe('runWorkspaceBootstrap', () => {
     assert.equal(state.command, 'npm ci && npm run build');
     assert.equal(state.exitCode, 0);
     assert.equal(state.outputTail, 'added 12 packages');
+    assert.equal(state.source, 'explicit');
+    assert.deepEqual(state.profiles, []);
 
     assert.equal(h.runCalls.length, 1);
     const run = h.runCalls[0];
@@ -187,14 +216,13 @@ describe('runWorkspaceBootstrap', () => {
     const h = makeHarness();
     writeConfig(
       h.workspaceDir,
-      JSON.stringify({ version: 1, setup: { command: 'pnpm install', timeoutMs: 300_000 } }),
+      JSON.stringify({
+        version: 1,
+        setup: { command: 'pnpm install', timeoutMs: 300_000 },
+      }),
     );
 
-    await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
+    await runBootstrap(h, {
       runCommand: fakeRunCommand(h, {
         command: 'pnpm install',
         exitCode: 0,
@@ -212,11 +240,7 @@ describe('runWorkspaceBootstrap', () => {
     const h = makeHarness();
     writeConfig(h.workspaceDir, JSON.stringify({ version: 1, setup: { command: 'npm ci' } }));
 
-    await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
+    await runBootstrap(h, {
       runCommand: fakeRunCommand(h, {
         command: 'npm ci',
         exitCode: 0,
@@ -230,18 +254,14 @@ describe('runWorkspaceBootstrap', () => {
     const before = h.runCalls[0].agentRecordBefore;
     assert.equal(before?.status, 'running');
     assert.equal(before?.command, 'npm ci');
+    assert.equal(before?.source, 'explicit');
+    assert.deepEqual(before?.profiles, []);
   });
 
   it('throws when the setup command fails with the default failOnError', async () => {
     const h = makeHarness();
     writeConfig(h.workspaceDir, JSON.stringify({ version: 1, setup: { command: 'npm ci' } }));
-
-    let caught: unknown;
     const opts = {
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
       runCommand: fakeRunCommand(h, {
         command: 'npm ci',
         exitCode: 1,
@@ -250,15 +270,16 @@ describe('runWorkspaceBootstrap', () => {
         success: false,
       }),
     };
+    let caught: unknown;
     try {
-      await runWorkspaceBootstrap(opts);
+      await runBootstrap(h, opts);
     } catch (err) {
       caught = err;
     }
 
     assert.ok(caught instanceof Error);
-    assert.match(caught.message, /^Bootstrap failed: `npm ci` exited 1/);
-    assert.match(caught.message, /npm ERR! Missing script: "prepare"/);
+    assert.match((caught as { message: string }).message, /^Bootstrap failed: `npm ci` exited 1/);
+    assert.match((caught as { message: string }).message, /npm ERR! Missing script: "prepare"/);
     assert.equal(h.agent.bootstrap?.status, 'failed');
     const log = fs.readFileSync(h.logPath, 'utf8');
     assert.match(log, /Workspace bootstrap failed with exit code 1/);
@@ -271,11 +292,7 @@ describe('runWorkspaceBootstrap', () => {
       JSON.stringify({ version: 1, setup: { command: 'npm ci', failOnError: false } }),
     );
 
-    const state = await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
+    const state = await runBootstrap(h, {
       runCommand: fakeRunCommand(h, {
         command: 'npm ci',
         exitCode: 1,
@@ -297,15 +314,14 @@ describe('runWorkspaceBootstrap', () => {
     const h = makeHarness();
     writeConfig(
       h.workspaceDir,
-      JSON.stringify({ version: 1, setup: { command: 'npm ci', timeoutMs: 60_000 } }),
+      JSON.stringify({
+        version: 1,
+        setup: { command: 'npm ci', timeoutMs: 60_000 },
+      }),
     );
 
     let caught: unknown;
     const opts = {
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
       runCommand: fakeRunCommand(h, {
         command: 'npm ci',
         exitCode: 124,
@@ -315,13 +331,13 @@ describe('runWorkspaceBootstrap', () => {
       }),
     };
     try {
-      await runWorkspaceBootstrap(opts);
+      await runBootstrap(h, opts);
     } catch (err) {
       caught = err;
     }
 
     assert.ok(caught instanceof Error);
-    assert.match(caught.message, /Bootstrap timed out/);
+    assert.match((caught as { message: string }).message, /Bootstrap timed out/);
     assert.equal(h.agent.bootstrap?.status, 'failed');
     assert.equal(h.agent.bootstrap?.exitCode, 124);
     const log = fs.readFileSync(h.logPath, 'utf8');
@@ -335,12 +351,7 @@ describe('runWorkspaceBootstrap', () => {
       JSON.stringify({ version: 1, setup: { command: 'exit 1', failOnError: false } }),
     );
 
-    const state = await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
-    });
+    const state = await runBootstrap(h);
 
     assert.equal(state.status, 'failed');
     assert.equal(state.exitCode, 1);
@@ -348,20 +359,165 @@ describe('runWorkspaceBootstrap', () => {
 
   it('completes a real shell echo by default', async () => {
     const h = makeHarness();
-    writeConfig(
-      h.workspaceDir,
-      JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok' } }),
-    );
+    writeConfig(h.workspaceDir, JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok' } }));
 
-    const state = await runWorkspaceBootstrap({
-      workspaceDir: h.workspaceDir,
-      logPath: h.logPath,
-      agentId: h.agent.agentId,
-      agentsStore: h.agentsStore,
-    });
+    const state = await runBootstrap(h);
 
     assert.equal(state.status, 'completed');
     assert.equal(state.exitCode, 0);
     assert.match(state.outputTail ?? '', /bootstrap-ok/);
+  });
+
+  describe('profile resolution (P2-T3)', () => {
+    it('auto-detects a profile when config exists with no setup (source=detect)', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1 }));
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci --ignore-scripts',
+          exitCode: 0,
+          outputTail: 'added 12 packages',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'npm ci --ignore-scripts');
+      assert.equal(state.source, 'detect');
+      assert.deepEqual(state.profiles, ['pkg']);
+      assert.ok(h.agent.bootstrap);
+      assert.equal(h.agent.bootstrap.status, 'completed');
+      assert.equal(h.agent.bootstrap.source, 'detect');
+      assert.deepEqual(h.agent.bootstrap.profiles, ['pkg']);
+
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(
+        log,
+        /Bootstrap: source=detect profiles=\[pkg\] command=npm ci --ignore-scripts/,
+      );
+    });
+
+    it('uses the first requested profile default when profiles are present (source=profile)', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, profiles: ['pkg', 'go'] }),
+      );
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci --ignore-scripts',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'npm ci --ignore-scripts');
+      assert.equal(state.source, 'profile');
+      assert.deepEqual(state.profiles, ['pkg']);
+    });
+
+    it('explicit setup.command wins over profiles (source=explicit)', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'make build' },
+          profiles: ['pkg'],
+        }),
+      );
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'make build',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'make build');
+      assert.equal(state.source, 'explicit');
+      assert.deepEqual(state.profiles, []);
+    });
+
+    it('respects autoDetect=false when no setup.command (source=none -> skipped)', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, autoDetect: false }));
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci --ignore-scripts',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.deepEqual(state, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+      assert.equal(h.agent.bootstrap, undefined);
+    });
+
+    it('skips when requested profiles are unknown and nothing else matches', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, profiles: ['not-a-profile'] }),
+      );
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'should-not-run',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.deepEqual(state, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+    });
+
+    it('propagates profiles/source on a failed bootstrap', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, setup: { command: 'npm ci', failOnError: false } }),
+      );
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 1,
+          outputTail: 'npm ERR! missing',
+          timedOut: false,
+          success: false,
+        }),
+      });
+
+      assert.equal(state.status, 'failed');
+      assert.equal(state.source, 'explicit');
+      assert.deepEqual(state.profiles, []);
+      assert.equal(h.agent.bootstrap?.source, 'explicit');
+    });
   });
 });
