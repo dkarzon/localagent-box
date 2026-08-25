@@ -217,7 +217,7 @@ export function AgentSessionInfo({
                 ) : null}
                 <div className="flex justify-between gap-4">
                   <dt className="text-on-surface-variant">Duration</dt>
-                  <dd className="code-md text-on-surface">{bootstrap.durationMs != null ? `${(bootstrap.durationMs / 1000).toFixed(1)}s` : '—'}</dd>
+                    <dd className="code-md text-on-surface">{bootstrap.durationMs != null ? `${(Math.max(0, bootstrap.durationMs) / 1000).toFixed(1)}s` : '—'}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="text-on-surface-variant">Exit code</dt>
