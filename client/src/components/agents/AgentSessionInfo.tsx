@@ -32,6 +32,7 @@ function bootstrapStatusVariant(
     case 'failed':
       return 'failed';
     case 'skipped':
+    default:
       return 'neutral';
   }
 }
