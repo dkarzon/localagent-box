@@ -45,10 +45,13 @@ export interface AppConfig {
   /** Per-verb model overrides for loop mode. Empty string = use fallback. */
   loopVerbModels: LoopVerbModels;
   /**
-   * Workspace bootstrap run from the worker process (P2-T4). These keys are
-   * populated from operator environment (`BOOTSTRAP_AUTO_DETECT`,
-   * `BOOTSTRAP_SETUP_TIMEOUT_MS`) before the context is created and are not
-   * part of the user-editable settings saved to `config.json`.
+   * Workspace bootstrap run from the worker process (P2-T4). These keys may be
+   * set in `config.json`; in a worker sandbox that file rarely exists, so
+   * `bootstrapAutoDetect` and `globalSetupTimeoutMs` are additionally hydrated
+   * from the operator environment (`BOOTSTRAP_AUTO_DETECT`,
+   * `BOOTSTRAP_SETUP_TIMEOUT_MS`) at worker context creation (see
+   * `createWorkerContext`). Env values are never persisted and a valid
+   * `config.json` value wins over the env.
    */
   /** Explicit profile names enabled for bootstrap resolution; omitted/empty = all catalog profiles. */
   enabledRuntimeProfiles?: string[];

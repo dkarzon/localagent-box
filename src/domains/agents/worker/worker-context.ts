@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { getServerEnv } from '../../../config/env';
 import { createConfigStore } from '../../../services/config-store';
 import { createGithubAppService } from '../../../services/github-app';
 import { createGitService } from '../../../services/git-service';
@@ -30,6 +31,18 @@ export async function createWorkerContext(job: AgentJob): Promise<WorkerContext>
   const agentsStore = createJsonStore<{ agents: Agent[] }>(`${job.dataDir}/agents.json`, { agents: [] }, fs);
 
   const config = configStore.loadConfig();
+  // Operator env overrides for bootstrap (P2-T4): `config.json` rarely exists
+  // in a worker sandbox, so these keys must be hydrated from the server env.
+  const serverEnv = getServerEnv();
+  if (typeof config.bootstrapAutoDetect !== 'boolean' && serverEnv.bootstrapAutoDetect) {
+    config.bootstrapAutoDetect = true;
+  }
+  if (
+    typeof config.globalSetupTimeoutMs !== 'number' &&
+    serverEnv.bootstrapGlobalSetupTimeoutMs > 0
+  ) {
+    config.globalSetupTimeoutMs = serverEnv.bootstrapGlobalSetupTimeoutMs;
+  }
   githubApp.assertConfigured(config);
 
   if (config.gitUserName || config.gitUserEmail) {
