@@ -48,6 +48,13 @@ RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 RUN npm install -g opencode-ai@v1.18.21
 RUN npm install -g @alibaba-group/open-code-review@v1.9.10
 
+# corepack: required by the nodejs-pnpm / nodejs-yarn bootstrap profiles.
+# Not bundled with modern node: images, so install and enable it, then
+# smoke-test that pnpm resolves through the corepack shim.
+RUN npm install -g corepack \
+    && corepack enable \
+    && pnpm --version
+
 # codegraph MCP server (stdio). Bundles its own runtime — no native build needed.
 RUN npm install -g @colbymchenry/codegraph \
     && codegraph --version

@@ -154,6 +154,23 @@ curl http://localhost:8080/health
 - Most `GET` endpoints (config, logs, SSE events) are intentionally unauthenticated — deploy on a trusted LAN/VPN only, or behind a reverse proxy with TLS and additional auth. See [SECURITY.md](../SECURITY.md).
 - The data volume holds your GitHub App private key in plaintext — protect it like an SSH key.
 
+## Built-in runtimes
+
+The image preinstalls the tooling used by workspace bootstrap: `opencode`, `ocr`, `codegraph`, and **corepack** (which provides `pnpm`/`yarn` shims for bootstrap profiles). `corepack enable` runs at image build time, so repos using the `nodejs-pnpm` or `nodejs-yarn` runtime profile work without extra setup. Other toolchains (pnpm itself, python, go, rust) come from your repo's own `setup.command` or a custom image built from this one — see [Building a custom image](#building-a-custom-image) when you need org-specific packages, pinned versions, or a private registry.
+
+## Building a custom image
+
+The base image already has corepack enabled, so `pnpm`/`yarn` work via the shims. Build FROM it only to add packages, org CA certs, pinned runtimes, or a private registry `.npmrc`:
+
+```dockerfile
+FROM ghcr.io/dkarzon/localagent-box:latest
+USER root
+RUN apt update && apt install -y <your-packages>
+USER node
+```
+
+Build it locally with `docker build -t localagent-box:custom -f Dockerfile.custom .` and point Compose/`docker run` at your tag.
+
 ## Build vs pull
 
 | Approach | When to use |
