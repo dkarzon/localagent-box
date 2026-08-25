@@ -11,6 +11,7 @@ import type { JsonStore } from '../../../lib/json-store';
 import type { GitService } from '../../../services/git-service';
 import type { GithubAppService } from '../../../services/github-app';
 import { appendLog, readAgentStatus, updateAgentRecord } from './agent-state-writer';
+import { runWorkspaceBootstrap } from './workspace-bootstrap';
 import type { WorkerContext } from './worker-context';
 import { getAgentMode } from './worker-context';
 
@@ -134,6 +135,13 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   await checkoutJobBranch(gitService, job, { shallow: !isReview, logPath });
 
   ensureLocalagentBoxIgnored(job.workspaceDir);
+
+  await runWorkspaceBootstrap({
+    workspaceDir: job.workspaceDir,
+    logPath,
+    agentId: job.agentId,
+    agentsStore,
+  });
 
   if (getServerEnv().enableCodegraph) {
     await initCodegraph(job.workspaceDir, logPath);
