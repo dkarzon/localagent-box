@@ -51,7 +51,11 @@ RUN npm install -g @alibaba-group/open-code-review@v1.9.10
 # corepack: required by the nodejs-pnpm / nodejs-yarn bootstrap profiles.
 # Not bundled with modern node: images, so install and enable it, then
 # smoke-test that pnpm resolves through the corepack shim.
-RUN npm install -g corepack \
+# Pin to a tested version so rebuilds are reproducible: corepack changes
+# shim behaviour between releases (pnpm/yarn resolution) and 0.32+
+# deprecates `corepack enable`. 0.34.7 is the last line where `enable`
+# still works and engines cover the node:trixie base Node range.
+RUN npm install -g corepack@0.34.7 \
     && corepack enable \
     && pnpm --version
 
