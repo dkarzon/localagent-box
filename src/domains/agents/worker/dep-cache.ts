@@ -224,3 +224,208 @@ export async function snapshotDepCache(
     throw wrapError(err, `Failed to snapshot dependency cache at ${cacheDir}`);
   }
 }
+
+/**
+ * Listing of one dependency cache entry (a `{repoDir}/{entryDir}`
+ * subdirectory) for the `GET` dep-cache API (P3-T5).
+ */
+export interface DepCacheEntryInfo {
+  /** Cache key segment (the entry directory name under the repo dir). */
+  key: string;
+  /** `manifest.json` snapshot creation time, when present and valid. */
+  createdAt?: string;
+  /** Setup command that produced the entry, when present in the manifest. */
+  command?: string;
+  /** Runtime profiles active when the entry was snapshotted, when present. */
+  profiles?: string[];
+  /**
+   * Best-effort total size of the entry in bytes; `undefined` when size
+   * computation was not possible (unreadable layout or size cap reached).
+   */
+  sizeBytes?: number | null;
+}
+
+/** Result of listing a repo's dependency cache entries (P3-T5). */
+export interface ListDepCacheEntriesResult {
+  /** Whether the listing could be produced from the on-disk layout. */
+  ok?: boolean;
+  /** Set (with an HTTP 500) when the on-disk layout could not be inspected. */
+  error?: true;
+  entries: DepCacheEntryInfo[];
+}
+
+interface DepCacheEntryFs {
+  existsSync: typeof fs.existsSync;
+  readdirSync: typeof fs.readdirSync;
+  statSync: typeof fs.statSync;
+  readFileSync: typeof fs.readFileSync;
+}
+
+/**
+ * Recursively stats `dir` and returns the sum of its file sizes (estimate).
+ * Unreadable files or directories are skipped silently. Returns `null` when
+ * the total would exceed the cap (size is estimated, capped).
+ */
+function sumSizeBytes(
+  dir: string,
+  fsImpl: DepCacheEntryFs,
+  cap = Number.MAX_SAFE_INTEGER,
+): number | null {
+  let total = 0;
+  for (const name of fsImpl.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    const st = fsImpl.statSync(p, { throwIfNoEntry: false });
+    if (!st) continue;
+    if (st.isDirectory()) {
+      const sub = sumSizeBytes(p, fsImpl, cap);
+      total += sub ?? 0;
+    } else if (st.isFile()) {
+      total += st.size;
+    }
+    if (total > cap) {
+      return null;
+    }
+  }
+  return total;
+}
+
+/**
+ * Lists the cache entries stored under a repo directory (`{root}/{repoDir}`).
+ *
+ * Cache keys are arbitrary path segments written by the snapshot flow, so the
+ * on-disk layout is listed rather than reconstructed; subdirectories that are
+ * not safe entry names (`.staging-*` internals, `.`/`..` traversal names)
+ * are skipped. `manifest.json` (if present) is a plain JSON file read with
+ * `throwIfNoEntry: false`; malformed manifests are reported as empty
+ * (`createdAt` and `command` omitted) instead of failing the listing.
+ */
+export function listDepCacheEntries(
+  root: string,
+  repoDir: string,
+  fsImpl: DepCacheEntryFs = fs,
+): ListDepCacheEntriesResult {
+  const repoPath = path.join(root, repoDir);
+
+  let existing: boolean;
+  try {
+    existing = fsImpl.existsSync(repoPath);
+  } catch {
+    return { ok: false, error: true, entries: [] };
+  }
+  // Mirror `isDirectory` for entries below: a repo directory that does not
+  // exist or is not a directory has no entries to list.
+  if (
+    !existing ||
+    fsImpl.statSync(repoPath, { throwIfNoEntry: false })?.isDirectory() !== true
+  ) {
+    return { ok: true, entries: [] };
+  }
+
+  let rawNames: string[];
+  try {
+    rawNames = fsImpl.readdirSync(repoPath);
+  } catch {
+    return { ok: false, error: true, entries: [] };
+  }
+
+  const entries: DepCacheEntryInfo[] = [];
+  for (const entryName of rawNames) {
+    // Skip dots and hidden/special internals (e.g. `.staging-*` leftovers).
+    if (entryName === '.' || entryName === '..' || entryName.startsWith('.')) {
+      continue;
+    }
+    const entryPath = path.join(repoPath, entryName);
+    let isDir: boolean;
+    try {
+      isDir = fsImpl.statSync(entryPath, { throwIfNoEntry: false })?.isDirectory() ?? false;
+    } catch {
+      continue;
+    }
+    if (!isDir) {
+      continue;
+    }
+    let sizeBytes: number | null;
+    try {
+      sizeBytes = sumSizeBytes(entryPath, fsImpl);
+    } catch {
+      sizeBytes = null;
+    }
+
+    const manifestPath = path.join(entryPath, 'manifest.json');
+    let manifest: { createdAt?: string; command?: string; profiles?: string[] } | undefined;
+    try {
+      const manifestStat = fsImpl.statSync(manifestPath, { throwIfNoEntry: false });
+      if (manifestStat && manifestStat.isFile()) {
+        const manifestRaw = fsImpl.readFileSync(manifestPath);
+        const parsed = JSON.parse(manifestRaw.toString()) as unknown;
+        if (
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          !Array.isArray(parsed)
+        ) {
+          const record = parsed as Record<string, unknown>;
+          if (typeof record.createdAt === 'string') {
+            manifest = { createdAt: record.createdAt };
+          }
+          if (typeof record.command === 'string') {
+            manifest = { ...manifest, command: record.command };
+          }
+          if (
+            Array.isArray(record.profiles) &&
+            record.profiles.every((v) => typeof v === 'string')
+          ) {
+            manifest = { ...manifest, profiles: record.profiles as string[] };
+          }
+        }
+      }
+    } catch {
+      manifest = undefined;
+    }
+
+    entries.push({
+      key: entryName,
+      createdAt: manifest?.createdAt,
+      command: manifest?.command,
+      profiles: manifest?.profiles,
+      sizeBytes,
+    });
+  }
+  return { ok: true, entries };
+}
+
+export interface PurgeDepCacheResult {
+  /** `true` when the repo directory existed under the cache root. */
+  existed: boolean;
+  /** Number of entries actually removed. */
+  removed: number;
+}
+
+/**
+ * Removes the repo's dependency cache directory (`{root}/{repoDir}`) entirely,
+ * or, when `key` is given, only the single entry `{root}/{repoDir}/{key}`.
+ * `key` is never path-joined; it is used verbatim as a directory name so that
+ * a malicious/naive key (e.g. `..`) can never escape the repo directory.
+ * Removing a key that does not exist is not an error (idempotent).
+ */
+export function purgeDepCacheEntries(
+  root: string,
+  repoDir: string,
+  key?: string,
+  fsImpl: Pick<typeof fs, 'readdirSync' | 'statSync' | 'rmSync'> = fs,
+): PurgeDepCacheResult {
+  const repoPath = path.join(root, repoDir);
+  const isRepoDir =
+    fsImpl.statSync(repoPath, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  if (!isRepoDir) {
+    return { existed: false, removed: 0 };
+  }
+  if (key !== undefined) {
+    fsImpl.rmSync(path.join(repoPath, key), { recursive: true, force: true });
+    return { existed: true, removed: 1 };
+  }
+  const names = fsImpl
+    .readdirSync(repoPath)
+    .filter((name) => (name === '.' || name === '..' || name.startsWith('.')) !== true);
+  fsImpl.rmSync(repoPath, { recursive: true, force: true });
+  return { existed: true, removed: names.length };
+}
