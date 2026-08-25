@@ -141,6 +141,7 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
     logPath,
     agentId: job.agentId,
     agentsStore,
+    config,
   });
 
   if (getServerEnv().enableCodegraph) {

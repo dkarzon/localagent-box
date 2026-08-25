@@ -17,6 +17,11 @@ services:
       API_TOKEN: ${API_TOKEN:-localagent-box}
       # Expose the codegraph MCP server to agents (set to "true" to enable).
       ENABLE_CODEGRAPH: ${ENABLE_CODEGRAPH:-}
+      # Workspace bootstrap profile gate (P2-T4).
+      # BOOTSTRAP_AUTO_DETECT: "true" to auto-detect lockfiles without .localagent-box/environment.json.
+      # BOOTSTRAP_SETUP_TIMEOUT_MS: global override for setup.timeoutMs (ms).
+      BOOTSTRAP_AUTO_DETECT: ${BOOTSTRAP_AUTO_DETECT:-}
+      BOOTSTRAP_SETUP_TIMEOUT_MS: ${BOOTSTRAP_SETUP_TIMEOUT_MS:-}
     volumes:
       - agent-data:/data
       - agent-workspace:/workspace

@@ -72,3 +72,23 @@ test('codegraph env parsing: enable flag', () => {
   env = loadServerEnv();
   assert.equal(env.enableCodegraph, false);
 });
+
+test('bootstrap env vars default to disabled auto-detect and no timeout override', () => {
+  delete process.env.BOOTSTRAP_AUTO_DETECT;
+  delete process.env.BOOTSTRAP_SETUP_TIMEOUT_MS;
+  resetServerEnvCache();
+
+  const env = loadServerEnv();
+  assert.equal(env.bootstrapAutoDetect, false);
+  assert.equal(env.bootstrapGlobalSetupTimeoutMs, 0);
+});
+
+test('bootstrap env vars are parsed', () => {
+  process.env.BOOTSTRAP_AUTO_DETECT = 'true';
+  process.env.BOOTSTRAP_SETUP_TIMEOUT_MS = '120000';
+  resetServerEnvCache();
+
+  const env = loadServerEnv();
+  assert.equal(env.bootstrapAutoDetect, true);
+  assert.equal(env.bootstrapGlobalSetupTimeoutMs, 120_000);
+});

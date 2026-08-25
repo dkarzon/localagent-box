@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'path';
 import { DEFAULT_API_TOKEN } from '../lib/auth-constants';
-import { parsePositiveInt } from '../lib/parse';
+import { parseNonNegativeInt, parsePositiveInt } from '../lib/parse';
 
 export interface ServerEnv {
   port: number;
@@ -25,6 +25,10 @@ export interface ServerEnv {
   opencodeStartupTimeoutMs: number;
   /** Expose the codegraph MCP server to agents (requires the binary in the image). */
   enableCodegraph: boolean;
+  /** Run lockfile auto-detect bootstrap even without `.localagent-box/environment.json` (default false). */
+  bootstrapAutoDetect: boolean;
+  /** Global override for `setup.timeoutMs` in ms; 0 disables the override. */
+  bootstrapGlobalSetupTimeoutMs: number;
 }
 
 let cachedEnv: ServerEnv | null = null;
@@ -103,6 +107,11 @@ export function loadServerEnv(): ServerEnv {
     opencodePortBase: parsePositiveInt(process.env.OPENCODE_PORT_BASE ?? fileVars.OPENCODE_PORT_BASE, 4100),
     opencodeStartupTimeoutMs: parsePositiveInt(process.env.OPENCODE_STARTUP_TIMEOUT_MS ?? fileVars.OPENCODE_STARTUP_TIMEOUT_MS, 900_000),
     enableCodegraph: parseBool(process.env.ENABLE_CODEGRAPH ?? fileVars.ENABLE_CODEGRAPH),
+    bootstrapAutoDetect: parseBool(process.env.BOOTSTRAP_AUTO_DETECT ?? fileVars.BOOTSTRAP_AUTO_DETECT),
+    bootstrapGlobalSetupTimeoutMs: parseNonNegativeInt(
+      process.env.BOOTSTRAP_SETUP_TIMEOUT_MS ?? fileVars.BOOTSTRAP_SETUP_TIMEOUT_MS,
+      0,
+    ),
   };
 }
 

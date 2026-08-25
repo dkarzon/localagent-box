@@ -44,6 +44,21 @@ export interface AppConfig {
   loopAgentTimeoutSeconds: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback. */
   loopVerbModels: LoopVerbModels;
+  /**
+   * Workspace bootstrap run from the worker process (P2-T4). These keys may be
+   * set in `config.json`; in a worker sandbox that file rarely exists, so
+   * `bootstrapAutoDetect` and `globalSetupTimeoutMs` are additionally hydrated
+   * from the operator environment (`BOOTSTRAP_AUTO_DETECT`,
+   * `BOOTSTRAP_SETUP_TIMEOUT_MS`) at worker context creation (see
+   * `createWorkerContext`). Env values are never persisted and a valid
+   * `config.json` value wins over the env.
+   */
+  /** Explicit profile names enabled for bootstrap resolution; omitted/empty = all catalog profiles. */
+  enabledRuntimeProfiles?: string[];
+  /** Default false — run lockfile auto-detect even without `.localagent-box/environment.json`. */
+  bootstrapAutoDetect?: boolean;
+  /** Global override for `setup.timeoutMs` in ms; ignored when non-positive. */
+  globalSetupTimeoutMs?: number;
 }
 
 export type ConfigPartial = Partial<AppConfig>;
@@ -268,14 +283,30 @@ export interface RepoEnvironmentConfig {
   /** Currently supported schema version */
   version: 1;
   setup?: RepoEnvironmentSetupConfig;
+  /** Explicit profile names; the first enabled profile's defaultSetup is run */
+  profiles?: string[];
+  /** Opt out of lockfile auto-detection; defaults to true */
+  autoDetect?: boolean;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
 
-/** Host bootstrap result state; persisted on the Agent record (P1-T5) */
+/** Where the bootstrap setup command came from. */
+export type AgentBootstrapSource = 'explicit' | 'profile' | 'detect' | 'none';
+
+/**
+ * Host bootstrap result state; persisted on the Agent record (P1-T5).
+ * `profiles` / `source` are set whenever a setup command is resolved
+ * (P2-T3): phase-2 detection/profiling, or phase-1 explicit `setup.command`.
+ */
 export interface AgentBootstrapState {
   status: BootstrapStatus;
+  /** Setup command resolved and run (or run pending when `status === 'running'`) */
   command?: string;
+  /** Profile name(s) resolved to the command; `[]` for explicit / `'none'` */
+  profiles?: string[];
+  /** How the command was resolved; omitted when nothing was resolved */
+  source?: AgentBootstrapSource;
   durationMs?: number;
   exitCode?: number;
   /** Last ~50 lines of command output (same cap as loop checks) */

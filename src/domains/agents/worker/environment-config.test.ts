@@ -141,6 +141,33 @@ describe('validateEnvironmentConfig', () => {
     );
   });
 
+  it('accepts optional profiles and autoDetect', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      profiles: ['nodejs-pnpm', 'nodejs'],
+      autoDetect: false,
+    });
+    assert.deepEqual(result, { version: 1, profiles: ['nodejs-pnpm', 'nodejs'], autoDetect: false });
+  });
+
+  it('rejects non-array or malformed profiles', () => {
+    assert.throws(
+      () => validateEnvironmentConfig({ version: 1, profiles: 'nodejs' }),
+      /environment\.json profiles must be an array of strings when provided/,
+    );
+    assert.throws(
+      () => validateEnvironmentConfig({ version: 1, profiles: ['nodejs', 42, ''] }),
+      /environment\.json profiles\[2\] must be a non-empty string/,
+    );
+  });
+
+  it('rejects non-boolean autoDetect', () => {
+    assert.throws(
+      () => validateEnvironmentConfig({ version: 1, autoDetect: 'no' }),
+      /environment\.json autoDetect must be a boolean when provided/,
+    );
+  });
+
   it('ignores unknown keys without error', () => {
     const result = validateEnvironmentConfig({
       version: 1,

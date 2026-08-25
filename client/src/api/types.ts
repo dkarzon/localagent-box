@@ -220,6 +220,26 @@ export interface AgentTokenUsage {
 
 export interface OverallTokenUsage extends AgentTokenUsage {}
 
+export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
+
+export type AgentBootstrapSource = 'explicit' | 'profile' | 'detect' | 'none';
+
+/** Host-run workspace bootstrap state; mirrors the server-side record. */
+export interface AgentBootstrapState {
+  status: BootstrapStatus;
+  /** Setup command resolved and run (or pending when `status === 'running'`) */
+  command?: string;
+  /** Profile name(s) resolved to the command */
+  profiles?: string[];
+  /** How the command was resolved */
+  source?: AgentBootstrapSource;
+  durationMs?: number;
+  exitCode?: number;
+  /** Last lines of command output */
+  outputTail?: string;
+  error?: string;
+}
+
 export interface AgentsListResponse {
   agents: Agent[];
   overallTokenUsage: OverallTokenUsage;
@@ -261,6 +281,8 @@ export interface Agent {
   review?: AgentReviewMetadata | null;
   tokenUsage?: AgentTokenUsage;
   allowSuccessors?: boolean;
+  /** Host-run workspace bootstrap (setup command) before the agent starts */
+  bootstrap?: AgentBootstrapState;
   queue?: AgentQueueState;
 }
 
