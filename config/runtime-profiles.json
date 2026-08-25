@@ -1,0 +1,40 @@
+{
+  "profiles": {
+    "nodejs": {
+      "detect": ["package.json"],
+      "defaultSetup": "npm ci --ignore-scripts",
+      "tools": ["node", "npm"],
+      "cacheDirs": ["~/.npm"]
+    },
+    "nodejs-pnpm": {
+      "detect": ["pnpm-lock.yaml"],
+      "defaultSetup": "corepack enable && pnpm install --frozen-lockfile",
+      "tools": ["node", "pnpm"],
+      "cacheDirs": ["~/.local/share/pnpm/store"]
+    },
+    "nodejs-yarn": {
+      "detect": ["yarn.lock"],
+      "defaultSetup": "yarn install --frozen-lockfile",
+      "tools": ["node", "yarn"],
+      "cacheDirs": ["~/.cache/yarn"]
+    },
+    "python": {
+      "detect": ["pyproject.toml", "requirements.txt"],
+      "defaultSetup": "python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt",
+      "tools": ["python3", "pip"],
+      "cacheDirs": ["~/.cache/pip"]
+    },
+    "go": {
+      "detect": ["go.mod"],
+      "defaultSetup": "go mod download",
+      "tools": ["go"],
+      "cacheDirs": ["~/go/pkg/mod"]
+    },
+    "rust": {
+      "detect": ["Cargo.toml"],
+      "defaultSetup": "cargo fetch",
+      "tools": ["cargo"],
+      "cacheDirs": ["~/.cargo"]
+    }
+  }
+}
