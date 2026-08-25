@@ -38,7 +38,31 @@ export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
     config.setup = setup;
   }
 
+  if (obj.profiles !== undefined) {
+    config.profiles = validateProfiles(obj.profiles);
+  }
+
+  if (obj.autoDetect !== undefined) {
+    if (typeof obj.autoDetect !== 'boolean') {
+      throw new Error(`${environmentConfigRelative} autoDetect must be a boolean when provided`);
+    }
+    config.autoDetect = obj.autoDetect;
+  }
+
   return config;
+}
+
+function validateProfiles(raw: unknown): string[] {
+  const location = `${environmentConfigRelative} profiles`;
+  if (!Array.isArray(raw)) {
+    throw new Error(`${location} must be an array of strings when provided`);
+  }
+  return raw.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw new Error(`${location}[${index}] must be a non-empty string`);
+    }
+    return entry;
+  });
 }
 
 function validateSetup(raw: unknown): RepoEnvironmentSetupConfig {

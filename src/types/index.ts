@@ -268,6 +268,10 @@ export interface RepoEnvironmentConfig {
   /** Currently supported schema version */
   version: 1;
   setup?: RepoEnvironmentSetupConfig;
+  /** Explicit profile names; the first enabled profile's defaultSetup is run */
+  profiles?: string[];
+  /** Opt out of lockfile auto-detection; defaults to true */
+  autoDetect?: boolean;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
