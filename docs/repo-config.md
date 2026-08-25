@@ -5,7 +5,7 @@ Repo-level configuration lets you override agent behavior per-repository instead
 | File | Purpose |
 |---|---|
 | `.localagent-box/config.json` | Prompt overrides (system prompt + run-mode context prompts) |
-| `.localagent-box/environment.json` | Host-run workspace bootstrap (setup command) |
+| `.localagent-box/environment.json` | Host-run workspace bootstrap (setup, runtime profiles, lockfile auto-detect) |
 | `.localagent-box/loop.json` | Loop-agent orchestration configuration |
 
 Each file is optional. If absent, the server defaults apply.
@@ -53,23 +53,31 @@ Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review
 
 ## `.localagent-box/environment.json` — Workspace Bootstrap
 
-Host-run environment bootstrap: the server runs your setup command **once per agent start**, before the OpenCode session begins, so dependency installation does not have to be discovered by the agent. This file is only partially implemented — only the fields below are supported today; see [agent-bootstrap.plan.md](./agent-bootstrap.plan.md) for the full roadmap (profiles, auto-detect, `setup.sh`, caching, etc.).
+Host-run environment bootstrap: the server runs your setup command **once per agent start**, before the OpenCode session begins, so dependency installation does not have to be discovered by the agent.
+
+Which command runs is resolved in this order:
+
+1. Explicit `setup.command` (always wins when present).
+2. `profiles` — names runtime profiles whose `defaultSetup` command is used.
+3. Lockfile auto-detect — infer a profile from files in the workspace root (see [Detection order](#detection-order)).
+4. Nothing matched → bootstrap skipped, the agent starts as before.
 
 ```jsonc
 // .localagent-box/environment.json (example)
 {
   "version": 1,
+  "profiles": ["nodejs-pnpm"],
   "setup": {
-    "command": "npm ci && npm run build"
+    "command": "pnpm install --frozen-lockfile && pnpm run build:deps"
   }
 }
 ```
 
-If the file is absent (or has no `setup.command`), bootstrap is skipped and the agent starts as before.
+If the file is absent, bootstrap is skipped unless the server enables global lockfile auto-detect (see [Lockfile auto-detect](#lockfile-auto-detect)).
 
 ### `version` *(number, required)*
 
-Must be `1`. Schema version — rejects other values.
+Must be exactly `1`. Schema version — any other value is rejected when the file is loaded.
 
 ### `setup` *(object, optional)*
 
@@ -87,16 +95,83 @@ Timeout in milliseconds before the shell is killed. Must be a positive integer n
 
 When `true` (default), a non-zero exit code (or timeout) from `setup.command` **fails the whole agent** — OpenCode never starts. Set to `false` to log the failure and continue anyway.
 
-### Minimum complete example
+### `profiles` *(array, optional)*
 
-```json
+Names of **runtime profiles** to apply instead of auto-detecting from lockfiles. The host looks up each name in the server-bundled catalog (`config/runtime-profiles.json`) and runs the profile's `defaultSetup` command.
+
+- When present and non-empty, the **first** profile that exists in the catalog and is enabled on the server wins; unknown or disabled names are skipped (with a warning line in the worker log) and detection is **not** attempted.
+- When all requested profiles are skipped, bootstrap is skipped for the run.
+
+```jsonc
+// .localagent-box/environment.json
 {
   "version": 1,
-  "setup": {
-    "command": "echo bootstrap-ok"
-  }
+  "profiles": ["nodejs-pnpm"]
 }
 ```
+
+### `autoDetect` *(boolean, optional, default true)*
+
+Controls lockfile inference for repos that have a file but **no** `setup.command` and **no** `profiles`:
+
+- `true` (default, or omitted) — infer a profile from the workspace lockfiles (see [Detection order](#detection-order)).
+- `false` — skip detection; bootstrap is skipped for the run.
+
+> `autoDetect: false` does **not** affect `setup.command` (still runs) or `profiles` (still resolved).
+
+### Runtime profile catalog
+
+The host ships a catalog of toolchain profiles in `config/runtime-profiles.json`. Each entry declares the files that detect it and the `defaultSetup` command the host runs:
+
+| Profile | Detected by | `defaultSetup` |
+|---|---|---|
+| `nodejs` | `package.json` | `npm ci --ignore-scripts` |
+| `nodejs-pnpm` | `pnpm-lock.yaml` | `corepack enable && pnpm install --frozen-lockfile` |
+| `nodejs-yarn` | `yarn.lock` | `yarn install --frozen-lockfile` |
+| `python` | `pyproject.toml`, `requirements.txt` | `python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt` |
+| `go` | `go.mod` | `go mod download` |
+| `rust` | `Cargo.toml` | `cargo fetch` |
+
+### Detection order
+
+When lockfiles are inferred, every profile with a detect file present in the workspace root and enabled on the server is a candidate; the first one in this priority order wins:
+
+| Workspace-root file | Profile |
+|---|---|
+| `pnpm-lock.yaml` | `nodejs-pnpm` |
+| `package-lock.json` | `nodejs` |
+| `yarn.lock` | `nodejs-yarn` |
+| `go.mod` | `go` |
+| `Cargo.toml` | `rust` |
+| `requirements.txt` / `pyproject.toml` | `python` |
+
+Because `package.json` is present in every Node repo, pnpm/yarn take priority: a workspace with both `pnpm-lock.yaml` and `package.json` resolves to `nodejs-pnpm`, to `nodejs-yarn` for a yarn lockfile, or to `nodejs` only when only `package.json` matches.
+
+### Server-side profile gate
+
+Operators can restrict which profiles are allowed on the server before touching any repo config:
+
+- **Enabled profiles** — the server setting `enabledRuntimeProfiles` (a list of names; omitted/empty = all catalog profiles) filters both detected and explicitly requested profiles. A name not in the list is skipped with a worker-log warning.
+- **Global auto-detect** — the `BOOTSTRAP_AUTO_DETECT=1` env enables lockfile inference even for repos with **no** `environment.json` (default off; see [Lockfile auto-detect](#lockfile-auto-detect)).
+- **Global timeout** — `BOOTSTRAP_SETUP_TIMEOUT_MS` (ms, `0` = off) overrides `setup.timeoutMs` for every repo on this server.
+
+## Lockfile auto-detect
+
+When a repo has no runnable setup command of its own — no `setup.command` and no `profiles` — the host infers a runtime profile from the files at the workspace root instead of requiring explicit config.
+
+The full resolution order, in the order the worker enforces it:
+
+1. `setup.command` — explicit, whenever present and non-empty.
+2. `profiles` — first enabled match when the array is non-empty; detection is **not** attempted when `profiles` is declared.
+3. Lockfile detection — unless the file explicitly sets `autoDetect: false`.
+4. Skipped — nothing above produced a command.
+
+**Opt-out / safety:**
+
+- A repo with **no** `environment.json` is never auto-detected on its own — only when the operator enables server-wide `BOOTSTRAP_AUTO_DETECT=1` (file-less auto-detect, default off).
+- `autoDetect` only governs the detection step: `setup.command` and `profiles` are still resolved when present, so `autoDetect: false` never disables them.
+
+Treat detection as a zero-config convenience for standard stacks — `setup.command` or `profiles` remain the deterministic choice for anything unusual.
 
 ## `.localagent-box/loop.json` — Loop Agent Configuration
 
