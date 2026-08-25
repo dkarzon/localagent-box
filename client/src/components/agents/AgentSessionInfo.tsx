@@ -1,4 +1,9 @@
-import type { Agent, AgentPullRequest, AgentTokenUsage } from '../../api/types';
+import type {
+  Agent,
+  AgentBootstrapState,
+  AgentPullRequest,
+  AgentTokenUsage,
+} from '../../api/types';
 import {
   canCreatePullRequest,
   getAgentMode,
@@ -15,6 +20,32 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Form';
 import { AgentGitStatus } from './AgentGitStatus';
 import { Link } from 'react-router-dom';
+
+function bootstrapStatusVariant(
+  status: AgentBootstrapState['status'],
+): 'running' | 'completed' | 'failed' | 'neutral' {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+      return 'failed';
+    case 'skipped':
+      return 'neutral';
+  }
+}
+
+const BOOTSTRAP_STATUS_LABELS: Record<AgentBootstrapState['status'], string> = {
+  skipped: 'Skipped',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
+};
+
+function truncateCommand(command: string, max = 80): string {
+  return command.length > max ? `${command.slice(0, max)}…` : command;
+}
 
 function pullRequestStateVariant(state: string): 'running' | 'completed' | 'failed' | 'neutral' {
   switch (state) {
@@ -66,6 +97,8 @@ export function AgentSessionInfo({
   const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
   const showCreatePr = agent ? canCreatePullRequest(agent) : false;
+  const bootstrap = agent?.bootstrap ?? null;
+  const showBootstrap = Boolean(bootstrap && bootstrap.status !== 'skipped');
 
   return (
     <div className="space-y-6">
@@ -154,6 +187,47 @@ export function AgentSessionInfo({
               </div>
             ))}
           </dl>
+
+          {showBootstrap && bootstrap ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-on-surface">Workspace bootstrap</p>
+                <Badge
+                  variant={bootstrapStatusVariant(bootstrap.status)}
+                  pulse={bootstrap.status === 'running'}
+                >
+                  {BOOTSTRAP_STATUS_LABELS[bootstrap.status]}
+                </Badge>
+              </div>
+              <dl className="space-y-1.5 text-sm">
+                {bootstrap.command ? (
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-on-surface-variant">Command</dt>
+                    <dd className="code-md max-w-[50%] truncate text-on-surface" title={bootstrap.command}>
+                      {truncateCommand(bootstrap.command)}
+                    </dd>
+                  </div>
+                ) : null}
+                {bootstrap.profiles && bootstrap.profiles.length > 0 ? (
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-on-surface-variant">Profiles</dt>
+                    <dd className="code-md text-on-surface">{bootstrap.profiles.join(', ')}</dd>
+                  </div>
+                ) : null}
+                <div className="flex justify-between gap-4">
+                  <dt className="text-on-surface-variant">Duration</dt>
+                  <dd className="code-md text-on-surface">{bootstrap.durationMs != null ? `${(bootstrap.durationMs / 1000).toFixed(1)}s` : '—'}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-on-surface-variant">Exit code</dt>
+                  <dd className="code-md text-on-surface">{bootstrap.exitCode ?? '—'}</dd>
+                </div>
+              </dl>
+              {bootstrap.status === 'failed' && bootstrap.error ? (
+                <p className="mt-2 text-xs text-error">{bootstrap.error}</p>
+              ) : null}
+            </div>
+          ) : null}
 
           {tokenUsage ? (
             <div className="rounded border border-surface-container-highest bg-background p-4">
