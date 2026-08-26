@@ -10,6 +10,8 @@ A self-hosted daemon for running autonomous coding agents (powered by [OpenCode]
 - **Isn't:** a multi-tenant SaaS, a sandboxed execution environment, or a hardened public-internet service out of the box. Agents run with full filesystem access to their workspace and no network isolation.
 - **Isn't:** affiliated with, or a redistribution of, any third-party hosted "cloud agent" product — it's an independent, self-hosted alternative built on OpenCode.
 
+![Agent Session Page](https://raw.githubusercontent.com/dkarzon/localagent-box/refs/heads/main/docs/AgentSessionPage.png)
+
 ## Architecture
 
 ```
