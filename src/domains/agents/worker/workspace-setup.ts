@@ -142,6 +142,11 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
     agentId: job.agentId,
     agentsStore,
     config,
+    // Dependency cache (P3-T4): persist node_modules across runs when the
+    // operator opts in (DEP_CACHE_ENABLED / depCacheEnabled under dataDir).
+    depCache: getServerEnv().depCacheEnabled
+      ? { root: getServerEnv().depCacheRoot, repoId: job.repoId }
+      : undefined,
   });
 
   if (getServerEnv().enableCodegraph) {

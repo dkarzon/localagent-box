@@ -22,6 +22,10 @@ services:
       # BOOTSTRAP_SETUP_TIMEOUT_MS: global override for setup.timeoutMs (ms).
       BOOTSTRAP_AUTO_DETECT: ${BOOTSTRAP_AUTO_DETECT:-}
       BOOTSTRAP_SETUP_TIMEOUT_MS: ${BOOTSTRAP_SETUP_TIMEOUT_MS:-}
+      # Dependency cache (P3-T1): persisted under the agent-data volume so node_modules/.venv survive runs.
+      # Root defaults to /data/dep-cache when DEP_CACHE_ROOT is unset.
+      DEP_CACHE_ENABLED: ${DEP_CACHE_ENABLED:-false}
+      DEP_CACHE_ROOT: ${DEP_CACHE_ROOT:-}
     volumes:
       - agent-data:/data
       - agent-workspace:/workspace

@@ -1,8 +1,11 @@
+import path from 'path';
 import type { Agent, AgentBootstrapState, AppConfig } from '../../../types';
 import type { JsonStore } from '../../../lib/json-store';
 import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writer';
+import { computeCacheKey, type DepCacheKey } from './dep-cache-key';
+import { getDepCacheDirs, restoreDepCache, snapshotDepCache } from './dep-cache';
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
-import { resolveSetupCommand } from './environment-detect';
+import { detectProfiles, resolveSetupCommand } from './environment-detect';
 import { loadRuntimeProfiles } from './runtime-profiles';
 import { runWorkspaceCommand } from './workspace-command';
 
@@ -24,10 +27,26 @@ export interface RunWorkspaceBootstrapOptions {
     AppConfig,
     'enabledRuntimeProfiles' | 'bootstrapAutoDetect' | 'globalSetupTimeoutMs'
   >;
+  /**
+   * Persistent dependency cache (P3-T4). When provided and backed by a
+   * cacheable profile, the workspace `node_modules` is restored from the
+   * cache before the setup command runs and re-snapshotted after it succeeds,
+   * so repeat runs skip the full install. Omit to leave caching disabled.
+   */
+  depCache?: {
+    /** Root directory holding `{repoId}/{cacheKey}` entries. */
+    root: string;
+    /** Repo id used as the first cache path segment. */
+    repoId: string;
+  };
   /** Injectable for tests; defaults to the shared `runWorkspaceCommand`. */
   runCommand?: typeof runWorkspaceCommand;
   /** Injectable for tests; defaults to the bundled runtime profile catalog. */
   loadProfiles?: () => Record<string, import('./runtime-profiles').RuntimeProfile>;
+  /** Injectable for tests; defaults to `restoreDepCache`. */
+  restoreCache?: typeof restoreDepCache;
+  /** Injectable for tests; defaults to `snapshotDepCache`. */
+  snapshotCache?: typeof snapshotDepCache;
 }
 
 /**
@@ -56,6 +75,8 @@ export async function runWorkspaceBootstrap(
   const { workspaceDir, logPath, agentId, agentsStore } = options;
   const runCommand = options.runCommand ?? runWorkspaceCommand;
   const loadProfiles = options.loadProfiles ?? loadRuntimeProfiles;
+  const restore = options.restoreCache ?? restoreDepCache;
+  const snapshot = options.snapshotCache ?? snapshotDepCache;
   const config = options.config;
   const profileCatalog = loadProfiles();
   const enabledProfiles = config?.enabledRuntimeProfiles;
@@ -89,10 +110,66 @@ export async function runWorkspaceBootstrap(
     logPath,
     `Bootstrap: source=${source} profiles=[${profiles.join(', ')}] command=${command}`,
   );
+
+  // Dependency cache (P3-T4): restore cached node_modules into the fresh
+  // clone before setup so repeat runs skip the full install; the workspace is
+  // snapshotted back into the cache after a successful run. No-op when no
+  // cache is configured or no profile caches its workspace dirs (phase 3
+  // caches nodejs / nodejs-pnpm only).
+  const depCache = options.depCache;
+  const cacheableProfile: string | undefined =
+    depCache !== undefined
+      ? (profiles.find((name) => getDepCacheDirs(name).length > 0) ??
+        detectProfiles(workspaceDir, profileCatalog).find(
+          (name) => getDepCacheDirs(name).length > 0,
+        ))
+      : undefined;
+  let cacheDir: string | null = null;
+  let cacheKey: DepCacheKey | null = null;
+  if (depCache !== undefined && cacheableProfile !== undefined) {
+    try {
+      cacheKey = computeCacheKey({
+        repoId: depCache.repoId,
+        workspaceDir,
+        profiles,
+        catalog: profileCatalog,
+        explicitCacheKey: envConfig?.cacheKey,
+      });
+      cacheDir = path.join(depCache.root, cacheKey.relativePath);
+      appendLog(
+        logPath,
+        `Dependency cache key: ${cacheKey.relativePath} (method=${cacheKey.method})`,
+      );
+    } catch (err) {
+      appendLog(
+        logPath,
+        `Dependency cache: unable to compute key — continuing without cache (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+  }
+  let cacheHit = false;
+  if (cacheDir !== null && cacheableProfile !== undefined) {
+    try {
+      cacheHit = await restore(cacheDir, workspaceDir, cacheableProfile);
+      appendLog(
+        logPath,
+        cacheHit
+          ? `Dependency cache hit: ${cacheableProfile} restored at ${cacheDir}`
+          : `Dependency cache miss: no cached data at ${cacheDir}`,
+      );
+    } catch (err) {
+      cacheHit = false;
+      appendLog(
+        logPath,
+        `Dependency cache restore failed — continuing without cache (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+  }
+
   appendLog(logPath, 'Running workspace bootstrap…');
   appendLog(logPath, `${environmentConfigRelative} command: ${command}`);
   updateAgentRecord(agentsStore, agentId, {
-    bootstrap: { status: 'running', command, profiles, source },
+    bootstrap: { status: 'running', command, profiles, source, cacheHit },
   });
 
   const serverTimeoutMs = config?.globalSetupTimeoutMs;
@@ -106,6 +183,26 @@ export async function runWorkspaceBootstrap(
   const durationMs = Date.now() - startedAt;
 
   if (result.success) {
+    if (cacheDir !== null && cacheableProfile !== undefined) {
+      try {
+        await snapshot(
+          cacheDir,
+          workspaceDir,
+          cacheableProfile,
+          {
+            command,
+            profiles,
+            lockfileHash: cacheKey?.lockfileHash,
+          },
+        );
+        appendLog(logPath, `Dependency cache snapshot updated at ${cacheDir}`);
+      } catch (err) {
+        appendLog(
+          logPath,
+          `Dependency cache snapshot failed — continuing (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    }
     appendLog(logPath, `Workspace bootstrap completed in ${durationMs}ms (exit code ${result.exitCode})`);
     appendLogBlock(logPath, 'Workspace bootstrap output:', result.outputTail);
     const state: AgentBootstrapState = {
@@ -116,6 +213,7 @@ export async function runWorkspaceBootstrap(
       durationMs,
       exitCode: result.exitCode,
       outputTail: result.outputTail,
+      cacheHit,
     };
     updateAgentRecord(agentsStore, agentId, { bootstrap: state });
     return state;
@@ -142,6 +240,7 @@ export async function runWorkspaceBootstrap(
     exitCode,
     outputTail,
     error,
+    cacheHit,
   };
 
   if (failOnError === false) {

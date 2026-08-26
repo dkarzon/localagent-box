@@ -287,6 +287,12 @@ export interface RepoEnvironmentConfig {
   profiles?: string[];
   /** Opt out of lockfile auto-detection; defaults to true */
   autoDetect?: boolean;
+  /**
+   * Explicit dependency-cache key (P3-T6). When set, the cache entry under
+   * `{dep-cache-root}/{repoId}` is addressed by this key (sanitized to
+   * alphanumerics + hyphens) instead of a hash of the lockfile contents.
+   */
+  cacheKey?: string;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
@@ -312,6 +318,12 @@ export interface AgentBootstrapState {
   /** Last ~50 lines of command output (same cap as loop checks) */
   outputTail?: string;
   error?: string;
+  /**
+   * Whether the workspace dependencies were restored from the persistent
+   * dependency cache before the setup command ran (P3-T4). Omitted when the
+   * cache is disabled.
+   */
+  cacheHit?: boolean;
 }
 
 export interface Agent {

@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { sendJson, readJsonBody, requireAuth, parseUrl } from '../lib/http';
 import { withErrorHandling } from '../lib/error-handler';
+import { getServerEnv } from '../config/env';
+import { listDepCacheEntries, purgeDepCacheEntries } from '../domains/agents/worker/dep-cache';
 import type { Route, ServerContext } from '../types';
 
 function redact(ctx: ServerContext, message: string): string {
@@ -46,6 +48,31 @@ const handleDeleteRepo = withErrorHandling(
   },
 );
 
+/** Lists the repo's dependency cache entries (P3-T5). */
+const handleListDepCache = withErrorHandling((_req, res, ctx, repoId) => {
+  // Resolving the repo doubles as existence validation and as the safety
+  // net for path construction (unknown / malformed ids are rejected here).
+  ctx.repoManager.getRepo(repoId);
+  const cacheRoot = getServerEnv().depCacheRoot;
+  const listing = listDepCacheEntries(cacheRoot, repoId);
+  if (listing.error) {
+    throw new Error('Failed to inspect the dependency cache');
+  }
+  sendJson(res, 200, { repoId, entries: listing.entries });
+});
+
+/** Purges one dependency cache entry (`?key=`) or all of a repo's entries (P3-T5). */
+const handlePurgeDepCache = withErrorHandling(async (req, res, ctx, repoId) => {
+  // Resolving the repo doubles as existence validation and as the safety
+  // net for path construction (unknown / malformed ids are rejected here).
+  ctx.repoManager.getRepo(repoId);
+  const cacheRoot = getServerEnv().depCacheRoot;
+  const url = parseUrl(req);
+  const key = url.searchParams.get('key') ?? undefined;
+  const result = purgeDepCacheEntries(cacheRoot, repoId, key);
+  sendJson(res, 200, { repoId, existed: result.existed, removed: result.removed });
+});
+
 const handleUpdateRepo = withErrorHandling(async (req, res, ctx, repoId) => {
   const body = await readJsonBody(req);
   const updates: { autoReviewPullRequests?: boolean | null } = {};
@@ -64,6 +91,22 @@ const reposRoute: Route = {
   match: (_method, pathname) => pathname.startsWith('/api/v1/repos'),
   handle: async (req, res, ctx) => {
     const { pathname } = parseUrl(req);
+
+    const depCacheMatch = pathname.match(/^\/api\/v1\/repos\/([^/]+)\/dep-cache$/);
+    if (depCacheMatch) {
+      const repoId = depCacheMatch[1];
+      if (req.method === 'GET') {
+        await handleListDepCache(req, res, ctx, repoId);
+        return;
+      }
+      if (req.method === 'DELETE') {
+        if (!requireAuth(req, res)) {
+          return;
+        }
+        await handlePurgeDepCache(req, res, ctx, repoId);
+        return;
+      }
+    }
 
     const verifyMatch = pathname.match(/^\/api\/v1\/repos\/([^/]+)\/verify$/);
     if (verifyMatch && req.method === 'POST') {

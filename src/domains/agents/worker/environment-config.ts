@@ -49,6 +49,14 @@ export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
     config.autoDetect = obj.autoDetect;
   }
 
+  if (obj.cacheKey !== undefined) {
+    const cacheKey = obj.cacheKey;
+    if (typeof cacheKey !== 'string' || cacheKey.trim() === '') {
+      throw new Error(`${environmentConfigRelative} cacheKey must be a non-empty string when provided`);
+    }
+    config.cacheKey = cacheKey;
+  }
+
   return config;
 }
 
