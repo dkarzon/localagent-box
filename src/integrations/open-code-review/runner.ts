@@ -12,6 +12,9 @@ export const DEFAULT_OCR_FILE_TIMEOUT_MINUTES = 30;
 /** Per-request LLM HTTP timeout in seconds. OCR's own default is 300. */
 export const DEFAULT_OCR_LLM_TIMEOUT_SECONDS = 600;
 
+/** Max file groups reviewed in parallel. OCR's own default is 8. */
+export const DEFAULT_OCR_REVIEW_CONCURRENCY = 8;
+
 export interface OcrConfig {
   llm: {
     url: string;
@@ -37,6 +40,11 @@ export function getOcrFileTimeoutMinutes(): number {
 /** Per-request HTTP timeout in seconds. Override with `OCR_LLM_TIMEOUT`. */
 export function getOcrLlmTimeoutSeconds(): number {
   return parsePositiveInt(process.env.OCR_LLM_TIMEOUT, DEFAULT_OCR_LLM_TIMEOUT_SECONDS);
+}
+
+/** Max parallel file groups. Override with `OCR_REVIEW_CONCURRENCY`. */
+export function getOcrReviewConcurrency(): number {
+  return parsePositiveInt(process.env.OCR_REVIEW_CONCURRENCY, DEFAULT_OCR_REVIEW_CONCURRENCY);
 }
 
 export function buildOcrLlmSettings(config: AppConfig): OcrConfig['llm'] {
@@ -179,6 +187,7 @@ export function runOcrReview(options: {
 }): Promise<OcrReviewResult> {
   const ocrBin = getOcrBinary();
   const fileTimeoutMinutes = getOcrFileTimeoutMinutes();
+  const reviewConcurrency = getOcrReviewConcurrency();
   const args = [
     'review',
     '--repo', options.workspaceDir,
@@ -187,6 +196,7 @@ export function runOcrReview(options: {
     '--format', 'json',
     '--audience', 'agent',
     '--timeout', String(fileTimeoutMinutes),
+    '--concurrency', String(reviewConcurrency),
   ];
 
   if (options.background) {
