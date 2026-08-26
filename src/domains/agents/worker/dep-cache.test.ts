@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
   getDepCacheDirs,
+  purgeDepCacheEntries,
   restoreDepCache,
   snapshotDepCache,
   type DepCacheManifest,
@@ -284,5 +285,88 @@ describe('snapshotDepCache', () => {
     }
     await rmrf(workspace);
     await rmrf(cacheRoot);
+  });
+});
+
+describe('purgeDepCacheEntries', () => {
+  function makeCacheDir(root: string, entryKey: string): string {
+    const entryDir = path.join(root, 'repo', entryKey);
+    fs.mkdirSync(path.join(entryDir, 'node_modules'), { recursive: true });
+    fs.writeFileSync(path.join(entryDir, 'node_modules', 'pkg.js'), 'v');
+    return entryDir;
+  }
+
+  it('removes only the requested entry', () => {
+    const root = tmpDir('dep-cache-purge-one-');
+    const sibling = makeCacheDir(root, 'keep-me');
+    const targetDir = makeCacheDir(root, 'purge-me');
+    try {
+      const result = purgeDepCacheEntries(root, 'repo', 'purge-me');
+      assert.deepEqual(result, { existed: true, removed: 1 });
+      assert.equal(fs.existsSync(targetDir), false);
+      assert.equal(fs.existsSync(sibling), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('removes the whole repo directory when no key is given (idempotent)', () => {
+    const root = tmpDir('dep-cache-purge-all-');
+    makeCacheDir(root, 'entry-a');
+    try {
+      assert.deepEqual(purgeDepCacheEntries(root, 'repo'), { existed: true, removed: 1 });
+      assert.equal(fs.existsSync(path.join(root, 'repo')), false);
+      assert.deepEqual(purgeDepCacheEntries(root, 'repo'), { existed: false, removed: 0 });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when the key resolves outside the repo directory without removing anything', () => {
+    const root = tmpDir('dep-cache-purge-traversal-');
+    makeCacheDir(root, 'entry-x');
+    fs.mkdirSync(path.join(root, 'outside'), { recursive: true });
+    try {
+      for (const key of ['..', '../../..', 'a/../../../..']) {
+        assert.throws(
+          () => purgeDepCacheEntries(root, 'repo', key),
+          /cache key escapes repo cache directory/,
+        );
+      }
+      assert.equal(fs.existsSync(path.join(root, 'repo', 'entry-x')), true);
+      assert.equal(fs.existsSync(path.join(root, 'outside')), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes keys that stay inside the repo directory', () => {
+    const root = tmpDir('dep-cache-purge-normalize-');
+    const sub = path.join(root, 'repo', 'a');
+    fs.mkdirSync(sub, { recursive: true });
+    try {
+      // `a` and `a/b/..` both resolve to the same entry; removing the
+      // already-absent one is idempotent (not an error).
+      assert.deepEqual(purgeDepCacheEntries(root, 'repo', 'a/b/..'), { existed: true, removed: 1 });
+      assert.equal(fs.existsSync(sub), false);
+      assert.deepEqual(purgeDepCacheEntries(root, 'repo', 'a'), { existed: true, removed: 1 });
+      assert.equal(fs.existsSync(sub), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('treats a key that resolves to the repo directory itself as an escape', () => {
+    const root = tmpDir('dep-cache-purge-self-');
+    makeCacheDir(root, 'entry-y');
+    try {
+      assert.throws(
+        () => purgeDepCacheEntries(root, 'repo', '.'),
+        /cache key escapes repo cache directory/,
+      );
+      assert.equal(fs.existsSync(path.join(root, 'repo', 'entry-y')), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

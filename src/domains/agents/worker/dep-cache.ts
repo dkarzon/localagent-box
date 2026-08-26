@@ -403,8 +403,9 @@ export interface PurgeDepCacheResult {
 /**
  * Removes the repo's dependency cache directory (`{root}/{repoDir}`) entirely,
  * or, when `key` is given, only the single entry `{root}/{repoDir}/{key}`.
- * `key` is never path-joined; it is used verbatim as a directory name so that
- * a malicious/naive key (e.g. `..`) can never escape the repo directory.
+ * `key` is resolved and verified to stay inside the repository cache
+ * directory, so a malicious key (e.g. `..`) can never escape it. An
+ * escaping or otherwise invalid key throws.
  * Removing a key that does not exist is not an error (idempotent).
  */
 export function purgeDepCacheEntries(
@@ -420,7 +421,13 @@ export function purgeDepCacheEntries(
     return { existed: false, removed: 0 };
   }
   if (key !== undefined) {
-    fsImpl.rmSync(path.join(repoPath, key), { recursive: true, force: true });
+    const repoPathResolved = path.resolve(repoPath);
+    const keyPath = path.join(repoPath, key);
+    const keyPathResolved = path.resolve(keyPath);
+    if (!keyPathResolved.startsWith(repoPathResolved + path.sep)) {
+      throw new Error(`cache key escapes repo cache directory: ${key}`);
+    }
+    fsImpl.rmSync(keyPath, { recursive: true, force: true });
     return { existed: true, removed: 1 };
   }
   const names = fsImpl
