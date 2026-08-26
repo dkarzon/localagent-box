@@ -69,7 +69,7 @@ Next steps: [set up a GitHub App](./docs/github-app-setup.md) so agents can clon
 
 ## Local development
 
-The repo has two parts: a **TypeScript Node.js API** in `src/` (compiled to `dist/`) and a **React + Vite UI** in `client/`. In production and Docker, the API serves the built UI from `public/`. For day-to-day UI work, run both processes with hot reload.
+The repo has two parts: a **TypeScript Node.js API** in `src/` (compiled to `dist/`) and a **React + Vite UI** in `client/`. In production and Docker, the API serves the built UI from `public/`.
 
 ### Prerequisites
 
@@ -89,45 +89,25 @@ npm install --prefix client
 
 Use `--ignore-scripts` on the root install if the `postinstall` hook loops on your machine; then install the client explicitly as shown.
 
-### Option A — UI + API with hot reload (recommended)
+### Run locally
 
-Use two terminals.
-
-**Terminal 1 — API** (TypeScript, auto-restarts on change):
+Build the UI and API, then serve everything from one process:
 
 ```bash
 # Windows (PowerShell)
-$env:PORT="8081"; $env:DATA_DIR="./data"; npm run dev
+$env:DATA_DIR="./data"; npm run build:ui && npm run build && npm start
 
 # macOS / Linux
-PORT=8081 DATA_DIR=./data npm run dev
-```
-
-The Vite dev server proxies `/api` and `/health` to port **8081** (see `client/vite.config.ts`), so the API must listen on 8081 during UI development.
-
-**Terminal 2 — UI**:
-
-```bash
-npm run dev:ui
-```
-
-Open [http://localhost:5173](http://localhost:5173). API requests are proxied to the backend on 8081.
-
-Persisted state (config, repos, agents) is written under `./data/` when `DATA_DIR=./data` is set. Agent git workspaces use `./data/workspace/agents/` on Windows.
-
-### Option B — Single server (production-like)
-
-Build the UI and API, then serve everything from one process on port 8080:
-
-```bash
-npm run build:ui
-npm run build
-npm start
+DATA_DIR=./data npm run build:ui && npm run build && npm start
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
 
-### Option C — Local Docker build and run
+Persisted state (config, repos, agents) is written under `./data/` when `DATA_DIR=./data` is set. Agent git workspaces use `./data/workspace/agents/` on Windows.
+
+For API-only work with auto-restart on change, use `npm run dev` instead of `npm start` (after building the UI once).
+
+### Local Docker build and run
 
 To use the **prebuilt GHCR image** instead of building locally, see [docs/docker-hosting.md](./docs/docker-hosting.md).
 
@@ -147,7 +127,7 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 
 | Variable | Default (local) | Purpose |
 |----------|-----------------|---------|
-| `PORT` | `8080` | HTTP listen port (`8081` when using Option A) |
+| `PORT` | `8080` | HTTP listen port |
 | `DATA_DIR` | `/data` | Config and agent state directory (use `./data` locally) |
 | `API_TOKEN` | `localagent-box` | Bearer token for mutating API calls |
 | `OLLAMA_BASE_URL` | — | Bootstrap Ollama URL on first start (e.g. `http://localhost:11434`) |
@@ -197,7 +177,6 @@ Read [SECURITY.md](./SECURITY.md) before deploying anywhere beyond a local trial
 | Agent finishes but no PR appears | `push` was `false`, or the OpenCode run didn't produce a commit — batch/loop runs fail if nothing was committed; check `GET /agents/:id/logs` |
 | Review agent fails immediately | Ollama not configured or unreachable — OCR requires `ollamaBaseUrl`; check Settings and [docs/code-review.md](./docs/code-review.md) |
 | Review completes but nothing on GitHub | No PR exists for `headBranch`, or GitHub App lacks pull request write — check logs for "No matching PR" or GitHub warnings |
-| UI can't reach the API in local dev (Option A) | The API must listen on port `8081` in dev — Vite's proxy in `client/vite.config.ts` assumes that port |
 | `npm install` hangs or loops | Use `npm install --ignore-scripts` at the repo root, then `npm install --prefix client` separately (see [Install dependencies](#install-dependencies)) |
 
 For anything else, check `GET /agents/:id/logs` and `GET /agents/:id/events` for the failing session, and [SECURITY.md](./SECURITY.md) if the question is auth/network-related.
