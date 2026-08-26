@@ -10,6 +10,7 @@ import {
 import {
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
+  getOcrReviewConcurrency,
   writeOcrConfig,
   runOcrReview,
   runOcrSessionShow,
@@ -111,7 +112,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, 'OCR config written to workspace');
     appendLog(
       logPath,
-      `Running OCR review (${job.baseBranch}..${headBranch}) fileTimeout=${getOcrFileTimeoutMinutes()}m llmTimeout=${getOcrLlmTimeoutSeconds()}s`,
+      `Running OCR review (${job.baseBranch}..${headBranch}) fileTimeout=${getOcrFileTimeoutMinutes()}m llmTimeout=${getOcrLlmTimeoutSeconds()}s concurrency=${getOcrReviewConcurrency()}`,
     );
     ocrResult = await runOcrReview({
       config,

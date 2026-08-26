@@ -7,9 +7,11 @@ import type { ChildProcess } from 'node:child_process';
 import {
   DEFAULT_OCR_FILE_TIMEOUT_MINUTES,
   DEFAULT_OCR_LLM_TIMEOUT_SECONDS,
+  DEFAULT_OCR_REVIEW_CONCURRENCY,
   buildOcrLlmEnv,
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
+  getOcrReviewConcurrency,
   parseOcrJsonStdout,
   writeOcrConfig,
   runOcrReview,
@@ -78,11 +80,15 @@ describe('writeOcrConfig', () => {
 });
 
 describe('OCR timeouts', () => {
-  it('defaults per-file timeout to 30 minutes and LLM timeout to 600 seconds', () => {
-    withEnv({ OCR_REVIEW_TIMEOUT: undefined, OCR_LLM_TIMEOUT: undefined }, () => {
-      assert.equal(getOcrFileTimeoutMinutes(), DEFAULT_OCR_FILE_TIMEOUT_MINUTES);
-      assert.equal(getOcrLlmTimeoutSeconds(), DEFAULT_OCR_LLM_TIMEOUT_SECONDS);
-    });
+  it('defaults per-file timeout to 30 minutes, LLM timeout to 600 seconds, and concurrency to 8', () => {
+    withEnv(
+      { OCR_REVIEW_TIMEOUT: undefined, OCR_LLM_TIMEOUT: undefined, OCR_REVIEW_CONCURRENCY: undefined },
+      () => {
+        assert.equal(getOcrFileTimeoutMinutes(), DEFAULT_OCR_FILE_TIMEOUT_MINUTES);
+        assert.equal(getOcrLlmTimeoutSeconds(), DEFAULT_OCR_LLM_TIMEOUT_SECONDS);
+        assert.equal(getOcrReviewConcurrency(), DEFAULT_OCR_REVIEW_CONCURRENCY);
+      },
+    );
   });
 
   it('honors OCR_REVIEW_TIMEOUT including 0 to disable', () => {
@@ -97,6 +103,12 @@ describe('OCR timeouts', () => {
   it('honors OCR_LLM_TIMEOUT', () => {
     withEnv({ OCR_LLM_TIMEOUT: '900' }, () => {
       assert.equal(getOcrLlmTimeoutSeconds(), 900);
+    });
+  });
+
+  it('honors OCR_REVIEW_CONCURRENCY', () => {
+    withEnv({ OCR_REVIEW_CONCURRENCY: '4' }, () => {
+      assert.equal(getOcrReviewConcurrency(), 4);
     });
   });
 });
@@ -154,11 +166,13 @@ describe('runOcrReview', () => {
     assert.equal(result.comments?.[0]?.path, 'src/a.ts');
   });
 
-  it('passes OCR_LLM_* env vars and --timeout to the spawned process', async () => {
+  it('passes OCR_LLM_* env vars, --timeout, and --concurrency to the spawned process', async () => {
     const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-review-'));
     let capturedEnv: NodeJS.ProcessEnv | undefined;
     let capturedArgs: readonly string[] | undefined;
-    await withEnv({ OCR_REVIEW_TIMEOUT: undefined, OCR_LLM_TIMEOUT: undefined }, () =>
+    await withEnv(
+      { OCR_REVIEW_TIMEOUT: undefined, OCR_LLM_TIMEOUT: undefined, OCR_REVIEW_CONCURRENCY: undefined },
+      () =>
       runOcrReview({
         config: appConfig,
         workspaceDir,
@@ -180,6 +194,9 @@ describe('runOcrReview', () => {
     const timeoutIdx = capturedArgs?.indexOf('--timeout') ?? -1;
     assert.ok(timeoutIdx >= 0);
     assert.equal(capturedArgs?.[timeoutIdx + 1], String(DEFAULT_OCR_FILE_TIMEOUT_MINUTES));
+    const concurrencyIdx = capturedArgs?.indexOf('--concurrency') ?? -1;
+    assert.ok(concurrencyIdx >= 0);
+    assert.equal(capturedArgs?.[concurrencyIdx + 1], String(DEFAULT_OCR_REVIEW_CONCURRENCY));
   });
 });
 

@@ -131,6 +131,7 @@ Review agents do not support follow-up messages or **Finish** — they are singl
 | `OCR_BIN` | `ocr` | OCR CLI binary (preinstalled in Docker image) |
 | `OCR_REVIEW_TIMEOUT` | `30` | Per-file review deadline in minutes (`0` disables). OCR's own default is 10. |
 | `OCR_LLM_TIMEOUT` | `600` | Per-request LLM HTTP timeout in seconds. OCR's own default is 300. |
+| `OCR_REVIEW_CONCURRENCY` | `8` | Max file groups reviewed in parallel. Lower this when using a local LLM (e.g. Ollama) to reduce timeouts. |
 
 OCR LLM URL, token, and model are derived from server config at runtime (`OCR_LLM_URL`, `OCR_LLM_MODEL`, etc.) — you do not set those manually when using Ollama.
 

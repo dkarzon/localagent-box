@@ -118,6 +118,7 @@ GitHub App credentials (`githubAppId`, `githubAppInstallationId`, `githubAppPriv
 | `OCR_BIN` | `ocr` | Open Code Review CLI (preinstalled in the image; see [code-review.md](./code-review.md)) |
 | `OCR_REVIEW_TIMEOUT` | `30` | Per-file OCR review deadline in minutes (`0` disables) |
 | `OCR_LLM_TIMEOUT` | `600` | Per-request OCR LLM HTTP timeout in seconds |
+| `OCR_REVIEW_CONCURRENCY` | `8` | Max file groups reviewed in parallel |
 | `OPENCODE_BIN` | `opencode` | OpenCode CLI (preinstalled in the image) |
 | `OPENCODE_PORT_BASE` | `4100` | Base port for per-agent `opencode serve` |
 | `OPENCODE_STARTUP_TIMEOUT_MS` | `900000` | Max wait for `opencode serve` to become ready |
