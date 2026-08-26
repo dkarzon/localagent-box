@@ -169,6 +169,66 @@ describe('restoreDepCache', () => {
       await Promise.all([rmrf(cacheRoot), rmrf(workspace)]);
     }
   });
+
+  it('tolerates a concurrent bootstrap winning the same-workspace rename race', async () => {
+    const cacheRoot = tmpDir('dep-cache-restore-race-');
+    const cacheDir = path.join(cacheRoot, 'repo', 'key');
+    fs.mkdirSync(path.join(cacheDir, 'node_modules', 'cached'), { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, 'node_modules', 'cached', 'pkg.js'), 'cached');
+    fs.writeFileSync(path.join(cacheDir, 'manifest.json'), '{}');
+
+    const workspace = tmpDir('dep-cache-restore-race-workspace-');
+    const target = path.join(workspace, 'node_modules');
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'old.js'), 'old');
+
+    const originalRename = fs.promises.rename;
+    const leftovers = (dir: string): string[] =>
+      fs.readdirSync(dir).filter(
+        (name) => name.includes('.staging-') || name.includes('.original-'),
+      );
+    try {
+      // Case 1: the target->original move loses the race (ENOENT): a
+      // concurrent bootstrap moved the old tree out first. The loser
+      // keeps the stale tree in place and must not abort the restore.
+      fs.promises.rename = (async (): Promise<void> => {
+        throw Object.assign(new Error('ENOENT: concurrent bootstrap'), {
+          code: 'ENOENT',
+        });
+      }) as typeof fs.promises.rename;
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), true);
+      assert.deepEqual(
+        fs.readdirSync(target).sort(),
+        ['old.js'],
+        'the stale workspace directory must remain in place',
+      );
+      assert.deepEqual(leftovers(workspace), []);
+      fs.promises.rename = originalRename;
+
+      // Case 2: the move succeeds but the staging->target swap loses to a
+      // concurrent bootstrap's tree (ENOTEMPTY). The loser drops the staged
+      // copy and the partial-swap state; the restore must not throw.
+      fs.rmSync(target, { recursive: true, force: true });
+      fs.mkdirSync(target, { recursive: true });
+      fs.writeFileSync(path.join(target, 'old.js'), 'old');
+      let moveDone = false;
+      fs.promises.rename = (async (src: string, dst: string): Promise<void> => {
+        if (!moveDone) {
+          moveDone = true;
+          await originalRename(src, dst);
+          return;
+        }
+        throw Object.assign(new Error('ENOTEMPTY: concurrent bootstrap'), {
+          code: 'ENOTEMPTY',
+        });
+      }) as typeof fs.promises.rename;
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), true);
+      assert.deepEqual(leftovers(workspace), []);
+    } finally {
+      fs.promises.rename = originalRename;
+      await Promise.all([rmrf(cacheRoot), rmrf(workspace)]);
+    }
+  });
 });
 
 describe('snapshotDepCache', () => {
