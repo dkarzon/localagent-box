@@ -31,7 +31,7 @@ export interface ResolvedSetupCommand {
  * Files not listed all share the lowest priority; ties keep catalog order,
  * so detection order is stable for a given catalog.
  */
-const DETECT_FALLBACK_PRIORITY = 99;
+export const DETECT_FALLBACK_PRIORITY = 99;
 
 export const DETECTION_PRIORITY: Record<string, number> = {
   'pnpm-lock.yaml': 0,

@@ -3,14 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import {
   DETECTION_PRIORITY,
+  DETECT_FALLBACK_PRIORITY,
   detectProfiles,
 } from './environment-detect';
 import {
   loadRuntimeProfiles,
   type RuntimeProfile,
 } from './runtime-profiles';
-
-const DETECT_FALLBACK_PRIORITY = 99;
 
 /**
  * Lockfiles that pin the same dependency tree as a detect file but are not
