@@ -50,8 +50,19 @@ const defaultDepCacheFs: DepCacheFs = {
   stat: (target) => fs.promises.stat(target),
 };
 
-function isDirectory(dir: string): boolean {
-  return fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory() ?? false;
+/**
+ * Returns true when `dir` exists and is a directory. Only missing-entry errors
+ * (`ENOENT`/`ENOTDIR`) yield `false`; other errors propagate.
+ */
+async function isDirectory(
+  fsImpl: DepCacheFs,
+  dir: string,
+): Promise<boolean> {
+  const stats = await fsImpl.stat(dir).catch((err) => {
+    if (isEntryGone(err)) return null;
+    throw err;
+  });
+  return stats ? stats.isDirectory() : false;
 }
 
 function wrapError(err: unknown, message: string): Error {
@@ -184,14 +195,14 @@ export async function restoreDepCache(
   if (dirs.length === 0) {
     return false;
   }
-  if (!isDirectory(cacheDir)) {
+  if (!(await isDirectory(fsImpl, cacheDir))) {
     return false;
   }
 
   let restoredAny = false;
   for (const dir of dirs) {
     const source = path.join(cacheDir, dir);
-    if (!isDirectory(source)) {
+    if (!(await isDirectory(fsImpl, source))) {
       continue;
     }
     await replaceDirectory(fsImpl, source, path.join(workspaceDir, dir));
@@ -242,7 +253,7 @@ export async function snapshotDepCache(
     let snapshottedAny = false;
     for (const dir of dirs) {
       const source = path.join(workspaceDir, dir);
-      if (!isDirectory(source)) {
+      if (!(await isDirectory(fsImpl, source))) {
         continue;
       }
       await runStep(
@@ -264,7 +275,7 @@ export async function snapshotDepCache(
         ),
       `Failed to write manifest.json for ${cacheDir}`,
     );
-    if (fs.existsSync(cacheDir)) {
+    if (await isDirectory(fsImpl, cacheDir)) {
       await runStep(
         () => fsImpl.rm(cacheDir, { recursive: true, force: true }),
         `Failed to remove existing dependency cache entry at ${cacheDir}`,
@@ -275,8 +286,8 @@ export async function snapshotDepCache(
       `Failed to replace dependency cache entry at ${cacheDir}`,
     );
   } catch (err) {
-    if (fs.existsSync(staging)) {
-      fs.rmSync(staging, { recursive: true, force: true });
+    if (await isDirectory(fsImpl, staging)) {
+      await fsImpl.rm(staging, { recursive: true, force: true });
     }
     if (err instanceof Error) {
       throw err;
