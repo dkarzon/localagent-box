@@ -1069,6 +1069,88 @@ describe('runWorkspaceBootstrap', () => {
     });
   });
 
+  describe('runOnModes mode filter (P4-T3)', () => {
+    const MODE_CONFIG = JSON.stringify({
+      version: 1,
+      setup: { command: 'npm ci', runOnModes: ['batch'] },
+    });
+
+    it('skips bootstrap when the mode is not in runOnModes and logs the reason', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, MODE_CONFIG);
+
+      const state = await runBootstrap(h, {
+        mode: 'review',
+        runCommand: fakeRunCommand(h, {
+          command: 'should-not-run',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.deepEqual(state, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+      assert.equal(h.agent.bootstrap, undefined);
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap skipped: mode 'review' not in setup\.runOnModes \[batch\]/);
+    });
+
+    it('runs the setup when the mode is in runOnModes', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, MODE_CONFIG);
+
+      const state = await runBootstrap(h, {
+        mode: 'batch',
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'npm ci');
+      assert.equal(h.runCalls.length, 1);
+    });
+
+    it('skips bootstrap for unlisted modes (review) but runs for listed modes (loop)', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, JSON.stringify({
+        version: 1,
+        setup: { command: 'npm ci', runOnModes: ['loop', 'batch'] },
+      }));
+
+      const reviewState = await runBootstrap(h, {
+        mode: 'review',
+        runCommand: fakeRunCommand(h, {
+          command: 'should-not-run',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+      assert.deepEqual(reviewState, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+
+      const loopState = await runBootstrap(h, {
+        mode: 'loop',
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+      assert.equal(loopState.status, 'completed');
+    });
+  });
+
   describe('dependency cache explicit cacheKey (P3-T6)', () => {
     const NODEJS_CATALOG: Record<string, RuntimeProfile> = {
       ...FAKE_CATALOG,

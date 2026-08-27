@@ -1,5 +1,5 @@
 import path from 'path';
-import type { Agent, AgentBootstrapState, AppConfig } from '../../../types';
+import type { Agent, AgentBootstrapState, AppConfig, AgentMode } from '../../../types';
 import type { JsonStore } from '../../../lib/json-store';
 import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writer';
 import { computeCacheKey, type DepCacheKey } from './dep-cache-key';
@@ -17,6 +17,11 @@ export interface RunWorkspaceBootstrapOptions {
   logPath: string;
   agentId: string;
   agentsStore: JsonStore<{ agents: Agent[] }>;
+  /**
+   * Agent mode for this run (P4-T3). When the config sets `setup.runOnModes`
+   * and this mode is not listed, the bootstrap is skipped for the run.
+   */
+  mode?: AgentMode;
   /**
    * Server config used for the profile gate (P2-T4): `enabledRuntimeProfiles`
    * (undefined or empty = all catalog profiles allowed), `bootstrapAutoDetect`
@@ -63,6 +68,9 @@ export interface RunWorkspaceBootstrapOptions {
  *   lockfile-only auto-detect for unconfigured repos (P2-T4).
  * - `environment.json` present → `resolveSetupCommand` runs; `source: 'none'`
  *   (no usable config entry) → skipped.
+ *
+ * Mode filter (P4-T3): when `setup.runOnModes` is set and `options.mode` is
+ *   not listed, the bootstrap is skipped for that run (reason logged).
  *
  * Profile gate (P2-T4): requested and detected profiles are filtered against
  * `config.enabledRuntimeProfiles` (undefined or empty = all catalog profiles
@@ -195,6 +203,18 @@ export async function runWorkspaceBootstrap(
   const { command, source } = resolved;
   const profiles = resolved.profiles;
   const failOnError = envConfig?.setup?.failOnError;
+
+  // Mode filter (P4-T3): `setup.runOnModes` restricts which agent modes run
+  // this setup; a mode not in the list skips the bootstrap for the run.
+  const runOnModes = envConfig?.setup?.runOnModes;
+  const mode = options.mode;
+  if (runOnModes !== undefined && mode !== undefined && !runOnModes.includes(mode)) {
+    appendLog(
+      logPath,
+      `Workspace bootstrap skipped: mode '${mode}' not in setup.runOnModes [${runOnModes.join(', ')}]`,
+    );
+    return { status: 'skipped' };
+  }
 
   appendLog(
     logPath,

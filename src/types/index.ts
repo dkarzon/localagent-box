@@ -273,6 +273,11 @@ export interface RepoEnvironmentSetupConfig {
   timeoutMs?: number;
   /** Default true — a non-zero exit fails the agent (applied at runtime) */
   failOnError?: boolean;
+  /**
+   * Modes for which the setup runs (P4-T3). When set and the agent's mode is
+   * not listed, the bootstrap is skipped for that run.
+   */
+  runOnModes?: AgentMode[];
 }
 
 /**

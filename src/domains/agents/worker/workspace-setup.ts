@@ -142,6 +142,8 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
     agentId: job.agentId,
     agentsStore,
     config,
+    // Mode filter (P4-T3): honor setup.runOnModes for this run.
+    mode: getAgentMode(job),
     // Dependency cache (P3-T4): persist node_modules across runs when the
     // operator opts in (DEP_CACHE_ENABLED / depCacheEnabled under dataDir).
     depCache: getServerEnv().depCacheEnabled

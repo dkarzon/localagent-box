@@ -141,6 +141,53 @@ describe('validateEnvironmentConfig', () => {
     );
   });
 
+  it('accepts an optional setup.runOnModes', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      setup: { command: 'npm ci', runOnModes: ['batch', 'interactive', 'loop'] },
+    });
+    assert.deepEqual(result.setup?.runOnModes, ['batch', 'interactive', 'loop']);
+  });
+
+  it('rejects non-array setup.runOnModes', () => {
+    for (const runOnModes of ['batch', 'batch,loop', 42, null, { batch: true }]) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            setup: { command: 'x', runOnModes },
+          }),
+        /environment\.json setup runOnModes must be an array of agent modes when provided/,
+      );
+    }
+  });
+
+  it('rejects unknown or malformed entries in setup.runOnModes', () => {
+    for (const entry of [42, '', 'production', 'review-again', null, undefined, true]) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            setup: { command: 'x', runOnModes: [entry] },
+          }),
+        /environment\.json setup runOnModes\[0\] must be one of batch, interactive, loop, review/,
+      );
+    }
+  });
+
+  it('rejects empty or whitespace-only entries in setup.runOnModes', () => {
+    for (const entry of ['', '   ']) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            setup: { command: 'x', runOnModes: [entry] },
+          }),
+        /environment\.json setup runOnModes\[0\] must be one of batch, interactive, loop, review/,
+      );
+    }
+  });
+
   it('accepts optional profiles and autoDetect', () => {
     const result = validateEnvironmentConfig({
       version: 1,

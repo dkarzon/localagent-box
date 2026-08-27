@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type {
+  AgentMode,
   RepoEnvironmentConfig,
   RepoEnvironmentSetupConfig,
 } from '../../../types';
@@ -128,7 +129,32 @@ function validateSetup(raw: unknown): RepoEnvironmentSetupConfig {
     setupConfig.failOnError = setup.failOnError;
   }
 
+  if (setup.runOnModes !== undefined) {
+    setupConfig.runOnModes = validateRunOnModes(setup.runOnModes);
+  }
+
   return setupConfig;
+}
+
+const VALID_MODES: readonly AgentMode[] = ['batch', 'interactive', 'loop', 'review'];
+
+function assertValidMode(value: unknown, index: number): asserts value is AgentMode {
+  if (!VALID_MODES.includes(value as AgentMode)) {
+    throw new Error(
+      `${environmentConfigRelative} setup runOnModes[${index}] must be one of ${VALID_MODES.join(', ')}`,
+    );
+  }
+}
+
+function validateRunOnModes(raw: unknown): AgentMode[] {
+  const location = `${environmentConfigRelative} setup runOnModes`;
+  if (!Array.isArray(raw)) {
+    throw new Error(`${location} must be an array of agent modes when provided`);
+  }
+  return raw.map((entry, index) => {
+    assertValidMode(entry, index);
+    return entry as AgentMode;
+  });
 }
 
 export function loadEnvironmentConfig(
