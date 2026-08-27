@@ -7,7 +7,7 @@ import { getDepCacheDirs, restoreDepCache, snapshotDepCache } from './dep-cache'
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
 import { detectProfiles, detectSetupScript, resolveSetupCommand } from './environment-detect';
 import { loadRuntimeProfiles } from './runtime-profiles';
-import { runWorkspaceCommand } from './workspace-command';
+import { runWorkspaceCommand, type WorkspaceCommandResult } from './workspace-command';
 
 /** Default timeout applied to a repo's setup command (10 min). */
 export const DEFAULT_SETUP_TIMEOUT_MS = 600_000;
@@ -68,9 +68,96 @@ export interface RunWorkspaceBootstrapOptions {
  * `config.enabledRuntimeProfiles` (undefined or empty = all catalog profiles
  * enabled); disabled profiles are skipped with a warning in the worker log.
  *
+ * Post-setup verification (P4-T2): when the config sets `verifyCommand`, it
+ * is run after a successful setup with the same timeout as the setup
+ * command (or `verifyTimeoutMs`); a failure always fails the bootstrap
+ * (there is no `failOnError` opt-out for verify).
+ *
  * Throws when the setup command fails with `failOnError` left at its
  * default (`true`); caller is expected to fail the agent start.
  */
+/**
+ * Run a successful setup's post-setup smoke test (P4-T2). A failure always
+ * fails the bootstrap and throws (no `failOnError` opt-out for verify), so
+ * a broken environment never reaches the agent.
+ */
+async function runVerifyCommand(
+  agentsStore: JsonStore<{ agents: Agent[] }>,
+  agentId: string,
+  logPath: string,
+  workspaceDir: string,
+  setupCommand: string,
+  profiles: string[],
+  source: AgentBootstrapState['source'],
+  setupDurationMs: number,
+  setupResult: WorkspaceCommandResult,
+  cacheHit: boolean,
+  verifyCommand: string,
+  timeoutMs: number,
+  runCommand: typeof runWorkspaceCommand,
+): Promise<AgentBootstrapState> {
+  updateAgentRecord(agentsStore, agentId, {
+    bootstrap: {
+      status: 'running',
+      command: setupCommand,
+      verifyCommand,
+      profiles,
+      source,
+    },
+  });
+
+  appendLog(
+    logPath,
+    `Running post-setup verify: ${verifyCommand} (setup=${setupCommand} took ${setupDurationMs}ms, exit code ${setupResult.exitCode})`,
+  );
+  const verifyStartedAt = Date.now();
+  const verifyResult = await runCommand(workspaceDir, verifyCommand, { timeoutMs });
+  const verifyDurationMs = Date.now() - verifyStartedAt;
+  appendLog(
+    logPath,
+    `Workspace bootstrap verify ${verifyResult.success ? 'completed' : 'failed'} in ${verifyDurationMs}ms (exit code ${verifyResult.exitCode})`,
+  );
+  appendLogBlock(logPath, 'Workspace bootstrap verify output:', verifyResult.outputTail);
+
+  if (verifyResult.success) {
+    const state: AgentBootstrapState = {
+      status: 'completed',
+      command: setupCommand,
+      verifyCommand,
+      profiles,
+      source,
+      durationMs: setupDurationMs,
+      exitCode: setupResult.exitCode,
+      verifyExitCode: verifyResult.exitCode,
+      outputTail: verifyResult.outputTail,
+      cacheHit,
+    };
+    updateAgentRecord(agentsStore, agentId, { bootstrap: state });
+    return state;
+  }
+
+  const exitCode = verifyResult.exitCode;
+  const outputTail = verifyResult.outputTail;
+  const error = verifyResult.timedOut
+    ? `Bootstrap verify timed out: \`${verifyCommand}\` (timeout ${timeoutMs}ms)`
+    : `Bootstrap verify failed: \`${verifyCommand}\` exited ${exitCode}`;
+  const failedState: AgentBootstrapState = {
+    status: 'failed',
+    command: setupCommand,
+    verifyCommand,
+    profiles,
+    source,
+    durationMs: setupDurationMs,
+    exitCode: setupResult.exitCode,
+    verifyExitCode: exitCode,
+    outputTail,
+    error,
+    cacheHit,
+  };
+  updateAgentRecord(agentsStore, agentId, { bootstrap: failedState });
+  throw new Error(`${error}\n${outputTail}`);
+}
+
 export async function runWorkspaceBootstrap(
   options: RunWorkspaceBootstrapOptions,
 ): Promise<AgentBootstrapState> {
@@ -212,6 +299,26 @@ export async function runWorkspaceBootstrap(
     }
     appendLog(logPath, `Workspace bootstrap completed in ${durationMs}ms (exit code ${result.exitCode})`);
     appendLogBlock(logPath, 'Workspace bootstrap output:', result.outputTail);
+
+    const verifyCommand = envConfig?.verifyCommand;
+    if (verifyCommand !== undefined) {
+      return await runVerifyCommand(
+        agentsStore,
+        agentId,
+        logPath,
+        workspaceDir,
+        command,
+        profiles,
+        source,
+        durationMs,
+        result,
+        cacheHit,
+        verifyCommand,
+        envConfig?.verifyTimeoutMs ?? timeoutMsToUse,
+        runCommand,
+      );
+    }
+
     const state: AgentBootstrapState = {
       status: 'completed',
       command,

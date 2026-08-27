@@ -276,7 +276,7 @@ export interface RepoEnvironmentSetupConfig {
 }
 
 /**
- * Parsed .localagent-box/environment.json content (Phase 1 fields).
+ * Parsed .localagent-box/environment.json content.
  * Unknown top-level keys are ignored by the loader.
  */
 export interface RepoEnvironmentConfig {
@@ -293,6 +293,16 @@ export interface RepoEnvironmentConfig {
    * alphanumerics + hyphens) instead of a hash of the lockfile contents.
    */
   cacheKey?: string;
+  /**
+   * Post-setup smoke test run after a successful setup command (P4-T2).
+   * A failure always fails the bootstrap, regardless of `setup.failOnError`.
+   */
+  verifyCommand?: string;
+  /**
+   * Timeout for the verify command (P4-T2). Defaults to the setup timeout
+   * (or `DEFAULT_SETUP_TIMEOUT_MS` when the setup block has none).
+   */
+  verifyTimeoutMs?: number;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
@@ -324,6 +334,13 @@ export interface AgentBootstrapState {
    * cache is disabled.
    */
   cacheHit?: boolean;
+  /** Post-setup smoke test command run after a successful setup (P4-T2) */
+  verifyCommand?: string;
+  /**
+   * Exit code of the post-setup verify command (P4-T2). Omitted when no
+   * `verifyCommand` was configured or has not run yet.
+   */
+  verifyExitCode?: number;
 }
 
 export interface Agent {

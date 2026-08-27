@@ -157,7 +157,7 @@ describe('validateEnvironmentConfig', () => {
     );
     assert.throws(
       () => validateEnvironmentConfig({ version: 1, profiles: ['nodejs', 42, ''] }),
-      /environment\.json profiles\[2\] must be a non-empty string/,
+      /environment\.json profiles\[1\] must be a non-empty string/,
     );
   });
 
@@ -190,6 +190,48 @@ describe('validateEnvironmentConfig', () => {
       assert.throws(
         () => validateEnvironmentConfig({ version: 1, cacheKey }),
         /environment\.json cacheKey must be a non-empty string when provided/,
+      );
+    }
+  });
+
+  it('accepts an optional verifyCommand', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      setup: { command: 'npm ci' },
+      verifyCommand: 'npm test --passWithNoTests',
+    });
+    assert.equal(result.verifyCommand, 'npm test --passWithNoTests');
+  });
+
+  it('rejects non-string or empty verifyCommand values', () => {
+    for (const verifyCommand of [42, null, true, [], '', '   ']) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, verifyCommand }),
+        /environment\.json verifyCommand must be a non-empty string when provided/,
+      );
+    }
+  });
+
+  it('accepts an optional verifyTimeoutMs', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      verifyCommand: 'npm test',
+      verifyTimeoutMs: 300_000,
+    });
+    assert.equal(result.verifyTimeoutMs, 300_000);
+  });
+
+  it('rejects bad verifyTimeoutMs values', () => {
+    const cases: unknown[] = [0, -1, -300_000, 1.5, 0.5, '300000', null, true, NaN, Infinity, 1_800_001];
+    for (const verifyTimeoutMs of cases) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            verifyCommand: 'npm test',
+            verifyTimeoutMs,
+          }),
+        /environment\.json verifyTimeoutMs must be a positive integer no greater than 1800000 when provided/,
       );
     }
   });

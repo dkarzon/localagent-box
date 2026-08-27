@@ -57,6 +57,30 @@ export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
     config.cacheKey = cacheKey;
   }
 
+  if (obj.verifyCommand !== undefined) {
+    if (typeof obj.verifyCommand !== 'string' || obj.verifyCommand.trim() === '') {
+      throw new Error(
+        `${environmentConfigRelative} verifyCommand must be a non-empty string when provided`,
+      );
+    }
+    config.verifyCommand = obj.verifyCommand;
+  }
+
+  if (obj.verifyTimeoutMs !== undefined) {
+    const verifyTimeoutMs = obj.verifyTimeoutMs;
+    if (
+      typeof verifyTimeoutMs !== 'number' ||
+      !Number.isInteger(verifyTimeoutMs) ||
+      verifyTimeoutMs <= 0 ||
+      verifyTimeoutMs > MAX_SETUP_TIMEOUT_MS
+    ) {
+      throw new Error(
+        `${environmentConfigRelative} verifyTimeoutMs must be a positive integer no greater than ${MAX_SETUP_TIMEOUT_MS} when provided`,
+      );
+    }
+    config.verifyTimeoutMs = verifyTimeoutMs;
+  }
+
   return config;
 }
 
