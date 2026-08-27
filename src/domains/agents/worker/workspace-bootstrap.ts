@@ -5,7 +5,7 @@ import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writ
 import { computeCacheKey, type DepCacheKey } from './dep-cache-key';
 import { getDepCacheDirs, restoreDepCache, snapshotDepCache } from './dep-cache';
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
-import { detectProfiles, resolveSetupCommand } from './environment-detect';
+import { detectProfiles, detectSetupScript, resolveSetupCommand } from './environment-detect';
 import { loadRuntimeProfiles } from './runtime-profiles';
 import { runWorkspaceCommand } from './workspace-command';
 
@@ -51,11 +51,13 @@ export interface RunWorkspaceBootstrapOptions {
 
 /**
  * Host-run workspace bootstrap: resolve the repo's setup command
- * (explicit `setup.command` → `profiles` → lockfile auto-detect), run it
- * before the agent starts, and record the outcome on the agent record
- * plus in the worker log.
+ * (committed `.localagent-box/setup.sh` → explicit `setup.command` →
+ * `profiles` → lockfile auto-detect), run it before the agent starts, and
+ * record the outcome on the agent record plus in the worker log.
  *
- * Resolution (P2-T3):
+ * Resolution:
+ * - `.localagent-box/setup.sh` committed in the repo → run via `bash`
+ *   (P4-T1), before any other source is considered.
  * - No `.localagent-box/environment.json` → skipped, unless the server config
  *   sets `bootstrapAutoDetect: true` (`BOOTSTRAP_AUTO_DETECT`), which enables
  *   lockfile-only auto-detect for unconfigured repos (P2-T4).
@@ -86,7 +88,8 @@ export async function runWorkspaceBootstrap(
       : enabledProfiles;
 
   const envConfig = loadEnvironmentConfig(workspaceDir);
-  if (envConfig === null && config?.bootstrapAutoDetect !== true) {
+  const setupScript = detectSetupScript(workspaceDir);
+  if (envConfig === null && setupScript === null && config?.bootstrapAutoDetect !== true) {
     return { status: 'skipped' };
   }
 
@@ -167,7 +170,11 @@ export async function runWorkspaceBootstrap(
   }
 
   appendLog(logPath, 'Running workspace bootstrap…');
-  appendLog(logPath, `${environmentConfigRelative} command: ${command}`);
+  if (source === 'script') {
+    appendLog(logPath, `setup script command: ${command}`);
+  } else {
+    appendLog(logPath, `${environmentConfigRelative} command: ${command}`);
+  }
   updateAgentRecord(agentsStore, agentId, {
     bootstrap: { status: 'running', command, profiles, source, cacheHit },
   });

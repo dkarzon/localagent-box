@@ -66,6 +66,13 @@ function writeConfig(workspaceDir: string, json: string): void {
   fs.writeFileSync(path.join(repoDir, 'environment.json'), json, 'utf8');
 }
 
+/** Commit `.localagent-box/setup.sh` in the workspace. */
+function writeSetupScript(workspaceDir: string, body = '#!/usr/bin/env bash\nset -euo pipefail\necho setup-script-ok\n'): void {
+  const repoDir = path.join(workspaceDir, '.localagent-box');
+  fs.mkdirSync(repoDir, { recursive: true });
+  fs.writeFileSync(path.join(repoDir, 'setup.sh'), body, 'utf8');
+}
+
 /**
  * Fake runtime profiles so detection/profiling tests do not depend on the
  * bundled catalog (whose `defaultSetup` would shell out during real runs).
@@ -234,6 +241,134 @@ describe('runWorkspaceBootstrap', () => {
     assert.deepEqual(state, { status: 'skipped' });
     assert.equal(h.runCalls.length, 0);
     assert.equal(h.agent.bootstrap, undefined);
+  });
+
+  describe('setup script (P4-T1)', () => {
+    it('runs the committed setup.sh in place of an explicit setup.command', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, setup: { command: 'should-not-run' } }),
+      );
+
+      const state = await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'setup-script-ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(h.runCalls.length, 1);
+      assert.equal(h.runCalls[0].command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.deepEqual(state.profiles, []);
+      assert.equal(state.status, 'completed');
+    });
+
+    it('runs the committed setup.sh in place of profiles and auto-detect', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeSetupScript(h.workspaceDir);
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, profiles: ['pkg'] }));
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.deepEqual(state.profiles, []);
+    });
+
+    it('runs the committed setup.sh even without an environment.json', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+
+      const state = await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.equal(h.runCalls.length, 1);
+    });
+
+    it('logs the setup script command line during a run', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+
+      await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Bootstrap: source=script/);
+      assert.match(log, /setup script command: bash \.localagent-box\/setup\.sh/);
+      assert.match(log, /Running workspace bootstrap/);
+    });
+
+    it('treats a failing setup.sh like any other failed setup and throws', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir, '#!/usr/bin/env bash\nexit 1\n');
+
+      let caught: unknown;
+      try {
+        await runBootstrap(h, {
+          runCommand: fakeRunCommand(h, {
+            command: 'bash .localagent-box/setup.sh',
+            exitCode: 1,
+            outputTail: 'failure in setup.sh',
+            timedOut: false,
+            success: false,
+          }),
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      assert.ok(caught instanceof Error);
+      assert.match((caught as { message: string }).message, /^Bootstrap failed: `bash \.localagent-box\/setup\.sh` exited 1/);
+      assert.equal(h.agent.bootstrap?.status, 'failed');
+      assert.equal(h.agent.bootstrap?.source, 'script');
+    });
+
+    it('executes a real setup.sh end to end without an injected runner', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+
+      const state = await runBootstrap(h);
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.match(state.outputTail ?? '', /setup-script-ok/);
+    });
   });
 
   it('runs the configured command and records a completed bootstrap', async () => {

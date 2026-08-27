@@ -4,14 +4,37 @@ import type { RepoEnvironmentConfig } from '../../../types';
 import type { RuntimeProfile } from './runtime-profiles';
 
 /** Source of a resolved setup command. */
-export type SetupCommandSource = 'explicit' | 'profile' | 'detect' | 'none';
+export type SetupCommandSource = 'script' | 'explicit' | 'profile' | 'detect' | 'none';
 
 export interface ResolvedSetupCommand {
   /** The setup command to run; empty string when `source` is `'none'`. */
   command: string;
-  /** Profile name(s) applied to the command; `[]` for `'explicit'` / `'none'`. */
+  /** Profile name(s) applied to the command; `[]` for `'script'` / `'explicit'` / `'none'`. */
   profiles: string[];
   source: SetupCommandSource;
+}
+
+/**
+ * Committed per-repo setup script run instead of any configured command
+ * (P4-T1). Path is relative to the workspace root; the script must exist in
+ * the repo — agent-written `.localagent-box/` artifacts are gitignored, so an
+ * absent file means the repo never opted into the script.
+ */
+export const setupScriptRelative = path.join('.localagent-box', 'setup.sh');
+
+/** Command the host runs against the workspace root for a committed setup script. */
+export const setupScriptCommand = `bash ${setupScriptRelative}`;
+
+/**
+ * Reports the repo's committed setup script when it exists.
+ *
+ * Resolution order (P4-T1): the script wins over `environment.json`
+ * `setup.command`, `profiles`, and lockfile auto-detect.
+ */
+export function detectSetupScript(workspaceDir: string): string | null {
+  return fs.existsSync(path.join(workspaceDir, setupScriptRelative))
+    ? setupScriptCommand
+    : null;
 }
 
 /**
@@ -90,16 +113,18 @@ export function detectProfiles(
  * Resolves the setup command to run for a repo workspace.
  *
  * Resolution order:
- * 1. Explicit `config.setup.command` → `'explicit'`
- * 2. `config.profiles` (non-empty) → first requested profile that exists in
+ * 1. Committed `.localagent-box/setup.sh` → `'script'` (P4-T1) — the script
+ *    wins over everything else, including an explicit `setup.command`.
+ * 2. Explicit `config.setup.command` → `'explicit'`
+ * 3. `config.profiles` (non-empty) → first requested profile that exists in
  *    the catalog and is still enabled (`'profile'`). Disabled or unknown
  *    entries are skipped; when none are usable, resolution stops at
  *    `'none'` (no implicit auto-detect when `profiles` was declared).
- * 3. Lockfile auto-detect via `detectProfiles` (`'detect'`), unless
+ * 4. Lockfile auto-detect via `detectProfiles` (`'detect'`), unless
  *    `config.autoDetect === false`. With no `environment.json` at all
  *    (`config === null`) auto-detection still runs: there is no explicit
  *    config to opt out of it.
- * 4. Nothing matched → `'none'`.
+ * 5. Nothing matched → `'none'`.
  *
  * When `enabledProfileNames` is provided, requested and detected profiles
  * outside the list are skipped (server-side profile gate; undefined/empty =
@@ -113,6 +138,10 @@ export function resolveSetupCommand(
   enabledProfileNames?: readonly string[],
   onProfileSkipped?: (profileName: string, reason: 'disabled' | 'unknown') => void,
 ): ResolvedSetupCommand {
+  if (fs.existsSync(path.join(workspaceDir, setupScriptRelative))) {
+    return { command: setupScriptCommand, profiles: [], source: 'script' };
+  }
+
   const isGated = enabledProfileNames !== undefined && enabledProfileNames.length > 0;
   const enabledSet = isGated ? new Set(enabledProfileNames) : undefined;
 

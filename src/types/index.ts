@@ -298,7 +298,7 @@ export interface RepoEnvironmentConfig {
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
 
 /** Where the bootstrap setup command came from. */
-export type AgentBootstrapSource = 'explicit' | 'profile' | 'detect' | 'none';
+export type AgentBootstrapSource = 'script' | 'explicit' | 'profile' | 'detect' | 'none';
 
 /**
  * Host bootstrap result state; persisted on the Agent record (P1-T5).

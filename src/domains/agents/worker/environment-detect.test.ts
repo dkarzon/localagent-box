@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { loadRuntimeProfiles } from './runtime-profiles';
-import { detectProfiles, resolveSetupCommand } from './environment-detect';
+import {
+  detectProfiles,
+  detectSetupScript,
+  resolveSetupCommand,
+  setupScriptCommand,
+  setupScriptRelative,
+} from './environment-detect';
 import type { RuntimeProfile } from './runtime-profiles';
 
 const CATALOG: Record<string, RuntimeProfile> = loadRuntimeProfiles();
@@ -253,5 +259,69 @@ describe('resolveSetupCommand', () => {
       source: 'profile',
     });
     assert.deepEqual(skipped, [{ profile: 'go', reason: 'disabled' }]);
+  });
+});
+
+describe('setup script resolution (P4-T1)', () => {
+  function tmpWorkspace(files: string[]): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'environment-detect-'));
+    for (const file of files) {
+      fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      fs.writeFileSync(path.join(dir, file), '', 'utf8');
+    }
+    return dir;
+  }
+
+  it('exports the setup script path and invocation', () => {
+    assert.equal(setupScriptRelative, '.localagent-box/setup.sh');
+    assert.equal(setupScriptCommand, 'bash .localagent-box/setup.sh');
+  });
+
+  it('detects a committed setup.sh', () => {
+    const dir = tmpWorkspace(['setup-marker', '.localagent-box/setup.sh']);
+    assert.equal(detectSetupScript(dir), 'bash .localagent-box/setup.sh');
+  });
+
+  it('returns null when the setup script is absent', () => {
+    const dir = tmpWorkspace(['setup-marker']);
+    assert.equal(detectSetupScript(dir), null);
+  });
+
+  it('resolves a committed setup.sh before an explicit setup.command', () => {
+    const dir = tmpWorkspace(['setup-marker', '.localagent-box/setup.sh']);
+    const resolved = resolveSetupCommand(
+      { version: 1, setup: { command: 'make build' } },
+      dir,
+      CATALOG,
+    );
+    assert.deepEqual(resolved, {
+      command: 'bash .localagent-box/setup.sh',
+      profiles: [],
+      source: 'script',
+    });
+  });
+
+  it('resolves a committed setup.sh before profiles and auto-detect', () => {
+    const dir = tmpWorkspace(['setup-marker', 'pnpm-lock.yaml', 'package.json', '.localagent-box/setup.sh']);
+    const resolved = resolveSetupCommand(
+      { version: 1, profiles: ['nodejs-pnpm'], autoDetect: true },
+      dir,
+      CATALOG,
+    );
+    assert.deepEqual(resolved, {
+      command: 'bash .localagent-box/setup.sh',
+      profiles: [],
+      source: 'script',
+    });
+  });
+
+  it('still resolves explicit setup.command when no setup.sh is committed', () => {
+    const dir = tmpWorkspace(['setup-marker']);
+    const resolved = resolveSetupCommand(
+      { version: 1, setup: { command: 'make build' }, profiles: ['nodejs'] },
+      dir,
+      CATALOG,
+    );
+    assert.deepEqual(resolved, { command: 'make build', profiles: [], source: 'explicit' });
   });
 });
