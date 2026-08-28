@@ -62,7 +62,12 @@ export interface RunWorkspaceBootstrapOptions {
  *
  * Resolution:
  * - `.localagent-box/setup.sh` committed in the repo → run via `bash`
- *   (P4-T1), before any other source is considered.
+ *   (P4-T1), before any other source is considered. Effective semantics
+ *   for a bare script (no `environment.json`): it always fail-hards —
+ *   a non-zero exit throws and fails the agent start — no `verifyCommand`
+ *   runs, and `setup.runOnModes` and `cacheKey` have no effect. With an
+ *   `environment.json` alongside, `setup.failOnError`, `setup.timeoutMs`,
+ *   `setup.runOnModes`, `verifyCommand`, and `cacheKey` still apply.
  * - No `.localagent-box/environment.json` → skipped, unless the server config
  *   sets `bootstrapAutoDetect: true` (`BOOTSTRAP_AUTO_DETECT`), which enables
  *   lockfile-only auto-detect for unconfigured repos (P2-T4).

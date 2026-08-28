@@ -30,6 +30,13 @@ export const setupScriptCommand = `bash ${setupScriptRelative}`;
  *
  * Resolution order (P4-T1): the script wins over `environment.json`
  * `setup.command`, `profiles`, and lockfile auto-detect.
+ *
+ * For a bare script (no `environment.json` in the repo), the caller runs it
+ * with fail-hard semantics: a non-zero exit always fails the agent start
+ * (the `setup.failOnError: false` opt-out and `setup.verifyCommand` are
+ * `environment.json` settings that do not exist here), and `timeoutMs`,
+ * `runOnModes`, and `cacheKey` have no effect. The global
+ * `globalSetupTimeoutMs` and the lockfile-derived dep cache still apply.
  */
 export function detectSetupScript(workspaceDir: string): string | null {
   return fs.existsSync(path.join(workspaceDir, setupScriptRelative))
