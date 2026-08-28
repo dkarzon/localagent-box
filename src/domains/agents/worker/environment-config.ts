@@ -136,7 +136,11 @@ function validateSetup(raw: unknown): RepoEnvironmentSetupConfig {
   return setupConfig;
 }
 
-const VALID_MODES: readonly AgentMode[] = ['batch', 'interactive', 'loop', 'review'];
+const VALID_MODES = ['batch', 'interactive', 'loop', 'review'] as const satisfies readonly AgentMode[];
+// Errors at compile time if VALID_MODES and AgentMode drift apart (missing modes).
+export const _agentModeExhaustive: Exclude<AgentMode, (typeof VALID_MODES)[number]> extends never
+  ? true
+  : never = true;
 
 function assertValidMode(value: unknown, index: number): asserts value is AgentMode {
   if (!VALID_MODES.includes(value as AgentMode)) {
