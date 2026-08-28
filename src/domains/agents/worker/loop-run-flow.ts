@@ -202,7 +202,9 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   if (verb === 'REFLECT' && params.iterationCheckResult) {
     conversationParts.push(formatCheckResultBlock(params.iterationCheckResult));
   }
-  const conversationText = conversationParts.join('\n\n');
+  const conversationText = conversationParts
+    .filter((part): part is string => part !== null)
+    .join('\n\n');
   const promptText = buildOpenCodePrompt(
     conversationText,
     job.systemPrompt,
