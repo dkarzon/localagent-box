@@ -66,6 +66,13 @@ function writeConfig(workspaceDir: string, json: string): void {
   fs.writeFileSync(path.join(repoDir, 'environment.json'), json, 'utf8');
 }
 
+/** Commit `.localagent-box/setup.sh` in the workspace. */
+function writeSetupScript(workspaceDir: string, body = '#!/usr/bin/env bash\nset -euo pipefail\necho setup-script-ok\n'): void {
+  const repoDir = path.join(workspaceDir, '.localagent-box');
+  fs.mkdirSync(repoDir, { recursive: true });
+  fs.writeFileSync(path.join(repoDir, 'setup.sh'), body, 'utf8');
+}
+
 /**
  * Fake runtime profiles so detection/profiling tests do not depend on the
  * bundled catalog (whose `defaultSetup` would shell out during real runs).
@@ -234,6 +241,134 @@ describe('runWorkspaceBootstrap', () => {
     assert.deepEqual(state, { status: 'skipped' });
     assert.equal(h.runCalls.length, 0);
     assert.equal(h.agent.bootstrap, undefined);
+  });
+
+  describe('setup script (P4-T1)', () => {
+    it('runs the committed setup.sh in place of an explicit setup.command', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, setup: { command: 'should-not-run' } }),
+      );
+
+      const state = await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'setup-script-ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(h.runCalls.length, 1);
+      assert.equal(h.runCalls[0].command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.deepEqual(state.profiles, []);
+      assert.equal(state.status, 'completed');
+    });
+
+    it('runs the committed setup.sh in place of profiles and auto-detect', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeSetupScript(h.workspaceDir);
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, profiles: ['pkg'] }));
+
+      const state = await runBootstrap(h, {
+        loadProfiles: () => FAKE_CATALOG,
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.deepEqual(state.profiles, []);
+    });
+
+    it('runs the committed setup.sh even without an environment.json', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+
+      const state = await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.equal(h.runCalls.length, 1);
+    });
+
+    it('logs the setup script command line during a run', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+
+      await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Bootstrap: source=script/);
+      assert.match(log, /setup script command: bash \.localagent-box\/setup\.sh/);
+      assert.match(log, /Running workspace bootstrap/);
+    });
+
+    it('treats a failing setup.sh like any other failed setup and throws', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir, '#!/usr/bin/env bash\nexit 1\n');
+
+      let caught: unknown;
+      try {
+        await runBootstrap(h, {
+          runCommand: fakeRunCommand(h, {
+            command: 'bash .localagent-box/setup.sh',
+            exitCode: 1,
+            outputTail: 'failure in setup.sh',
+            timedOut: false,
+            success: false,
+          }),
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      assert.ok(caught instanceof Error);
+      assert.match((caught as { message: string }).message, /^Bootstrap failed: `bash \.localagent-box\/setup\.sh` exited 1/);
+      assert.equal(h.agent.bootstrap?.status, 'failed');
+      assert.equal(h.agent.bootstrap?.source, 'script');
+    });
+
+    it('executes a real setup.sh end to end without an injected runner', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+
+      const state = await runBootstrap(h);
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.match(state.outputTail ?? '', /setup-script-ok/);
+    });
   });
 
   it('runs the configured command and records a completed bootstrap', async () => {
@@ -721,6 +856,298 @@ describe('runWorkspaceBootstrap', () => {
       assert.equal(state.source, 'explicit');
       assert.deepEqual(state.profiles, []);
       assert.equal(h.agent.bootstrap?.source, 'explicit');
+    });
+  });
+
+  describe('verifyCommand after setup (P4-T2)', () => {
+    /** Fake runner that returns a different result per command (setup vs verify). */
+    function setupAndVerifyCommand(
+      h: Harness,
+      setupResult: WorkspaceCommandResult,
+      verifyResult: WorkspaceCommandResult,
+    ): typeof runWorkspaceCommand {
+      const fn = async (
+        workspaceDir: string,
+        command: string,
+        options?: { timeoutMs?: number },
+      ): Promise<WorkspaceCommandResult> => {
+        h.runCalls.push({
+          workspaceDir,
+          command,
+          timeoutMs: options?.timeoutMs,
+          agentRecordBefore: h.agent.bootstrap ? { ...h.agent.bootstrap } : undefined,
+        });
+        if (h.runCalls.length === 1) {
+          return setupResult;
+        }
+        return verifyResult;
+      };
+      return fn as unknown as typeof runWorkspaceCommand;
+    }
+
+    const success = (command: string, outputTail: string): WorkspaceCommandResult => ({
+      command,
+      exitCode: 0,
+      outputTail,
+      timedOut: false,
+      success: true,
+    });
+
+    it('runs the verify command after a successful setup and records the outcome', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'npm ci' },
+          verifyCommand: 'npm test --passWithNoTests',
+        }),
+      );
+
+      const state = await runBootstrap(h, {
+        runCommand: setupAndVerifyCommand(
+          h,
+          success('npm ci', 'setup-ok'),
+          success('npm test --passWithNoTests', 'verify-ok'),
+        ),
+      });
+
+      assert.equal(h.runCalls.length, 2);
+      assert.equal(h.runCalls[0].command, 'npm ci');
+      assert.equal(h.runCalls[1].command, 'npm test --passWithNoTests');
+      assert.equal(h.runCalls[0].timeoutMs, DEFAULT_SETUP_TIMEOUT_MS);
+      assert.equal(h.runCalls[1].timeoutMs, DEFAULT_SETUP_TIMEOUT_MS);
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'npm ci');
+      assert.equal(state.verifyCommand, 'npm test --passWithNoTests');
+      assert.equal(state.verifyExitCode, 0);
+      assert.equal(state.outputTail, 'verify-ok');
+
+      assert.equal(h.agent.bootstrap?.verifyCommand, 'npm test --passWithNoTests');
+      assert.equal(h.agent.bootstrap?.verifyExitCode, 0);
+      assert.equal(h.agent.bootstrap?.status, 'completed');
+
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap completed in \d+ms \(exit code 0\)/);
+      assert.match(log, /Running post-setup verify: npm test --passWithNoTests/);
+    });
+
+    it('passes verifyTimeoutMs to the verify run when provided', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'npm ci', timeoutMs: 120_000 },
+          verifyCommand: 'npm test',
+          verifyTimeoutMs: 45_000,
+        }),
+      );
+
+      await runBootstrap(h, {
+        runCommand: setupAndVerifyCommand(
+          h,
+          success('npm ci', 'ok'),
+          success('npm test', 'ok'),
+        ),
+      });
+
+      assert.equal(h.runCalls.length, 2);
+      assert.equal(h.runCalls[0].timeoutMs, 120_000);
+      assert.equal(h.runCalls[1].timeoutMs, 45_000);
+    });
+
+    it('fails the bootstrap (throw) when verify fails, regardless of failOnError=false', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'npm ci', failOnError: false },
+          verifyCommand: 'npm test',
+        }),
+      );
+
+      let caught: unknown;
+      try {
+        await runBootstrap(h, {
+          runCommand: setupAndVerifyCommand(
+            h,
+            success('npm ci', 'ok'),
+            { command: 'npm test', exitCode: 1, outputTail: 'npm ERR! test failed', timedOut: false, success: false },
+          ),
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      assert.ok(caught instanceof Error);
+      assert.match(
+        (caught as { message: string }).message,
+        /^Bootstrap verify failed: `npm test` exited 1/,
+      );
+      assert.match((caught as { message: string }).message, /npm ERR! test failed/);
+      assert.equal(h.agent.bootstrap?.status, 'failed');
+      assert.equal(h.agent.bootstrap?.command, 'npm ci');
+      assert.equal(h.agent.bootstrap?.verifyCommand, 'npm test');
+      assert.equal(h.agent.bootstrap?.exitCode, 0);
+      assert.equal(h.agent.bootstrap?.verifyExitCode, 1);
+      assert.equal(h.agent.bootstrap?.error, 'Bootstrap verify failed: `npm test` exited 1');
+
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap verify failed/);
+      assert.ok(
+        !log.includes('failOnError=false'),
+        'verify failure must not honor failOnError=false',
+      );
+    });
+
+    it('treats a verify timeout as a failure and throws', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'npm ci' },
+          verifyCommand: 'npm test',
+        }),
+      );
+
+      let caught: unknown;
+      try {
+        await runBootstrap(h, {
+          runCommand: setupAndVerifyCommand(
+            h,
+            success('npm ci', 'ok'),
+            { command: 'npm test', exitCode: 124, outputTail: '', timedOut: true, success: false },
+          ),
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      assert.ok(caught instanceof Error);
+      assert.match((caught as { message: string }).message, /Bootstrap verify timed out/);
+      assert.equal(h.agent.bootstrap?.verifyExitCode, 124);
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap verify failed/);
+    });
+
+    it('does not run verify when it is not configured', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, setup: { command: 'npm ci' } }));
+
+      const state = await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, success('npm ci', 'ok')),
+      });
+
+      assert.equal(h.runCalls.length, 1);
+      assert.equal(state.status, 'completed');
+      assert.equal(state.verifyCommand, undefined);
+      assert.equal(state.verifyExitCode, undefined);
+    });
+
+    it('runs verify after a script-sourced setup (P4-T1 + P4-T2)', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir);
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, verifyCommand: 'npm test' }));
+
+      const state = await runBootstrap(h, {
+        runCommand: setupAndVerifyCommand(
+          h,
+          success('bash .localagent-box/setup.sh', 'setup-script-ok'),
+          success('npm test', 'verify-ok'),
+        ),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.source, 'script');
+      assert.equal(state.verifyCommand, 'npm test');
+      assert.equal(state.verifyExitCode, 0);
+    });
+  });
+
+  describe('runOnModes mode filter (P4-T3)', () => {
+    const MODE_CONFIG = JSON.stringify({
+      version: 1,
+      setup: { command: 'npm ci', runOnModes: ['batch'] },
+    });
+
+    it('skips bootstrap when the mode is not in runOnModes and logs the reason', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, MODE_CONFIG);
+
+      const state = await runBootstrap(h, {
+        mode: 'review',
+        runCommand: fakeRunCommand(h, {
+          command: 'should-not-run',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.deepEqual(state, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+      assert.equal(h.agent.bootstrap, undefined);
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap skipped: mode 'review' not in setup\.runOnModes \[batch\]/);
+    });
+
+    it('runs the setup when the mode is in runOnModes', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, MODE_CONFIG);
+
+      const state = await runBootstrap(h, {
+        mode: 'batch',
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+
+      assert.equal(state.status, 'completed');
+      assert.equal(state.command, 'npm ci');
+      assert.equal(h.runCalls.length, 1);
+    });
+
+    it('skips bootstrap for unlisted modes (review) but runs for listed modes (loop)', async () => {
+      const h = makeHarness();
+      writeConfig(h.workspaceDir, JSON.stringify({
+        version: 1,
+        setup: { command: 'npm ci', runOnModes: ['loop', 'batch'] },
+      }));
+
+      const reviewState = await runBootstrap(h, {
+        mode: 'review',
+        runCommand: fakeRunCommand(h, {
+          command: 'should-not-run',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+      assert.deepEqual(reviewState, { status: 'skipped' });
+      assert.equal(h.runCalls.length, 0);
+
+      const loopState = await runBootstrap(h, {
+        mode: 'loop',
+        runCommand: fakeRunCommand(h, {
+          command: 'npm ci',
+          exitCode: 0,
+          outputTail: 'ok',
+          timedOut: false,
+          success: true,
+        }),
+      });
+      assert.equal(loopState.status, 'completed');
     });
   });
 

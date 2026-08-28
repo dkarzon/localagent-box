@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type {
+  AgentMode,
   RepoEnvironmentConfig,
   RepoEnvironmentSetupConfig,
 } from '../../../types';
@@ -57,6 +58,30 @@ export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
     config.cacheKey = cacheKey;
   }
 
+  if (obj.verifyCommand !== undefined) {
+    if (typeof obj.verifyCommand !== 'string' || obj.verifyCommand.trim() === '') {
+      throw new Error(
+        `${environmentConfigRelative} verifyCommand must be a non-empty string when provided`,
+      );
+    }
+    config.verifyCommand = obj.verifyCommand;
+  }
+
+  if (obj.verifyTimeoutMs !== undefined) {
+    const verifyTimeoutMs = obj.verifyTimeoutMs;
+    if (
+      typeof verifyTimeoutMs !== 'number' ||
+      !Number.isInteger(verifyTimeoutMs) ||
+      verifyTimeoutMs <= 0 ||
+      verifyTimeoutMs > MAX_SETUP_TIMEOUT_MS
+    ) {
+      throw new Error(
+        `${environmentConfigRelative} verifyTimeoutMs must be a positive integer no greater than ${MAX_SETUP_TIMEOUT_MS} when provided`,
+      );
+    }
+    config.verifyTimeoutMs = verifyTimeoutMs;
+  }
+
   return config;
 }
 
@@ -104,7 +129,36 @@ function validateSetup(raw: unknown): RepoEnvironmentSetupConfig {
     setupConfig.failOnError = setup.failOnError;
   }
 
+  if (setup.runOnModes !== undefined) {
+    setupConfig.runOnModes = validateRunOnModes(setup.runOnModes);
+  }
+
   return setupConfig;
+}
+
+const VALID_MODES = ['batch', 'interactive', 'loop', 'review'] as const satisfies readonly AgentMode[];
+// Errors at compile time if VALID_MODES and AgentMode drift apart (missing modes).
+export const _agentModeExhaustive: Exclude<AgentMode, (typeof VALID_MODES)[number]> extends never
+  ? true
+  : never = true;
+
+function assertValidMode(value: unknown, index: number): asserts value is AgentMode {
+  if (!VALID_MODES.includes(value as AgentMode)) {
+    throw new Error(
+      `${environmentConfigRelative} setup runOnModes[${index}] must be one of ${VALID_MODES.join(', ')}`,
+    );
+  }
+}
+
+function validateRunOnModes(raw: unknown): AgentMode[] {
+  const location = `${environmentConfigRelative} setup runOnModes`;
+  if (!Array.isArray(raw)) {
+    throw new Error(`${location} must be an array of agent modes when provided`);
+  }
+  return raw.map((entry, index) => {
+    assertValidMode(entry, index);
+    return entry as AgentMode;
+  });
 }
 
 export function loadEnvironmentConfig(

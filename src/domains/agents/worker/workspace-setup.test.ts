@@ -249,6 +249,31 @@ describe('prepareWorkspace — bootstrap wiring', () => {
       fs.rmSync(h.dataDir, { recursive: true, force: true });
     }
   });
+
+  it('skips the setup command when runOnModes excludes the agent mode (P4-T3)', async () => {
+    const h = makeHarness();
+    fs.writeFileSync(path.join(h.fixtureDir, 'package.json'), '{}', 'utf8');
+    writeEnvironmentJson(
+      h,
+      JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok', runOnModes: ['loop'] } }),
+    );
+    h.job.mode = 'review';
+
+    try {
+      await withNoCodegraph(async () => {
+        await prepareWorkspace(h.buildContext());
+      });
+
+      const agent = h.agentsStore.load().agents[0];
+      assert.equal(agent.bootstrap, undefined);
+
+      const log = fs.readFileSync(h.job.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap skipped: mode 'review' not in setup\.runOnModes \[loop\]/);
+      assert.doesNotMatch(log, /Running workspace bootstrap/);
+    } finally {
+      fs.rmSync(h.dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('ensureLocalagentBoxIgnored', () => {

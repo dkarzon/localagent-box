@@ -141,6 +141,53 @@ describe('validateEnvironmentConfig', () => {
     );
   });
 
+  it('accepts an optional setup.runOnModes', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      setup: { command: 'npm ci', runOnModes: ['batch', 'interactive', 'loop'] },
+    });
+    assert.deepEqual(result.setup?.runOnModes, ['batch', 'interactive', 'loop']);
+  });
+
+  it('rejects non-array setup.runOnModes', () => {
+    for (const runOnModes of ['batch', 'batch,loop', 42, null, { batch: true }]) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            setup: { command: 'x', runOnModes },
+          }),
+        /environment\.json setup runOnModes must be an array of agent modes when provided/,
+      );
+    }
+  });
+
+  it('rejects unknown or malformed entries in setup.runOnModes', () => {
+    for (const entry of [42, '', 'production', 'review-again', null, undefined, true]) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            setup: { command: 'x', runOnModes: [entry] },
+          }),
+        /environment\.json setup runOnModes\[0\] must be one of batch, interactive, loop, review/,
+      );
+    }
+  });
+
+  it('rejects empty or whitespace-only entries in setup.runOnModes', () => {
+    for (const entry of ['', '   ']) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            setup: { command: 'x', runOnModes: [entry] },
+          }),
+        /environment\.json setup runOnModes\[0\] must be one of batch, interactive, loop, review/,
+      );
+    }
+  });
+
   it('accepts optional profiles and autoDetect', () => {
     const result = validateEnvironmentConfig({
       version: 1,
@@ -157,7 +204,7 @@ describe('validateEnvironmentConfig', () => {
     );
     assert.throws(
       () => validateEnvironmentConfig({ version: 1, profiles: ['nodejs', 42, ''] }),
-      /environment\.json profiles\[2\] must be a non-empty string/,
+      /environment\.json profiles\[1\] must be a non-empty string/,
     );
   });
 
@@ -190,6 +237,48 @@ describe('validateEnvironmentConfig', () => {
       assert.throws(
         () => validateEnvironmentConfig({ version: 1, cacheKey }),
         /environment\.json cacheKey must be a non-empty string when provided/,
+      );
+    }
+  });
+
+  it('accepts an optional verifyCommand', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      setup: { command: 'npm ci' },
+      verifyCommand: 'npm test --passWithNoTests',
+    });
+    assert.equal(result.verifyCommand, 'npm test --passWithNoTests');
+  });
+
+  it('rejects non-string or empty verifyCommand values', () => {
+    for (const verifyCommand of [42, null, true, [], '', '   ']) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, verifyCommand }),
+        /environment\.json verifyCommand must be a non-empty string when provided/,
+      );
+    }
+  });
+
+  it('accepts an optional verifyTimeoutMs', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      verifyCommand: 'npm test',
+      verifyTimeoutMs: 300_000,
+    });
+    assert.equal(result.verifyTimeoutMs, 300_000);
+  });
+
+  it('rejects bad verifyTimeoutMs values', () => {
+    const cases: unknown[] = [0, -1, -300_000, 1.5, 0.5, '300000', null, true, NaN, Infinity, 1_800_001];
+    for (const verifyTimeoutMs of cases) {
+      assert.throws(
+        () =>
+          validateEnvironmentConfig({
+            version: 1,
+            verifyCommand: 'npm test',
+            verifyTimeoutMs,
+          }),
+        /environment\.json verifyTimeoutMs must be a positive integer no greater than 1800000 when provided/,
       );
     }
   });

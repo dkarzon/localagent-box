@@ -1,4 +1,4 @@
-Repo-level configuration lets you override agent behavior per-repository instead of globally in server settings. There are three files, all optional, placed inside `.localagent-box/` at the repository root.
+Repo-level configuration lets you override agent behavior per-repository instead of globally in server settings. The files below are all optional and live inside `.localagent-box/` at the repository root.
 
 ## File locations
 
@@ -6,6 +6,7 @@ Repo-level configuration lets you override agent behavior per-repository instead
 |---|---|
 | `.localagent-box/config.json` | Prompt overrides (system prompt + run-mode context prompts) |
 | `.localagent-box/environment.json` | Host-run workspace bootstrap (setup, runtime profiles, lockfile auto-detect) |
+| `.localagent-box/setup.sh` | Committed setup script that takes precedence over all `environment.json` sources |
 | `.localagent-box/loop.json` | Loop-agent orchestration configuration |
 
 Each file is optional. If absent, the server defaults apply.
@@ -51,16 +52,33 @@ Replaces the default loop-mode context paragraph, which instructs agents about m
 
 Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) as repository-level review instructions when running `mode: review` agents. Merged into OCR's `-b` background alongside per-session `background` and parent-agent context. See [code-review.md](./code-review.md).
 
+## `.localagent-box/setup.sh` — Setup Script
+
+A committed shell script the host runs **instead of** any `environment.json` source before the agent starts. The host runs it from the workspace root as `bash .localagent-box/setup.sh`; anything it exits non-zero fails the agent start the same way `setup.failOnError: true` does (a timeout also fails the agent). The script must be committed in the repo — like `.localagent-box/environment.json`, it is read straight from the fresh clone before agent commits are ignored.
+
+A committed `setup.sh` **always wins** over `setup.command`, `profiles`, and lockfile auto-detect — commit an `environment.json` without touching the script and the script still runs.
+
+```bash
+#!/usr/bin/env bash
+# .localagent-box/setup.sh
+set -euo pipefail
+npm ci
+npm run build
+```
+
+Prefer `environment.json` for simple installs (it is self-documenting and validated); reach for a script when setup needs multiple steps, database migrations, or generated code that a one-line command can't express.
+
 ## `.localagent-box/environment.json` — Workspace Bootstrap
 
 Host-run environment bootstrap: the server runs your setup command **once per agent start**, before the OpenCode session begins, so dependency installation does not have to be discovered by the agent.
 
 Which command runs is resolved in this order:
 
-1. Explicit `setup.command` (always wins when present).
-2. `profiles` — names runtime profiles whose `defaultSetup` command is used.
-3. Lockfile auto-detect — infer a profile from files in the workspace root (see [Detection order](#detection-order)).
-4. Nothing matched → bootstrap skipped, the agent starts as before.
+1. `.localagent-box/setup.sh` — a committed script is run with `bash` and always wins (see [Setup scripts](#`setup.sh`-—-setup-script)).
+2. Explicit `setup.command` (always wins when present and no `setup.sh` is committed).
+3. `profiles` — names runtime profiles whose `defaultSetup` command is used.
+4. Lockfile auto-detect — infer a profile from files in the workspace root (see [Detection order](#detection-order)).
+5. Nothing matched → bootstrap skipped, the agent starts as before.
 
 ```jsonc
 // .localagent-box/environment.json (example)
@@ -73,7 +91,7 @@ Which command runs is resolved in this order:
 }
 ```
 
-If the file is absent, bootstrap is skipped unless the server enables global lockfile auto-detect (see [Lockfile auto-detect](#lockfile-auto-detect)).
+If the file is absent (and no `setup.sh` is committed), bootstrap is skipped unless the server enables global lockfile auto-detect (see [Lockfile auto-detect](#lockfile-auto-detect)).
 
 ### `version` *(number, required)*
 
@@ -94,6 +112,22 @@ Timeout in milliseconds before the shell is killed. Must be a positive integer n
 #### `setup.failOnError` *(boolean, optional, default true)*
 
 When `true` (default), a non-zero exit code (or timeout) from `setup.command` **fails the whole agent** — OpenCode never starts. Set to `false` to log the failure and continue anyway.
+
+#### `setup.runOnModes` *(array, optional)*
+
+Agent modes for which the setup runs: any of `batch`, `interactive`, `loop`, `review`. When set and the agent's mode is not listed, the bootstrap is **skipped for that run** (the skip reason is logged). Omit to run the setup on every mode.
+
+### `verifyCommand` *(string, optional)*
+
+Post-setup smoke test run **after** a successful setup command (and before the agent starts). A non-zero exit **always fails the bootstrap** — there is no `failOnError` opt-out for verify, so a broken environment never reaches the agent even when the agent's own checks would be more forgiving. A success records `verifyCommand` and its exit code on the agent's `bootstrap` record.
+
+### `verifyTimeoutMs` *(number, optional)*
+
+Timeout in milliseconds for `verifyCommand`. Same constraints as `setup.timeoutMs` (positive integer, max `1800000`). Defaults to the setup timeout — i.e. `setup.timeoutMs` when set, otherwise `600000` (10 min).
+
+### Post-setup summary
+
+After the setup command (and, if set, the `verifyCommand`) finishes successfully, the host prepends a short workspace-ready block to the agent's first prompt so the model doesn't waste turns rediscovering how to build or test the repo. The block is only shown when setup **completed** — a skipped or failed bootstrap leaves the prompt untouched — and reports the resolved command, the runtime profiles, the setup duration, and any dependency-cache hit.
 
 ### `profiles` *(array, optional)*
 
@@ -188,10 +222,11 @@ When a repo has no runnable setup command of its own — no `setup.command` and 
 
 The full resolution order, in the order the worker enforces it:
 
-1. `setup.command` — explicit, whenever present and non-empty.
-2. `profiles` — first enabled match when the array is non-empty; detection is **not** attempted when `profiles` is declared.
-3. Lockfile detection — unless the file explicitly sets `autoDetect: false`.
-4. Skipped — nothing above produced a command.
+1. `.localagent-box/setup.sh` — the committed setup script wins over every other source when present (see [Setup scripts](#`setup.sh`-—-setup-script)).
+2. `setup.command` — explicit, whenever present and non-empty.
+3. `profiles` — first enabled match when the array is non-empty; detection is **not** attempted when `profiles` is declared.
+4. Lockfile detection — unless the file explicitly sets `autoDetect: false`.
+5. Skipped — nothing above produced a command.
 
 **Opt-out / safety:**
 

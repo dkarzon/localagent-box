@@ -34,6 +34,7 @@ import { createOpenCodeEventMapper, type AgentRunMode } from './event-mapper';
 import {
   buildModelRef,
   buildOpenCodePrompt,
+  formatBootstrapSummaryBlock,
   isAgentRunTimedOut,
   parseTimeoutMs,
   resolveAgentRunStartedAtMs,
@@ -556,15 +557,23 @@ export async function runSessionOrchestrator(
             batchPromptBusySeen = false;
           }
 
+          // P4-T5: successful host bootstrap is summarized for the model so it
+          // doesn't spend turns rediscovering the environment (skipped/failed
+          // bootstrap produces no block).
+          const bootstrapSummary = formatBootstrapSummaryBlock(
+            readAgentRecord(agentsStore, job.agentId)?.bootstrap,
+          );
           const initialText = buildOpenCodePrompt(
-            job.prompt,
+            bootstrapSummary
+              ? `${bootstrapSummary}\n\n${job.prompt}`
+              : job.prompt,
             job.systemPrompt,
             mode === 'interactive' ? 'interactive' : 'batch',
             undefined,
             repoPromptOverrides ?? undefined,
             config.systemPrompt,
           );
-          appendConversation(job, 'user', job.prompt);
+          appendConversation(job, 'user', bootstrapSummary ? `${bootstrapSummary}\n\n${job.prompt}` : job.prompt);
           await sessionRunner.sendPromptAsync(sessionId, {
             parts: [{ type: 'text', text: initialText }],
             agent: 'build',

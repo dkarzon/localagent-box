@@ -1,10 +1,15 @@
-import { buildOpenCodePrompt, buildModelRefFromId, parseTimeoutMs } from '../../../integrations/opencode/runner';
+import {
+  buildOpenCodePrompt,
+  buildModelRefFromId,
+  formatBootstrapSummaryBlock,
+  parseTimeoutMs,
+} from '../../../integrations/opencode/runner';
 import {
   startOpenCodeLoopSession,
   type OpenCodeLoopSessionHandle,
 } from '../../../integrations/opencode/session-orchestrator';
 import { buildLoopState } from '../../../lib/loop-state';
-import type { AgentLoopState, AgentStatus, LoopOpenCodeAgent, LoopVerb } from '../../../types';
+import type { AgentBootstrapState, AgentLoopState, AgentStatus, LoopOpenCodeAgent, LoopVerb } from '../../../types';
 import {
   appendLog,
   emitLoopIterationEnd,
@@ -14,6 +19,7 @@ import {
   getInboxPath,
   InboxReader,
   readAgentLoopFinishRequested,
+  readAgentRecord,
   updateAgentRecord,
 } from './agent-state-writer';
 import {
@@ -80,6 +86,11 @@ type LoopStepExit =
 interface RunLoopStepParams {
     session: OpenCodeLoopSessionHandle;
   loopState: AgentLoopState;
+  /**
+   * P4-T5: host-run bootstrap state from the agent record. Injected into the
+   * first INITIAL_PLAN kickoff prompt when the bootstrap completed.
+   */
+  bootstrap?: AgentBootstrapState | null;
   /** Agent data directory for loop handoff state (plan + loop-state.json). */
   handoffDir: string;
   loopConfig: { completionMarker: string };
@@ -168,7 +179,13 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
         })
       : null;
 
-  const conversationParts = [interpolated];
+  const conversationParts: (string | null)[] = [interpolated];
+  // P4-T5: the INITIAL_PLAN kickoff (fresh session, step 0) carries the
+  // host-run bootstrap summary (completed only) so the model doesn't spend a
+  // turn rediscovering the environment.
+  if (stepIndex === 0) {
+    conversationParts.push(formatBootstrapSummaryBlock(params.bootstrap));
+  }
   if (hostChangeSummary) {
     conversationParts.push(hostChangeSummary);
   }
@@ -185,7 +202,9 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   if (verb === 'REFLECT' && params.iterationCheckResult) {
     conversationParts.push(formatCheckResultBlock(params.iterationCheckResult));
   }
-  const conversationText = conversationParts.join('\n\n');
+  const conversationText = conversationParts
+    .filter((part): part is string => part !== null)
+    .join('\n\n');
   const promptText = buildOpenCodePrompt(
     conversationText,
     job.systemPrompt,
@@ -388,6 +407,11 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     logPath,
     inboxReader,
     repoPromptOverrides: repoPromptOverrides ?? undefined,
+    // P4-T5: first INITIAL_PLAN kickoff only; omitted once harnessDone.
+    bootstrap: (() => {
+      const record = readAgentRecord(agentsStore, job.agentId);
+      return record?.bootstrap ?? null;
+    })(),
   };
 
   const mirrorHandoffToAgent = (parsed?: ParsedReflectOutput | null) => {

@@ -222,7 +222,7 @@ export interface OverallTokenUsage extends AgentTokenUsage {}
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
 
-export type AgentBootstrapSource = 'explicit' | 'profile' | 'detect' | 'none';
+export type AgentBootstrapSource = 'script' | 'explicit' | 'profile' | 'detect' | 'none';
 
 /** Host-run workspace bootstrap state; mirrors the server-side record. */
 export interface AgentBootstrapState {

@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { getServerEnv } from '../../config/env';
-import type { AppConfig, RepoPromptOverrides } from '../../types';
+import type { AgentBootstrapState, AppConfig, RepoPromptOverrides } from '../../types';
 
 export const DEFAULT_TIMEOUT_MS = 3600000;
 export const INIT_TIMEOUT_MS = 600000;
@@ -166,6 +166,56 @@ function resolveRunModeContext(
     return !repoOverrides?.loopContextPrompt ? LOOP_RUN_CONTEXT_PROMPT : repoOverrides.loopContextPrompt;
   }
   return null;
+}
+
+/** P4-T5: duration for the workspace-ready summary (whole seconds, "38s"). */
+function formatBootstrapDuration(durationMs: number | undefined): string | null {
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs < 0) {
+    return null;
+  }
+  const seconds = Math.round(durationMs / 1000);
+  if (seconds < 1) {
+    return '<1s';
+  }
+  if (seconds >= 120) {
+    return `${Math.floor(seconds / 60)}m${seconds % 60 === 0 ? '' : `${seconds % 60}s`}`;
+  }
+  return `${seconds}s`;
+}
+
+/**
+ * P4-T5 — deterministic host-generated summary of a successful workspace
+ * bootstrap (setup + verify), injected into the first prompt so the model
+ * doesn't spend turns discovering how to check the environment.
+ * Returns null unless the bootstrap completed (the block is first-prompt-only,
+ * so a null here is simply omitted).
+ */
+export function formatBootstrapSummaryBlock(bootstrap: AgentBootstrapState | null | undefined): string | null {
+  if (!bootstrap || bootstrap.status !== 'completed') {
+    return null;
+  }
+  const duration = formatBootstrapDuration(bootstrap.durationMs);
+  const lines = [`## Workspace ready (host)`];
+  const setupParts: string[] = [];
+  if (duration) {
+    setupParts.push(`completed in ${duration}`);
+  }
+  if (bootstrap.cacheHit) {
+    setupParts.push('cache hit');
+  }
+  const setupDetail = setupParts.length > 0 ? ` (${setupParts.join(', ')})` : '';
+  lines.push(`- Setup: ${bootstrap.command ?? 'unknown'}${setupDetail}`);
+  if (bootstrap.profiles?.length) {
+    lines.push(`- Profiles: ${bootstrap.profiles.join(', ')}`);
+  }
+  if (bootstrap.verifyCommand) {
+    const verifyDetail =
+      typeof bootstrap.verifyExitCode === 'number' && bootstrap.verifyExitCode !== 0
+        ? ` exited ${bootstrap.verifyExitCode}`
+        : '';
+    lines.push(`- Verify: passed (\`${bootstrap.verifyCommand}\`${verifyDetail})`);
+  }
+  return lines.join('\n');
 }
 
 export interface BuildOpenCodePromptOptions {
