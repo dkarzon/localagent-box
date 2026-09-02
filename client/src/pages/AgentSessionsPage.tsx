@@ -227,16 +227,14 @@ export function AgentSessionsPage({
 
     if (mode === 'loop') return;
 
+    const resolvePreferredModel = (...candidates: string[]) =>
+      candidates.find((candidate) => candidate && availableModels.includes(candidate)) ??
+      availableModels[0];
+
     const preferredDefault =
       mode === 'review'
-        ? defaultReviewModel && availableModels.includes(defaultReviewModel)
-          ? defaultReviewModel
-          : defaultModel && availableModels.includes(defaultModel)
-            ? defaultModel
-            : availableModels[0]
-        : defaultModel && availableModels.includes(defaultModel)
-          ? defaultModel
-          : availableModels[0];
+        ? resolvePreferredModel(defaultReviewModel, defaultModel)
+        : resolvePreferredModel(defaultModel);
 
     setModel((current) => {
       if (current && availableModels.includes(current)) return current;
