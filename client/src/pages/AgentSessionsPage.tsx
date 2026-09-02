@@ -237,7 +237,11 @@ export function AgentSessionsPage({
         : resolvePreferredModel(defaultModel);
 
     setModel((current) => {
-      if (current && availableModels.includes(current)) return current;
+      // Keep explicit user picks, but let review mode replace the
+      // auto-populated global default with the review default.
+      if (current && availableModels.includes(current) && current !== defaultModel) {
+        return current;
+      }
       return preferredDefault;
     });
   }, [availableModels, defaultModel, defaultReviewModel, mode]);
