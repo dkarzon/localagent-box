@@ -432,7 +432,10 @@ export function createAgentService(options: {
       push,
       pushOnFailure: payload.pushOnFailure,
       autoApprovePermissions: payload.autoApprovePermissions,
-      model: payload.model || null,
+      model:
+        payload.model ||
+        (mode === 'review' && config.reviewModel?.trim() ? config.reviewModel.trim() : null) ||
+        null,
       ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
       ...(payload.loopMaxIterations !== undefined
         ? { loopMaxIterations: payload.loopMaxIterations }

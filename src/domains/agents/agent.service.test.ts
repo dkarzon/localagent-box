@@ -1116,6 +1116,26 @@ describe('createPullRequest', () => {
     assert.equal(reviewAgent.status, 'queued');
   });
 
+  it('defaults review agent model to reviewModel from settings when not overridden', () => {
+    const { service, configRepository } = createTestContext();
+
+    configRepository.save({
+      opencodeModel: 'qwen2.5-coder:7b',
+      reviewModel: 'llama3.2',
+    });
+
+    const reviewAgent = service.createAgent({
+      repoId: testRepo.repoId,
+      mode: 'review',
+      prompt: '',
+      baseBranch: 'main',
+      headBranch: 'feature/review-model',
+      parentAgentId: 'parent-agent',
+    });
+
+    assert.equal(reviewAgent.model, 'llama3.2');
+  });
+
   it('skips auto-review while a coding successor is still queued on the branch', async () => {
     const agentId = 'completedreview5';
     const { service, repository, configRepository } = createTestContext();

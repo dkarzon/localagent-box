@@ -66,6 +66,7 @@ export interface AgentSessionInfoProps {
   agentId: string;
   repoLabel: string;
   defaultModel: string;
+  defaultReviewModel?: string;
   loopProgress: string | null;
   eventsConnected: boolean;
   loadError: string | null;
@@ -82,6 +83,7 @@ export function AgentSessionInfo({
   agentId,
   repoLabel,
   defaultModel,
+  defaultReviewModel = '',
   loopProgress,
   eventsConnected,
   loadError,
@@ -122,7 +124,9 @@ export function AgentSessionInfo({
                 'Model',
                 loop
                   ? agent.model || 'Settings / global default'
-                  : agent.model || defaultModel || '—',
+                  : review
+                    ? agent.model || defaultReviewModel || defaultModel || 'Settings default'
+                    : agent.model || defaultModel || '—',
               ],
               ...(review
                 ? ([
