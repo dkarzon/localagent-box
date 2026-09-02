@@ -103,6 +103,13 @@ export function AgentSessionInfo({
   const bootstrap = agent?.bootstrap ?? null;
   const showBootstrap = Boolean(bootstrap && bootstrap.status !== 'skipped');
 
+  const resolveModelLabel = () => {
+    if (agent?.model) return agent.model;
+    if (loop) return 'Settings / global default';
+    if (review) return defaultReviewModel || defaultModel || 'Settings default';
+    return defaultModel || '—';
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -120,14 +127,7 @@ export function AgentSessionInfo({
           <dl className="space-y-3 text-sm">
             {[
               ['Mode', getAgentMode(agent)],
-              [
-                'Model',
-                loop
-                  ? agent.model || 'Settings / global default'
-                  : review
-                    ? agent.model || defaultReviewModel || defaultModel || 'Settings default'
-                    : agent.model || defaultModel || '—',
-              ],
+              ['Model', resolveModelLabel()],
               ...(review
                 ? ([
                     ['Base branch', agent.review?.baseBranch || agent.baseBranch || '—'] as const,
