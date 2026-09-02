@@ -45,8 +45,8 @@ COPY config ./config
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 
-RUN npm install -g opencode-ai@v1.18.21
-RUN npm install -g @alibaba-group/open-code-review@v1.9.10
+RUN npm install -g opencode-ai@v1.18.27
+RUN npm install -g @alibaba-group/open-code-review@v1.11.2
 
 # corepack: required by the nodejs-pnpm / nodejs-yarn bootstrap profiles.
 # Not bundled with modern node: images, so install and enable it, then
