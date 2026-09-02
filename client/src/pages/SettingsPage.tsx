@@ -451,7 +451,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
                 <Field label="Git User Email">
                   <TextInput
                     name="gitUserEmail"
-                    type="email"
+                    type="text"
+                    inputMode="email"
                     value={values.gitUserEmail}
                     onChange={(e) => updateField('gitUserEmail', e.target.value)}
                   />
