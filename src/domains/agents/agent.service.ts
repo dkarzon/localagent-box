@@ -433,7 +433,7 @@ export function createAgentService(options: {
       pushOnFailure: payload.pushOnFailure,
       autoApprovePermissions: payload.autoApprovePermissions,
       model:
-        payload.model ||
+        payload.model?.trim() ||
         (mode === 'review' && config.reviewModel?.trim() ? config.reviewModel.trim() : null) ||
         null,
       ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
