@@ -1,0 +1,52 @@
+# Phase 0 spike stack: Ollama + DSH SDK runner.
+# Usage (from scripts/spike):
+#   docker compose up --build --abort-on-container-exit
+#
+# Pulls llama3.2 on first run (can take several minutes).
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_spike_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      DSH_MODEL: ${DSH_MODEL:-llama3.2}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "Pulling model $${DSH_MODEL} (skip if already present)…"
+        ollama pull "$${DSH_MODEL}"
+        echo "Model pull complete."
+    restart: "no"
+
+  spike:
+    build: .
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      DSH_MODEL: ${DSH_MODEL:-llama3.2}
+      SPIKE_TIMEOUT_MS: ${SPIKE_TIMEOUT_MS:-900000}
+    volumes:
+      - ./spike-runs:/spike/spike-runs
+      - ./fixtures:/spike/fixtures
+
+volumes:
+  ollama_spike_data:

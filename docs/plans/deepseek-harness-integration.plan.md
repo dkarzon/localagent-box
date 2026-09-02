@@ -2,7 +2,7 @@
 
 Add a server config flag so operators can choose **OpenCode** (default, current behavior) or **DeepSeek Harness (DSH)** as the coding harness under the hood. From the user's perspective — batch, interactive, and loop agent flows should look the same in the UI and API; only Settings and internal worker plumbing change.
 
-**Status:** Not started
+**Status:** Phase 0 scripts committed — run `scripts/spike/docker compose up` locally to complete E2E verification
 
 **Related:**
 
@@ -33,7 +33,7 @@ Add a server config flag so operators can choose **OpenCode** (default, current 
 
 | Phase | Description | Status | Depends on |
 |-------|-------------|--------|------------|
-| 0 | Docker + Ollama spike | Not started | — |
+| 0 | Docker + Ollama spike | Scripts done — E2E verify locally | — |
 | 1 | Config flag + `HarnessRunner` interface | Not started | 0 (recommended) |
 | 2 | DSH config writer (`settings.yaml`) | Not started | 0 |
 | 3 | DSH session runner (JSON-RPC client) | Not started | 0, 2 |
@@ -241,12 +241,14 @@ DSH is in **developer preview** — pin package versions and expect breaking cha
 
 ### Acceptance criteria
 
-- [ ] DSH subprocess starts with `dsh --profile sdk` (or SDK auto-spawns it)
-- [ ] Ollama model responds from inside container
-- [ ] At least one file write tool executes
-- [ ] `turn/end` received with completed reason
-- [ ] Spike script is committed under `scripts/spike/` with README
-- [ ] Pinned DSH version documented
+- [x] Spike script committed under `scripts/spike/` with README
+- [x] Pinned DSH versions documented (`0.1.1-rc.2` / `0.0.1-rc.1`)
+- [x] `settings.yaml` writer + unit tests (`npm run test:unit` in `scripts/spike`)
+- [x] Docker Compose stack (`ollama` + `ollama-pull` + `spike`)
+- [ ] DSH subprocess starts with `dsh --profile sdk` — **verify:** `cd scripts/spike && docker compose up --build --abort-on-container-exit`
+- [ ] Ollama model responds from inside container — same command
+- [ ] At least one file write tool executes — same command
+- [ ] `turn/end` received with `completed` reason — same command
 
 ### If spike fails
 
@@ -257,6 +259,7 @@ DSH is in **developer preview** — pin package versions and expect breaking cha
 | HTTP 400 on `developer` role | Add `compat.supportsDeveloperRole: false` |
 | Sandbox errors in container | Set `permission.defaultPreset: danger-full-access` |
 | Tool calls fail on small model | Try a larger model; document minimum viable model |
+| `profile "sdk" does not exist` | In `dsh@0.1.1-rc.2` only `web`/`headless` auto-init; run `dsh plugin --profile sdk add @deepseek-ai/dsh-sdk-app@0.1.1-rc.2` (spike bootstraps this; needs pnpm/corepack) |
 
 ---
 

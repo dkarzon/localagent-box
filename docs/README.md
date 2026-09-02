@@ -22,6 +22,6 @@ These documents record decisions and planning made during development. They aren
 - [loop-verb-models.plan.md](./plans/loop-verb-models.plan.md)
 - [loop-token-efficiency.plan.md](./plans/loop-token-efficiency.plan.md)
 - [pr-code-review.plan.md](./plans/pr-code-review.plan.md)
-- [deepseek-harness-integration.plan.md](./plans/deepseek-harness-integration.plan.md) — dual coding harness (OpenCode / DeepSeek Harness)
+- [deepseek-harness-integration.plan.md](./plans/deepseek-harness-integration.plan.md) — dual coding harness (OpenCode / DeepSeek Harness); Phase 0 spike in `scripts/spike/`
 - [question-tool-handling.plan.md](./plans/question-tool-handling.plan.md)
 - [shared-branch-queue.plan.md](./plans/shared-branch-queue.plan.md)
