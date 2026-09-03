@@ -13,6 +13,8 @@ const SEVERITY_ORDER: Record<string, number> = {
   low: 3,
 } satisfies Record<OcrCommentSeverity, number>;
 
+const UNKNOWN_SEVERITY_RANK = 4;
+
 const SEVERITY_EMOJI: Record<string, string> = {
   critical: '🔴',
   high: '🟠',
@@ -59,8 +61,8 @@ export function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
 }
 
 export function compareBySeverity(a: OcrComment, b: OcrComment): number {
-  const rankA = SEVERITY_ORDER[a.severity || ''] ?? 4;
-  const rankB = SEVERITY_ORDER[b.severity || ''] ?? 4;
+  const rankA = SEVERITY_ORDER[a.severity || ''] ?? UNKNOWN_SEVERITY_RANK;
+  const rankB = SEVERITY_ORDER[b.severity || ''] ?? UNKNOWN_SEVERITY_RANK;
   return rankA - rankB;
 }
 
@@ -78,7 +80,7 @@ export function countBySeverity(comments: OcrComment[]): Array<{ severity: strin
     }
   }
   return [...counts.entries()]
-    .sort((a, b) => (SEVERITY_ORDER[a[0]] ?? 0) - (SEVERITY_ORDER[b[0]] ?? 0))
+    .sort((a, b) => (SEVERITY_ORDER[a[0]] ?? UNKNOWN_SEVERITY_RANK) - (SEVERITY_ORDER[b[0]] ?? UNKNOWN_SEVERITY_RANK))
     .map(([severity, count]) => ({ severity, count }));
 }
 
