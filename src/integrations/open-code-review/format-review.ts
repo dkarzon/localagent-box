@@ -197,9 +197,13 @@ function headlineFor(
     return `🔍 **${findingCount} finding(s)** — ${message}`;
   }
 
-  const severityParts = countBySeverity(comments).map(
-    ({ severity, count }) => `${severity}: ${count}`,
-  );
+  const severityCounts = countBySeverity(comments);
+  const severityParts = severityCounts.map(({ severity, count }) => `${severity}: ${count}`);
+  const classifiedCount = severityCounts.reduce((sum, { count }) => sum + count, 0);
+  const otherCount = Math.max(findingCount - classifiedCount, 0);
+  if (otherCount > 0) {
+    severityParts.push(`other: ${otherCount}`);
+  }
   if (severityParts.length > 0) {
     return `🔍 **${findingCount} finding(s)** across ${filesReviewed} file(s) — ${severityParts.join(', ')}.`;
   }

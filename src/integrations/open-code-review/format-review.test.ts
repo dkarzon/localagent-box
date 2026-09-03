@@ -400,4 +400,20 @@ describe('severity and category surfacing', () => {
 
     assert.match(markdown, /🔍 \*\*3 finding\(s\)\*\* across 2 file\(s\) — critical: 1, medium: 1, low: 1\./);
   });
+
+  it('headline appends other bucket when severity counts do not sum to finding count', () => {
+    const markdown = formatReviewMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 2, comments: 3 },
+      comments: [
+        { path: 'src/crit.ts', content: 'Critical issue.', severity: 'critical' },
+        { path: 'src/plain.ts', content: 'No metadata attached.' },
+      ],
+    } as OcrReviewEnvelope);
+
+    assert.match(
+      markdown,
+      /🔍 \*\*3 finding\(s\)\*\* across 2 file\(s\) — critical: 1, other: 2\./,
+    );
+  });
 });
