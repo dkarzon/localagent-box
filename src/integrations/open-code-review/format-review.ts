@@ -1,8 +1,42 @@
 import type { OcrComment, OcrCoverageItem, OcrReviewEnvelope } from './types';
 
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+const SEVERITY_EMOJI: Record<string, string> = {
+  critical: '🔴',
+  high: '🟠',
+  medium: '🟡',
+  low: '🔵',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  bug: '🐛 Bug',
+  security: '🔒 Security',
+  performance: '⚡ Performance',
+  maintainability: '🔧 Maintainability',
+  test: '🧪 Test',
+  style: '🎨 Style',
+  documentation: '📝 Documentation',
+  other: 'Other',
+};
+
+const KNOWN_SEVERITIES = new Set(Object.keys(SEVERITY_ORDER));
+const KNOWN_CATEGORIES = new Set(Object.keys(CATEGORY_LABELS));
+
 export function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
   if (Array.isArray(result.comments) && result.comments.length > 0) {
-    return result.comments.filter((comment) => comment.content?.trim());
+    return result.comments
+      .filter((comment) => comment.content?.trim())
+      .map((comment) => ({
+        ...comment,
+        severity: comment.severity?.trim().toLowerCase() || undefined,
+        category: comment.category?.trim().toLowerCase() || undefined,
+      }));
   }
 
   if (Array.isArray(result.issues)) {
@@ -16,6 +50,38 @@ export function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
   }
 
   return [];
+}
+
+export function compareBySeverity(a: OcrComment, b: OcrComment): number {
+  const rankA = SEVERITY_ORDER[a.severity || ''] ?? 4;
+  const rankB = SEVERITY_ORDER[b.severity || ''] ?? 4;
+  return rankA - rankB;
+}
+
+/** Counts of findings per known severity, sorted critical → low. */
+export function countBySeverity(comments: OcrComment[]): Array<{ severity: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const comment of comments) {
+    if (comment.severity && KNOWN_SEVERITIES.has(comment.severity)) {
+      counts.set(comment.severity, (counts.get(comment.severity) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => (SEVERITY_ORDER[a[0]] ?? 0) - (SEVERITY_ORDER[b[0]] ?? 0))
+    .map(([severity, count]) => ({ severity, count }));
+}
+
+/** Counts of findings per known category, sorted by count descending. */
+export function countByCategory(comments: OcrComment[]): Array<{ category: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const comment of comments) {
+    if (comment.category && KNOWN_CATEGORIES.has(comment.category)) {
+      counts.set(comment.category, (counts.get(comment.category) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, count]) => ({ category, count }));
 }
 
 function getRunStats(result: OcrReviewEnvelope) {
@@ -119,6 +185,14 @@ function headlineFor(
     return `🔍 **${findingCount} finding(s)** — ${message}`;
   }
 
+  const comments = normalizeComments(result);
+  const severityParts = countBySeverity(comments).map(
+    ({ severity, count }) => `${severity}: ${count}`,
+  );
+  if (severityParts.length > 0) {
+    return `🔍 **${findingCount} finding(s)** across ${filesReviewed} file(s) — ${severityParts.join(', ')}.`;
+  }
+
   return `🔍 **${findingCount} finding(s)** across ${filesReviewed} file(s).`;
 }
 
@@ -219,7 +293,31 @@ function appendToolCalls(lines: string[], result: OcrReviewEnvelope): void {
   }
 }
 
+function formatSeverityBadge(severity: string | undefined): string | null {
+  if (!severity || !KNOWN_SEVERITIES.has(severity)) {
+    return null;
+  }
+  const emoji = SEVERITY_EMOJI[severity] || '';
+  return `${emoji} **${severity}**`.trim();
+}
+
+function formatCategoryBadge(category: string | undefined): string | null {
+  if (!category || !KNOWN_CATEGORIES.has(category)) {
+    return null;
+  }
+  return CATEGORY_LABELS[category] || null;
+}
+
+function appendFindingBadges(lines: string[], comment: OcrComment): void {
+  const badges = [formatSeverityBadge(comment.severity), formatCategoryBadge(comment.category)]
+    .filter(Boolean) as string[];
+  if (badges.length > 0) {
+    lines.push(badges.join(' · '));
+  }
+}
+
 function appendFindingBody(lines: string[], comment: OcrComment): void {
+  appendFindingBadges(lines, comment);
   lines.push(comment.content.trim());
 
   if (comment.suggestion_code?.trim()) {
@@ -252,7 +350,6 @@ export function formatFindingCommentBody(comment: OcrComment): string {
   appendFindingBody(lines, comment);
   return lines.join('\n').trim();
 }
-
 export interface GithubLineReviewComment {
   path: string;
   body: string;
@@ -400,6 +497,34 @@ function appendRetryReport(lines: string[], result: OcrReviewEnvelope): void {
   appendRetryRequestTable(lines, result);
 }
 
+function appendSeverityCategoryBreakdown(lines: string[], result: OcrReviewEnvelope): void {
+  const comments = normalizeComments(result);
+  const severityRows = countBySeverity(comments);
+  const categoryRows = countByCategory(comments);
+  if (severityRows.length === 0 && categoryRows.length === 0) {
+    return;
+  }
+
+  lines.push('', '### Severity & categories', '');
+
+  if (severityRows.length > 0) {
+    lines.push('| Severity | Count |', '| --- | ---: |');
+    for (const { severity, count } of severityRows) {
+      lines.push(`| ${SEVERITY_EMOJI[severity] || ''} ${severity} | ${count} |`);
+    }
+  }
+
+  if (categoryRows.length > 0) {
+    if (severityRows.length > 0) {
+      lines.push('');
+    }
+    lines.push('| Category | Count |', '| --- | ---: |');
+    for (const { category, count } of categoryRows) {
+      lines.push(`| ${CATEGORY_LABELS[category] || category} | ${count} |`);
+    }
+  }
+}
+
 function buildReviewMarkdownCore(
   result: OcrReviewEnvelope,
   options: { includeFindings: boolean; unplacedComments?: OcrComment[] },
@@ -429,11 +554,13 @@ function buildReviewMarkdownCore(
   appendBranchRange(lines, result);
   appendCoverageSummary(lines, result);
   appendRunStats(lines, result);
+  appendSeverityCategoryBreakdown(lines, result);
 
   if (options.includeFindings && comments.length > 0) {
     lines.push('', '### Findings', '');
 
-    for (const comment of comments.slice(0, 25)) {
+    const sorted = [...comments].sort(compareBySeverity);
+    for (const comment of sorted.slice(0, 25)) {
       appendFinding(lines, comment);
     }
 

@@ -7,7 +7,7 @@ import {
   formatOcrSessionMarkdown,
   partitionReviewComments,
 } from './format-review';
-import type { OcrReviewEnvelope } from './types';
+import type { OcrComment, OcrReviewEnvelope } from './types';
 
 describe('formatReviewMarkdown', () => {
   it('formats complete review output with no findings', () => {
@@ -283,5 +283,121 @@ describe('formatFindingCommentBody', () => {
     assert.match(body, /Use a lock\./);
     assert.match(body, /```suggestion/);
     assert.match(body, /mu\.Lock\(\)/);
+  });
+});
+
+describe('severity and category surfacing', () => {
+  const sample: OcrReviewEnvelope = {
+    status: 'complete',
+    summary: { files_reviewed: 2, comments: 3 },
+    comments: [
+      {
+        path: 'src/low.ts',
+        content: 'Minor naming issue.',
+        start_line: 5,
+        severity: 'low',
+        category: 'style',
+      },
+      {
+        path: 'src/crit.ts',
+        content: 'Command injection from untrusted input.',
+        start_line: 12,
+        severity: 'critical',
+        category: 'security',
+      },
+      {
+        path: 'src/med.ts',
+        content: 'O(n²) loop over hot path.',
+        start_line: 30,
+        severity: 'medium',
+        category: 'performance',
+      },
+    ],
+  };
+
+  it('shows severity and category badges in inline findings', () => {
+    const markdown = formatReviewMarkdown(sample);
+
+    assert.match(markdown, /🔴 \*\*critical\*\* · 🔒 Security/);
+    assert.match(markdown, /🟡 \*\*medium\*\* · ⚡ Performance/);
+    assert.match(markdown, /🔵 \*\*low\*\* · 🎨 Style/);
+  });
+
+  it('sorts findings by severity, critical first', () => {
+    const markdown = formatReviewMarkdown(sample);
+    const critIndex = markdown.indexOf('Command injection');
+    const medIndex = markdown.indexOf('O(n²) loop');
+    const lowIndex = markdown.indexOf('Minor naming issue.');
+
+    assert.ok(critIndex >= 0 && medIndex >= 0 && lowIndex >= 0);
+    assert.ok(critIndex < medIndex);
+    assert.ok(medIndex < lowIndex);
+  });
+
+  it('includes a severity and category breakdown table', () => {
+    const markdown = formatReviewMarkdown(sample);
+
+    assert.match(markdown, /### Severity & categories/);
+    assert.match(markdown, /\| 🔴 critical \| 1 \|/);
+    assert.match(markdown, /\| 🟡 medium \| 1 \|/);
+    assert.match(markdown, /\| 🔒 Security \| 1 \|/);
+    assert.match(markdown, /\| ⚡ Performance \| 1 \|/);
+    assert.match(markdown, /\| 🎨 Style \| 1 \|/);
+  });
+
+  it('includes the breakdown in the GitHub PR summary body', () => {
+    const summary = formatReviewSummaryMarkdown(sample);
+
+    assert.match(summary, /### Severity & categories/);
+    assert.match(summary, /\| 🔴 critical \| 1 \|/);
+    assert.match(summary, /\| 🔒 Security \| 1 \|/);
+    assert.doesNotMatch(summary, /### Findings/);
+  });
+
+  it('includes severity and category badges in GitHub line comment bodies', () => {
+    const { lineComments } = partitionReviewComments(sample);
+
+    const critical = lineComments.find((comment) => comment.path === 'src/crit.ts');
+    assert.ok(critical);
+    assert.match(critical.body, /🔴 \*\*critical\*\* · 🔒 Security/);
+
+    const low = lineComments.find((comment) => comment.path === 'src/low.ts');
+    assert.ok(low);
+    assert.match(low.body, /🔵 \*\*low\*\* · 🎨 Style/);
+  });
+
+  it('keeps findings without severity or category rendering cleanly', () => {
+    const markdown = formatReviewMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 1, comments: 1 },
+      comments: [{ path: 'src/plain.ts', content: 'No metadata attached.', start_line: 3 }],
+    } as OcrReviewEnvelope);
+
+    assert.match(markdown, /No metadata attached\./);
+    assert.doesNotMatch(markdown, /Severity & categories/);
+  });
+
+  it('ignores unknown severity and category values', () => {
+    const comments: OcrComment[] = [
+      {
+        path: 'src/x.ts',
+        content: 'Odd metadata.',
+        severity: 'blocker',
+        category: 'weirdness',
+      },
+    ];
+    const body = formatFindingCommentBody(comments[0]);
+
+    assert.equal(body, 'Odd metadata.');
+  });
+
+  it('headline includes severity counts when no message is present', () => {
+    const markdown = formatReviewMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 2, comments: 3 },
+      comments: sample.comments,
+    } as OcrReviewEnvelope);
+
+    assert.match(markdown, /🔍 \*\*3 finding\(s\)\*\* across 2 file\(s\) — critical: 1, medium: 1, low: 1\./);
   });
 });
