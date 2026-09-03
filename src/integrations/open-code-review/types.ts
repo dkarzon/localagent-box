@@ -19,8 +19,8 @@ export interface OcrComment {
   suggestion_code?: string;
   existing_code?: string;
   thinking?: string;
-  severity?: string;
-  category?: string;
+  severity?: OcrCommentSeverity | (string & {});
+  category?: OcrCommentCategory | (string & {});
 }
 
 export interface OcrRunSummary {

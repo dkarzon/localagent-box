@@ -1,18 +1,24 @@
-import type { OcrComment, OcrCoverageItem, OcrReviewEnvelope } from './types';
+import type {
+  OcrComment,
+  OcrCommentCategory,
+  OcrCommentSeverity,
+  OcrCoverageItem,
+  OcrReviewEnvelope,
+} from './types';
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 0,
   high: 1,
   medium: 2,
   low: 3,
-};
+} satisfies Record<OcrCommentSeverity, number>;
 
 const SEVERITY_EMOJI: Record<string, string> = {
   critical: '🔴',
   high: '🟠',
   medium: '🟡',
   low: '🔵',
-};
+} satisfies Record<OcrCommentSeverity, string>;
 
 const CATEGORY_LABELS: Record<string, string> = {
   bug: '🐛 Bug',
@@ -23,7 +29,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   style: '🎨 Style',
   documentation: '📝 Documentation',
   other: 'Other',
-};
+} satisfies Record<OcrCommentCategory, string>;
 
 const KNOWN_SEVERITIES = new Set(Object.keys(SEVERITY_ORDER));
 const KNOWN_CATEGORIES = new Set(Object.keys(CATEGORY_LABELS));
