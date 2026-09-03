@@ -64,6 +64,11 @@ export function compareBySeverity(a: OcrComment, b: OcrComment): number {
   return rankA - rankB;
 }
 
+/** Returns a new array sorted by severity, critical → low. */
+export function sortFindingsBySeverity(comments: OcrComment[]): OcrComment[] {
+  return [...comments].sort(compareBySeverity);
+}
+
 /** Counts of findings per known severity, sorted critical → low. */
 export function countBySeverity(comments: OcrComment[]): Array<{ severity: string; count: number }> {
   const counts = new Map<string, number>();
@@ -425,7 +430,7 @@ function appendUnplacedFindings(lines: string[], comments: OcrComment[]): void {
   }
 
   lines.push('', '### Findings without file location', '');
-  for (const comment of comments.slice(0, 25)) {
+  for (const comment of sortFindingsBySeverity(comments).slice(0, 25)) {
     appendFinding(lines, comment);
   }
   if (comments.length > 25) {
@@ -573,7 +578,7 @@ function buildReviewMarkdownCore(
   if (options.includeFindings && comments.length > 0) {
     lines.push('', '### Findings', '');
 
-    const sorted = [...comments].sort(compareBySeverity);
+    const sorted = sortFindingsBySeverity(comments);
     for (const comment of sorted.slice(0, 25)) {
       appendFinding(lines, comment);
     }
