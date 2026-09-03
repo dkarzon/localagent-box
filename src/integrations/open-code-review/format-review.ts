@@ -158,6 +158,7 @@ function formatFailedItem(item: OcrCoverageItem): string {
 
 function headlineFor(
   result: OcrReviewEnvelope,
+  comments: OcrComment[],
   findingCount: number,
   filesReviewed: number,
   failedCount: number,
@@ -191,7 +192,6 @@ function headlineFor(
     return `🔍 **${findingCount} finding(s)** — ${message}`;
   }
 
-  const comments = normalizeComments(result);
   const severityParts = countBySeverity(comments).map(
     ({ severity, count }) => `${severity}: ${count}`,
   );
@@ -372,12 +372,11 @@ export interface GithubFileReviewComment {
   body: string;
 }
 
-export function partitionReviewComments(result: OcrReviewEnvelope): {
+function partitionComments(comments: OcrComment[]): {
   lineComments: GithubLineReviewComment[];
   fileComments: GithubFileReviewComment[];
   unplacedComments: OcrComment[];
 } {
-  const comments = normalizeComments(result);
   const lineComments: GithubLineReviewComment[] = [];
   const fileComments: GithubFileReviewComment[] = [];
   const unplacedComments: OcrComment[] = [];
@@ -410,6 +409,14 @@ export function partitionReviewComments(result: OcrReviewEnvelope): {
   }
 
   return { lineComments, fileComments, unplacedComments };
+}
+
+export function partitionReviewComments(result: OcrReviewEnvelope): {
+  lineComments: GithubLineReviewComment[];
+  fileComments: GithubFileReviewComment[];
+  unplacedComments: OcrComment[];
+} {
+  return partitionComments(normalizeComments(result));
 }
 
 function appendUnplacedFindings(lines: string[], comments: OcrComment[]): void {
@@ -505,8 +512,7 @@ function appendRetryReport(lines: string[], result: OcrReviewEnvelope): void {
   appendRetryRequestTable(lines, result);
 }
 
-function appendSeverityCategoryBreakdown(lines: string[], result: OcrReviewEnvelope): void {
-  const comments = normalizeComments(result);
+function appendSeverityCategoryBreakdown(lines: string[], comments: OcrComment[]): void {
   const severityRows = countBySeverity(comments);
   const categoryRows = countByCategory(comments);
   if (severityRows.length === 0 && categoryRows.length === 0) {
@@ -535,18 +541,18 @@ function appendSeverityCategoryBreakdown(lines: string[], result: OcrReviewEnvel
 
 function buildReviewMarkdownCore(
   result: OcrReviewEnvelope,
+  comments: OcrComment[],
   options: { includeFindings: boolean; unplacedComments?: OcrComment[] },
 ): string {
   const lines: string[] = ['## Code Review', ''];
 
   const stats = getRunStats(result);
   const coverage = getCoverage(result);
-  const comments = normalizeComments(result);
   const findingCount = stats?.comments ?? comments.length;
   const failedCount = coverage?.failed?.length ?? 0;
   const filesReviewed = stats?.files_reviewed ?? getReviewedFilePaths(result).length;
 
-  lines.push(headlineFor(result, findingCount, filesReviewed, failedCount));
+  lines.push(headlineFor(result, comments, findingCount, filesReviewed, failedCount));
 
   const statParts: string[] = [];
   if (filesReviewed > 0) {
@@ -562,7 +568,7 @@ function buildReviewMarkdownCore(
   appendBranchRange(lines, result);
   appendCoverageSummary(lines, result);
   appendRunStats(lines, result);
-  appendSeverityCategoryBreakdown(lines, result);
+  appendSeverityCategoryBreakdown(lines, comments);
 
   if (options.includeFindings && comments.length > 0) {
     lines.push('', '### Findings', '');
@@ -629,13 +635,14 @@ function buildReviewMarkdownCore(
 
 /** Full review markdown for local session UI (includes inline findings list). */
 export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
-  return buildReviewMarkdownCore(result, { includeFindings: true });
+  return buildReviewMarkdownCore(result, normalizeComments(result), { includeFindings: true });
 }
 
 /** Summary-only markdown for the GitHub PR review body (findings posted as file comments). */
 export function formatReviewSummaryMarkdown(result: OcrReviewEnvelope): string {
-  const { unplacedComments } = partitionReviewComments(result);
-  return buildReviewMarkdownCore(result, { includeFindings: false, unplacedComments });
+  const comments = normalizeComments(result);
+  const { unplacedComments } = partitionComments(comments);
+  return buildReviewMarkdownCore(result, comments, { includeFindings: false, unplacedComments });
 }
 
 export function formatReviewBackgroundMessage(options: {
