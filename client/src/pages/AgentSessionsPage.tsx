@@ -84,6 +84,7 @@ export function AgentSessionsPage({
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
+  const [defaultReviewModel, setDefaultReviewModel] = useState('');
   const [push, setPush] = useState(true);
   const [pushOnFailure, setPushOnFailure] = useState(false);
   const [mode, setMode] = useState<AgentMode>('batch');
@@ -184,6 +185,7 @@ export function AgentSessionsPage({
     try {
       const config = await apiFetch<AppConfig>('/api/v1/config');
       setDefaultModel(config.opencodeModel || '');
+      setDefaultReviewModel(config.reviewModel || '');
       setBatchAutoApproveDefault(config.batchAutoApprovePermissions !== false);
       setLoopAutoApproveDefault(config.loopAutoApprovePermissions !== false);
       setInteractiveAutoApproveDefault(config.interactiveAutoApprovePermissions === true);
@@ -225,13 +227,24 @@ export function AgentSessionsPage({
 
     if (mode === 'loop') return;
 
+    const resolvePreferredModel = (...candidates: string[]) =>
+      candidates.find((candidate) => candidate && availableModels.includes(candidate)) ??
+      availableModels[0];
+
+    const preferredDefault =
+      mode === 'review'
+        ? resolvePreferredModel(defaultReviewModel, defaultModel)
+        : resolvePreferredModel(defaultModel);
+
     setModel((current) => {
-      if (current && availableModels.includes(current)) return current;
-      return defaultModel && availableModels.includes(defaultModel)
-        ? defaultModel
-        : availableModels[0];
+      // Keep explicit user picks, but let review mode replace the
+      // auto-populated global default with the review default.
+      if (current && availableModels.includes(current) && current !== defaultModel) {
+        return current;
+      }
+      return preferredDefault;
     });
-  }, [availableModels, defaultModel, mode]);
+  }, [availableModels, defaultModel, defaultReviewModel, mode]);
 
   useEffect(() => {
     loadAgents();
@@ -397,6 +410,7 @@ export function AgentSessionsPage({
                 baseBranch: baseBranch.trim() || 'main',
                 headBranch: reviewHeadBranch.trim(),
                 ...(reviewBackground.trim() ? { background: reviewBackground.trim() } : {}),
+                ...(model.trim() ? { model: model.trim() } : {}),
               }
             : {
                 repoId: effectiveRepoId,
@@ -859,6 +873,35 @@ export function AgentSessionsPage({
                     value={reviewBackground}
                     onChange={(e) => setReviewBackground(e.target.value)}
                   />
+                </Field>
+                <Field label="Model">
+                  <Select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    disabled={!availableModels.length}
+                  >
+                    {!availableModels.length ? (
+                      <option value="">
+                        {ollama?.reachable === false
+                          ? '— Ollama unreachable (uses Settings default) —'
+                          : '— no models available (uses Settings default) —'}
+                      </option>
+                    ) : (
+                      availableModels.map((entry) => (
+                        <option key={entry} value={entry}>
+                          {entry}
+                          {entry === defaultReviewModel && ' (review default)'}
+                          {entry === defaultModel &&
+                            entry !== defaultReviewModel &&
+                            ' (global default)'}
+                        </option>
+                      ))
+                    )}
+                  </Select>
+                  <p className="mt-1 text-xs text-muted">
+                    Override the review model for this run. Leave unset when Ollama is
+                    unavailable to use the Settings review model.
+                  </p>
                 </Field>
               </>
             ) : (

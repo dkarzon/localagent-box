@@ -132,6 +132,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
 
   const [logs, setLogs] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
+  const [defaultReviewModel, setDefaultReviewModel] = useState('');
   const [followTail, setFollowTail] = useState(true);
   const [prBusy, setPrBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
@@ -172,8 +173,10 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     try {
       const config = await apiFetch<AppConfig>('/api/v1/config');
       setDefaultModel(config.opencodeModel || '');
+      setDefaultReviewModel(config.reviewModel || '');
     } catch {
       setDefaultModel('');
+      setDefaultReviewModel('');
     }
   }, []);
 
@@ -572,6 +575,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     agentId,
     repoLabel,
     defaultModel,
+    defaultReviewModel,
     loopProgress,
     eventsConnected: session.eventsConnected,
     loadError: session.loadError,

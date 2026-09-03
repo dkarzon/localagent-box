@@ -20,9 +20,17 @@ import { extractOcrTokenUsage } from '../../../integrations/open-code-review/tok
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
 import { loadRepoConfig } from './repo-config';
+import type { AgentJob, AppConfig } from '../../../types';
 import type { WorkerContext } from './worker-context';
 
 const execFileAsync = promisify(execFile);
+
+export function resolveReviewRunConfig(config: AppConfig, job: AgentJob): AppConfig {
+  if (job.model) {
+    return { ...config, reviewModel: job.model };
+  }
+  return config;
+}
 
 async function resolveHeadSha(workspaceDir: string): Promise<string | null> {
   try {
@@ -105,17 +113,19 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     parentAgent?.prompt,
   );
 
+  const runConfig = resolveReviewRunConfig(config, job);
+
   let ocrResult: OcrReviewEnvelope;
 
   try {
-    writeOcrConfig(config, job.workspaceDir);
+    writeOcrConfig(runConfig, job.workspaceDir);
     appendLog(logPath, 'OCR config written to workspace');
     appendLog(
       logPath,
-      `Running OCR review (${job.baseBranch}..${headBranch}) fileTimeout=${getOcrFileTimeoutMinutes()}m llmTimeout=${getOcrLlmTimeoutSeconds()}s concurrency=${getOcrReviewConcurrency()}`,
+      `Running OCR review (${job.baseBranch}..${headBranch}) model=${runConfig.reviewModel || runConfig.opencodeModel || 'llama3.2'} fileTimeout=${getOcrFileTimeoutMinutes()}m llmTimeout=${getOcrLlmTimeoutSeconds()}s concurrency=${getOcrReviewConcurrency()}`,
     );
     ocrResult = await runOcrReview({
-      config,
+      config: runConfig,
       workspaceDir: job.workspaceDir,
       baseBranch: job.baseBranch,
       headBranch,
