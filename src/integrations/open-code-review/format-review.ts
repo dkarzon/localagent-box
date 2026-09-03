@@ -300,18 +300,20 @@ function appendToolCalls(lines: string[], result: OcrReviewEnvelope): void {
 }
 
 function formatSeverityBadge(severity: string | undefined): string | null {
-  if (!severity || !KNOWN_SEVERITIES.has(severity)) {
+  const normalized = severity?.trim().toLowerCase();
+  if (!normalized || !KNOWN_SEVERITIES.has(normalized)) {
     return null;
   }
-  const emoji = SEVERITY_EMOJI[severity] || '';
-  return `${emoji} **${severity}**`.trim();
+  const emoji = SEVERITY_EMOJI[normalized] || '';
+  return `${emoji} **${normalized}**`.trim();
 }
 
 function formatCategoryBadge(category: string | undefined): string | null {
-  if (!category || !KNOWN_CATEGORIES.has(category)) {
+  const normalized = category?.trim().toLowerCase();
+  if (!normalized || !KNOWN_CATEGORIES.has(normalized)) {
     return null;
   }
-  return CATEGORY_LABELS[category] || null;
+  return CATEGORY_LABELS[normalized] || null;
 }
 
 function appendFindingBadges(lines: string[], comment: OcrComment): void {
