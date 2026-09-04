@@ -221,8 +221,12 @@ export function createRepoService({
     registerRepo,
     updateRepo: (repoId, updates) => {
       const { autofix, ...rest } = updates;
+      // Pass the validated partial through unchanged; the repository merges it with
+      // the stored settings, so an absent key never resets the other to defaults.
       const normalized: Partial<RepoUpdateFields> =
-        autofix !== undefined ? { ...rest, autofix: validateAutofixUpdates(autofix) } : { ...rest };
+        autofix !== undefined
+          ? { ...rest, autofix: validateAutofixUpdates(autofix) }
+          : { ...rest };
       const repo = repository.update(repoId, normalized);
       if (!repo) {
         throw new CodedError('Repository not found', 'NOT_FOUND');
