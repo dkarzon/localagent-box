@@ -669,6 +669,26 @@ describe('startAutomaticChain', () => {
     assert.equal(persisted?.[0].fixStatus, 'available');
     assert.equal(persisted?.[0].assignedAgentId, null);
   });
+
+  it('pauses instead of stealing a finding already claimed by a manual fix', async () => {
+    const ctx = setup({
+      findings: [finding({ fixStatus: 'assigned', assignedAgentId: 'manual-1' })],
+    });
+    writePlan(ctx.repository, {});
+
+    await ctx.service.startAutomaticChain('review1');
+
+    assert.deepEqual(ctx.calls.created, []);
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.chainStatus, 'paused');
+    assert.equal(plan?.nextBatchIndex, null);
+    assert.equal(plan?.batches[0].status, 'pending');
+    assert.equal(plan?.batches[0].agentId, null);
+    // The existing manual claim is left untouched.
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'assigned');
+    assert.equal(persisted?.[0].assignedAgentId, 'manual-1');
+  });
 });
 
 describe('resumeAutomaticChain', () => {
@@ -1042,6 +1062,46 @@ describe('handleFixAgentStarted / handleFixAgentFinished', () => {
     assert.equal(plan?.batches[1].status, 'pending');
     assert.equal(plan?.nextBatchIndex, null);
     assert.equal(ctx.calls.created.length, 1);
+  });
+
+  it('does not steal a finding claimed by a manual fix when advancing the chain', async () => {
+    const ctx = setup({
+      findings: [automaticFinding(0), automaticFinding(1)],
+    });
+    writeBatchPlan(ctx.repository, {
+      batches: [
+        { index: 0, findingIds: ['review1:finding:0'], agentId: null, status: 'pending' },
+        { index: 1, findingIds: ['review1:finding:1'], agentId: null, status: 'pending' },
+      ],
+      nextBatchIndex: 0,
+    });
+    const firstFixAgentId = await startFirstBatch(ctx);
+    ctx.service.handleFixAgentStarted(firstFixAgentId);
+
+    // A manual fix claims the second finding mid-run (the bug scenario).
+    ctx.branches = ['feature'];
+    await ctx.service.createManualFix('review1', 'review1:finding:1');
+    const persistedManual = ctx.repository.readReviewFindings('review1');
+    const manual = persistedManual?.find((entry) => entry.id === 'review1:finding:1');
+    assert.equal(manual?.fixStatus, 'assigned');
+    assert.equal(manual?.assignedAgentId, 'fix2');
+
+    setTerminalStatus(ctx.repository, firstFixAgentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(firstFixAgentId);
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    const second = persisted?.find((entry) => entry.id === 'review1:finding:1');
+    // The batch did not steal the manual claim.
+    assert.equal(second?.fixStatus, 'assigned');
+    assert.equal(second?.assignedAgentId, 'fix2');
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.chainStatus, 'paused');
+    assert.equal(plan?.nextBatchIndex, null);
+    assert.equal(plan?.batches[0].status, 'completed');
+    assert.equal(plan?.batches[1].status, 'pending');
+    assert.equal(plan?.batches[1].agentId, null);
+    // Only batch 0's fix agent was advanced by the chain; no batch-1 agent.
+    assert.equal(ctx.calls.created.length, 2);
   });
 
   it('completed without a push pauses the chain like a failure', async () => {

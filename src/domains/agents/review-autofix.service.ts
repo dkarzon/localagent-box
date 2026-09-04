@@ -267,6 +267,18 @@ export function createReviewAutofixService({
 
     return { agent: fixAgent, finding, staleReview };
   }
+
+  /**
+   * Detects findings a batch would steal from another fix agent before the
+   * batch is created (mirrors `createManualFix`'s actionable-status guard).
+   * A claimed finding is one whose status is no longer manually actionable
+   * (`assigned`/`fixing`/`fixed`) — e.g. a manual claim persisted mid-run.
+   * Callers must pause the chain instead of creating the batch agent so the
+   * existing claim is left untouched.
+   */
+  function claimedBatchFindings(assignedFindings: ReviewFindingRecord[]): ReviewFindingRecord[] {
+    return assignedFindings.filter((finding) => !MANUALLY_ACTIONABLE_STATUSES.has(finding.fixStatus));
+  }
   /**
    * Creates the first automatic batch agent for a completed review.
    *
@@ -319,6 +331,20 @@ export function createReviewAutofixService({
       .map((findingId) => findings.find((entry) => entry.id === findingId))
       .filter((entry): entry is ReviewFindingRecord => Boolean(entry));
     if (assignedFindings.length === 0) {
+      return;
+    }
+
+    // Pause instead of stealing a finding already claimed by another fix
+    // agent (mirrors createManualFix's guard). The claim is left untouched.
+    const claimedFindings = claimedBatchFindings(assignedFindings);
+    if (claimedFindings.length > 0) {
+      plan.chainStatus = 'paused';
+      plan.nextBatchIndex = null;
+      repository.writeReviewAutofixPlan(reviewAgentId, plan);
+      appendLog(
+        repository.getLogPath(reviewAgentId),
+        `Autofix chain paused — batch ${batch.index} finding(s) already assigned to another fix agent`,
+      );
       return;
     }
 
@@ -764,6 +790,20 @@ export function createReviewAutofixService({
       .map((findingId) => findings.find((entry) => entry.id === findingId))
       .filter((entry): entry is ReviewFindingRecord => Boolean(entry));
     if (assignedFindings.length === 0) {
+      return null;
+    }
+
+    // Pause instead of stealing a finding already claimed by another fix
+    // agent (mirrors createManualFix's guard). The claim is left untouched.
+    const claimedFindings = claimedBatchFindings(assignedFindings);
+    if (claimedFindings.length > 0) {
+      plan.chainStatus = 'paused';
+      plan.nextBatchIndex = null;
+      repository.writeReviewAutofixPlan(reviewAgentId, plan);
+      appendLog(
+        repository.getLogPath(reviewAgentId),
+        `Autofix chain paused — batch ${batch.index} finding(s) already assigned to another fix agent`,
+      );
       return null;
     }
 
