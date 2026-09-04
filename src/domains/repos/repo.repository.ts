@@ -1,6 +1,37 @@
 import { validationError } from '../../lib/validation';
-import type { Repo } from '../../types';
+import {
+  AUTOFIX_SEVERITY_THRESHOLDS,
+  DEFAULT_REPO_AUTOFIX_SETTINGS,
+} from '../../types';
+import type { AutofixSeverityThreshold, Repo, RepoAutofixSettings } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
+
+/**
+ * Normalizes the optional `autofix` settings block on a repository record so
+ * old JSON (which omits the block) and manually edited data get safe defaults
+ * without a migration. Invalid persisted values are clamped/defaulted.
+ */
+export function normalizeRepoAutofixSettings(value: unknown): RepoAutofixSettings {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_REPO_AUTOFIX_SETTINGS };
+  }
+  const raw = value as Partial<RepoAutofixSettings>;
+  const severityThreshold: AutofixSeverityThreshold = AUTOFIX_SEVERITY_THRESHOLDS.includes(
+    raw.severityThreshold as AutofixSeverityThreshold,
+  )
+    ? (raw.severityThreshold as AutofixSeverityThreshold)
+    : DEFAULT_REPO_AUTOFIX_SETTINGS.severityThreshold;
+  const maxFindingsPerBatch =
+    typeof raw.maxFindingsPerBatch === 'number' &&
+    Number.isInteger(raw.maxFindingsPerBatch) &&
+    raw.maxFindingsPerBatch >= 1 &&
+    raw.maxFindingsPerBatch <= 20
+      ? raw.maxFindingsPerBatch
+      : DEFAULT_REPO_AUTOFIX_SETTINGS.maxFindingsPerBatch;
+  return { severityThreshold, maxFindingsPerBatch };
+}
+
+export type RepoUpdateFields = Pick<Repo, 'autoReviewPullRequests' | 'autofix'>;
 
 export function validateRepoId(repoId: unknown): string {
   if (!repoId || typeof repoId !== 'string') {
@@ -24,12 +55,16 @@ export interface RepoRepository {
   add: (repo: Repo) => void;
   remove: (repoId: string) => Repo | undefined;
   updateVerifyStatus: (repoId: string, status: string, message: string) => void;
-  update: (repoId: string, partial: Partial<Pick<Repo, 'autoReviewPullRequests'>>) => Repo | undefined;
+  update: (repoId: string, partial: Partial<RepoUpdateFields>) => Repo | undefined;
 }
 
 export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): RepoRepository {
   function loadRepos(): Repo[] {
-    return reposStore.load().repos || [];
+    const repos = reposStore.load().repos || [];
+    for (const repo of repos) {
+      repo.autofix = normalizeRepoAutofixSettings(repo.autofix);
+    }
+    return repos;
   }
 
   function saveRepos(repos: Repo[]): void {
@@ -38,12 +73,23 @@ export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): 
 
   function updateRepo(
     repoId: string,
-    partial: Partial<Pick<Repo, 'autoReviewPullRequests'>>,
+    partial: Partial<RepoUpdateFields>,
   ): Repo | undefined {
     const repos = loadRepos();
     const repo = repos.find((entry) => entry.repoId === validateRepoId(repoId));
     if (!repo) return undefined;
-    Object.assign(repo, partial);
+    if (partial.autofix) {
+      const merged = normalizeRepoAutofixSettings({
+        ...normalizeRepoAutofixSettings(repo.autofix),
+        ...normalizeRepoAutofixSettings(partial.autofix),
+      });
+      repo.autofix = merged;
+      const rest = { ...partial };
+      delete rest.autofix;
+      Object.assign(repo, rest);
+    } else {
+      Object.assign(repo, partial);
+    }
     saveRepos(repos);
     return repo;
   }

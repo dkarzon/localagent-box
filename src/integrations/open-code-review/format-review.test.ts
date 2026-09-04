@@ -267,8 +267,26 @@ describe('partitionReviewComments', () => {
 
     assert.equal(partitioned.fileComments.length, 1);
     assert.equal(partitioned.fileComments[0].path, 'src/bar.ts');
+    assert.equal(partitioned.fileComments[0].ordinal, 1);
 
     assert.equal(partitioned.unplacedComments.length, 1);
+  });
+
+  it('carries the source OCR ordinal on line comments for comment mapping', () => {
+    const partitioned = partitionReviewComments({
+      comments: [
+        { content: 'No path.' },
+        {
+          path: 'src/foo.ts',
+          content: 'Line issue.',
+          start_line: 42,
+          end_line: 47,
+        },
+      ],
+    });
+
+    assert.equal(partitioned.lineComments.length, 1);
+    assert.equal(partitioned.lineComments[0].ordinal, 1);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   allowAgentSuccessors,
 } from '../api/agents';
 import {
+  fetchAgentFindings,
   fetchAgentReviewResult,
   type AgentReviewResultResponse,
 } from '../api/agent-session';
@@ -28,11 +29,13 @@ import {
   type StatusVariant,
 } from '../api/types';
 import type { TranscriptEntry } from '../api/agent-events';
+import type { AgentFindingsResponse } from '../api/types';
 import { extractOcrTokenUsage } from '../lib/ocr-token-usage';
 import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
 import { AgentTranscript } from '../components/agents/AgentTranscript';
+import { ReviewFindingsTable } from '../components/agents/ReviewFindingsTable';
 import { IconGithub, IconInfo, IconLink, IconRefresh } from '../components/icons';
 import { Badge, agentStatusPulse, agentStatusVariant } from '../components/ui/Badge';
 import { FlyoutPanel } from '../components/ui/FlyoutPanel';
@@ -145,6 +148,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [pageStatus, setPageStatus] = useState('');
   const [pageStatusVariant, setPageStatusVariant] = useState<StatusVariant>('');
   const [reviewResult, setReviewResult] = useState<AgentReviewResultResponse | null>(null);
+  const [findings, setFindings] = useState<AgentFindingsResponse | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   const desktopHeaderRef = useRef<HTMLDivElement>(null);
   const mobileHeaderRef = useRef<HTMLElement>(null);
@@ -205,6 +209,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const loadReviewResult = useCallback(async () => {
     if (!review) {
       setReviewResult(null);
+      setFindings(null);
       return;
     }
     try {
@@ -214,6 +219,12 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
       }
     } catch {
       /* review output may not be written yet */
+    }
+    try {
+      const findingsData = await fetchAgentFindings(agentId);
+      setFindings(findingsData);
+    } catch {
+      /* findings endpoint unavailable for historical sessions */
     }
   }, [agentId, review]);
 
@@ -225,6 +236,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
 
   useEffect(() => {
     setReviewResult(null);
+    setFindings(null);
     void loadReviewResult();
   }, [agentId, loadReviewResult]);
 
@@ -828,6 +840,15 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         <aside className="card-surface hidden h-fit space-y-6 p-6 lg:sticky lg:top-[calc(var(--session-sticky-header-height,0px)+1.5rem)] lg:block">
           <AgentSessionInfo {...sessionInfoProps} />
         </aside>
+
+        {review && findings && findings.findings.length > 0 ? (
+          <div className="mt-5">
+            <ReviewFindingsTable
+              findings={findings.findings}
+              staleReview={findings.staleReview}
+            />
+          </div>
+        ) : null}
 
         <section className="card-surface flex min-h-[min(70vh,640px)] min-w-0 flex-col overflow-clip">
           <header className="card-header-rule sticky top-[var(--session-mobile-header-height,0px)] z-[1] flex items-center justify-between gap-4 bg-surface/80 px-6 py-4 backdrop-blur-sm lg:top-[var(--session-sticky-header-height,0px)]">

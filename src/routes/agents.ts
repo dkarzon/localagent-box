@@ -78,6 +78,27 @@ const handleGetReviewResult = withErrorHandling((_req, res, ctx, agentId) => {
   sendJson(res, 200, { agentId, ...reviewResult });
 });
 
+const handleGetFindings = withErrorHandling((_req, res, ctx, agentId) => {
+  const findings = ctx.agentManager.readReviewFindings(agentId);
+  sendJson(res, 200, { agentId, ...findings });
+});
+
+const handleRetryResolution = withErrorHandling(async (_req, res, ctx, agentId, findingId) => {
+  const finding = await ctx.agentManager.retryFindingResolution(agentId, findingId);
+  sendJson(res, 200, { agentId, finding });
+});
+
+const handleManualFix = withErrorHandling(async (_req, res, ctx, agentId, findingId) => {
+  const result = await ctx.agentManager.createManualFix(agentId, findingId);
+  sendJson(res, 201, {
+    agentId,
+    findingId,
+    agent: result.agent,
+    finding: result.finding,
+    staleReview: result.staleReview,
+  });
+});
+
 const handleGetMessages = withErrorHandling((req, res, ctx, agentId) => {
   const sinceSeq = parseSinceSeq(req, parseUrl(req));
   const messages = ctx.agentManager.readMessages(agentId);
@@ -190,6 +211,32 @@ const agentsRoute: Route = {
     const reviewResultMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/review-result$/);
     if (reviewResultMatch && req.method === 'GET') {
       await handleGetReviewResult(req, res, ctx, reviewResultMatch[1]);
+      return;
+    }
+
+    const findingsMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/findings$/);
+    if (findingsMatch && req.method === 'GET') {
+      await handleGetFindings(req, res, ctx, findingsMatch[1]);
+      return;
+    }
+
+    const retryResolutionMatch = pathname.match(
+      /^\/api\/v1\/agents\/([^/]+)\/findings\/([^/]+)\/retry-resolution$/,
+    );
+    if (retryResolutionMatch && req.method === 'POST') {
+      if (!requireAuth(req, res)) {
+        return;
+      }
+      await handleRetryResolution(req, res, ctx, retryResolutionMatch[1], retryResolutionMatch[2]);
+      return;
+    }
+
+    const manualFixMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/findings\/([^/]+)\/fix$/);
+    if (manualFixMatch && req.method === 'POST') {
+      if (!requireAuth(req, res)) {
+        return;
+      }
+      await handleManualFix(req, res, ctx, manualFixMatch[1], manualFixMatch[2]);
       return;
     }
 

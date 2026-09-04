@@ -3,12 +3,28 @@ import {
   validateRepoName,
   validateBranchName,
   buildRepoId,
+  validationError,
 } from '../../lib/validation';
 import { CodedError } from '../../types';
-import type { AppConfig, Repo } from '../../types';
+import {
+  AUTOFIX_SEVERITY_THRESHOLDS,
+  DEFAULT_REPO_AUTOFIX_SETTINGS,
+} from '../../types';
+import type {
+  AutofixSeverityThreshold,
+  AppConfig,
+  Repo,
+  RepoAutofixSettings,
+} from '../../types';
 import type { GithubAppService } from '../../services/github-app';
 import type { GitService } from '../../services/git-service';
-import { createRepoRepository, validateRepoId, type RepoRepository } from './repo.repository';
+import {
+  createRepoRepository,
+  validateRepoId,
+  normalizeRepoAutofixSettings,
+  type RepoUpdateFields,
+  type RepoRepository,
+} from './repo.repository';
 import type { JsonStore } from '../../lib/json-store';
 import type { RegisterRepoRequest, VerifyRepoResponse } from './dto';
 
@@ -20,7 +36,10 @@ export interface RepoService {
   registerRepo: (body: RegisterRepoRequest) => Repo;
   updateRepo: (
     repoId: string,
-    updates: Partial<Pick<Repo, 'autoReviewPullRequests'>>,
+    updates: {
+      autoReviewPullRequests?: boolean | null;
+      autofix?: Partial<RepoAutofixSettings>;
+    },
   ) => Repo;
   deleteRepo: (repoId: string) => Repo;
   verifyRepo: (
@@ -85,6 +104,7 @@ export function createRepoService({
       lastVerifyStatus: null,
       lastVerifyMessage: null,
       autoReviewPullRequests: null,
+      autofix: { ...DEFAULT_REPO_AUTOFIX_SETTINGS },
     };
 
     repository.add(repo);
@@ -157,12 +177,56 @@ export function createRepoService({
     };
   }
 
+  /**
+   * Validates autofix settings at the service boundary (plan rule: validate at
+   * repository API boundaries). Accepts only known threshold strings and
+   * integer batch sizes 1–20; updating one setting preserves the other.
+   */
+  function validateAutofixUpdates(autofix: unknown): Partial<RepoAutofixSettings> {
+    if (!autofix || typeof autofix !== 'object' || Array.isArray(autofix)) {
+      throw validationError('autofix must be an object');
+    }
+    const raw = autofix as Partial<RepoAutofixSettings>;
+    const validated: Partial<RepoAutofixSettings> = {};
+
+    if (raw.severityThreshold !== undefined) {
+      if (
+        typeof raw.severityThreshold !== 'string' ||
+        !AUTOFIX_SEVERITY_THRESHOLDS.includes(raw.severityThreshold as AutofixSeverityThreshold)
+      ) {
+        throw validationError(
+          `autofix.severityThreshold must be one of: ${AUTOFIX_SEVERITY_THRESHOLDS.join(', ')}`,
+        );
+      }
+      validated.severityThreshold = raw.severityThreshold as AutofixSeverityThreshold;
+    }
+
+    if (raw.maxFindingsPerBatch !== undefined) {
+      if (
+        typeof raw.maxFindingsPerBatch !== 'number' ||
+        !Number.isInteger(raw.maxFindingsPerBatch) ||
+        raw.maxFindingsPerBatch < 1 ||
+        raw.maxFindingsPerBatch > 20
+      ) {
+        throw validationError('autofix.maxFindingsPerBatch must be an integer from 1 through 20');
+      }
+      validated.maxFindingsPerBatch = raw.maxFindingsPerBatch;
+    }
+
+    return validated;
+  }
+
   return {
     listRepos: () => repository.findAll(),
     getRepo,
     registerRepo,
     updateRepo: (repoId, updates) => {
-      const repo = repository.update(repoId, updates);
+      const { autofix, ...rest } = updates;
+      const normalized: Partial<RepoUpdateFields> =
+        autofix !== undefined
+          ? { ...rest, autofix: normalizeRepoAutofixSettings(validateAutofixUpdates(autofix)) }
+          : { ...rest };
+      const repo = repository.update(repoId, normalized);
       if (!repo) {
         throw new CodedError('Repository not found', 'NOT_FOUND');
       }

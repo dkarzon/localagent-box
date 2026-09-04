@@ -22,6 +22,7 @@ import {
 } from '../../lib/pr-content-generator';
 import { getLogger } from '../../lib/logger';
 import { parsePositiveInt } from '../../lib/parse';
+import type { ReviewFindingRecord, ReviewAutofixPlan } from '../../types';
 import {
   buildAutoSpawnReviewBackground,
   readParentTranscriptLines,
@@ -43,6 +44,11 @@ import type { GitService } from '../../services/git-service';
 import type { OllamaChatService } from '../../services/ollama-client';
 import type { WebhookSender } from '../../lib/webhook';
 import { createAgentRepository, type AgentRepository } from './agent.repository';
+import {
+  createReviewAutofixService,
+  type ManualFixResult,
+  type ReviewAutofixService,
+} from './review-autofix.service';
 import { createAgentQueue } from './agent-queue';
 import { decideQueueAction, buildAgentQueueState, hasActiveCodingOnBranch } from './queue-eligibility';
 import { createWorkerSpawner } from './worker-spawner';
@@ -99,6 +105,15 @@ export interface AgentService {
     sessionMarkdown: string | null;
     session: Record<string, unknown> | null;
   } | null;
+  readReviewFindings: (agentId: string) => {
+    findings: ReviewFindingRecord[];
+    plan: ReviewAutofixPlan | null;
+    currentHeadSha: string | null;
+    staleReview: boolean;
+    verificationAgentId: string | null;
+  };
+  retryFindingResolution: ReviewAutofixService['retryFindingResolution'];
+  createManualFix: ReviewAutofixService['createManualFix'];
   restoreOnStartup: () => void;
   shutdown: () => Promise<void>;
   maxConcurrent: number;
@@ -122,6 +137,8 @@ type FsLike = Pick<
   | 'rmSync'
   | 'readdirSync'
   | 'statSync'
+  | 'renameSync'
+  | 'unlinkSync'
 >;
 
 export function createAgentService(options: {
@@ -191,6 +208,14 @@ export function createAgentService(options: {
       fs: fsImpl,
       path: pathImpl,
     });
+
+  const reviewAutofix = createReviewAutofixService({
+    repository,
+    repoManager,
+    configRepository,
+    githubApp,
+    createBatchAgent: (body) => createAgent(body as unknown as CreateAgentRequest),
+  });
 
   function sendAgentWebhook(agentId: string, event: string): void {
     const webhookUrl = configRepository.load().webhookUrl?.trim();
@@ -1265,6 +1290,40 @@ export function createAgentService(options: {
     };
   }
 
+  function readReviewFindings(agentId: string): {
+    findings: ReviewFindingRecord[];
+    plan: ReviewAutofixPlan | null;
+    currentHeadSha: string | null;
+    staleReview: boolean;
+    verificationAgentId: string | null;
+  } {
+    const agent = repository.getAgent(agentId);
+    if (getAgentMode(agent) !== 'review') {
+      throw new CodedError('Agent is not a review session', 'INVALID_MODE');
+    }
+
+    const findings = repository.readReviewFindings(agentId) ?? [];
+    const plan = repository.readReviewAutofixPlan(agentId);
+
+    // A verification review is a later review linked to the same source review.
+    const verificationAgentId =
+      repository
+        .findAll()
+        .find(
+          (entry) =>
+            entry.mode === 'review' && entry.review?.background === `autofix-verification:${agentId}`,
+        )?.agentId ?? null;
+
+    const currentHeadSha = agent.review?.headSha ?? null;
+    const staleReview =
+      findings.length > 0 &&
+      Boolean(findings[0]?.reviewedSha) &&
+      currentHeadSha != null &&
+      findings[0]!.reviewedSha !== currentHeadSha;
+
+    return { findings, plan, currentHeadSha, staleReview, verificationAgentId };
+  }
+
   return {
     createAgent,
     getAgent: (agentId) => present(repository.getAgent(agentId)),
@@ -1274,6 +1333,10 @@ export function createAgentService(options: {
     getLastEventSeq: (agentId) => repository.getLastEventSeq(agentId),
     readMessages: (agentId) => repository.readMessages(agentId),
     readReviewResult,
+    readReviewFindings,
+    retryFindingResolution: reviewAutofix.retryFindingResolution,
+    createManualFix: (reviewAgentId: string, findingId: string): Promise<ManualFixResult> =>
+      reviewAutofix.createManualFix(reviewAgentId, findingId),
     sendMessage,
     finishAgent,
     commitOutstandingChanges,

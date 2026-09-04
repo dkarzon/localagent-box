@@ -1,13 +1,20 @@
 import fs from 'fs';
 import path from 'path';
-import type { Agent, AgentEvent, AgentMessage } from '../../types';
+import type { Agent, AgentEvent, AgentMessage, ReviewAutofixPlan, ReviewFindingRecord } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import { CodedError } from '../../types';
 import { getAgentMode, withDerivedAgentFields } from './agent.types';
 
 type FsLike = Pick<
   typeof import('fs'),
-  'mkdirSync' | 'existsSync' | 'writeFileSync' | 'readFileSync' | 'appendFileSync' | 'rmSync'
+  | 'mkdirSync'
+  | 'existsSync'
+  | 'writeFileSync'
+  | 'readFileSync'
+  | 'appendFileSync'
+  | 'rmSync'
+  | 'renameSync'
+  | 'unlinkSync'
 >;
 
 export interface AgentRepository {
@@ -28,6 +35,12 @@ export interface AgentRepository {
   readReviewResult: (agentId: string) => Record<string, unknown> | null;
   getReviewSessionPath: (agentId: string) => string;
   readReviewSession: (agentId: string) => Record<string, unknown> | null;
+  getReviewFindingsPath: (agentId: string) => string;
+  readReviewFindings: (agentId: string) => ReviewFindingRecord[] | null;
+  writeReviewFindings: (agentId: string, findings: ReviewFindingRecord[]) => void;
+  getReviewAutofixPlanPath: (agentId: string) => string;
+  readReviewAutofixPlan: (agentId: string) => ReviewAutofixPlan | null;
+  writeReviewAutofixPlan: (agentId: string, plan: ReviewAutofixPlan) => void;
   getWorkspaceDir: (workspaceId: string) => string;
   appendInbox: (agentId: string, entry: Record<string, unknown>) => void;
   readLogs: (agentId: string, tailLines?: number) => { logs: string; tail: number };
@@ -102,6 +115,74 @@ export function createAgentRepository(options: {
       return null;
     }
     return JSON.parse(fsImpl.readFileSync(sessionPath, 'utf8')) as Record<string, unknown>;
+  }
+
+  /**
+   * Atomically replaces a JSON artifact: writes a temp file next to the target
+   * then renames over it, so an interrupted write never leaves partial JSON.
+   */
+  function writeJsonFileAtomic(targetPath: string, value: unknown): void {
+    fsImpl.mkdirSync(pathImpl.dirname(targetPath), { recursive: true });
+    const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+    fsImpl.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    try {
+      fsImpl.renameSync(tempPath, targetPath);
+    } catch (err) {
+      try {
+        fsImpl.unlinkSync(tempPath);
+      } catch {
+        // temp cleanup is best-effort
+      }
+      throw err;
+    }
+  }
+
+  function readJsonArrayFile<T>(agentId: string, filePath: string): T[] | null {
+    getAgent(agentId);
+    if (!fsImpl.existsSync(filePath)) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(fsImpl.readFileSync(filePath, 'utf8')) as unknown;
+      return Array.isArray(parsed) ? (parsed as T[]) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getReviewFindingsPath(agentId: string): string {
+    return pathImpl.join(getAgentDir(agentId), 'review-findings.json');
+  }
+
+  function readReviewFindings(agentId: string): ReviewFindingRecord[] | null {
+    return readJsonArrayFile<ReviewFindingRecord>(agentId, getReviewFindingsPath(agentId));
+  }
+
+  function writeReviewFindings(agentId: string, findings: ReviewFindingRecord[]): void {
+    getAgent(agentId);
+    writeJsonFileAtomic(getReviewFindingsPath(agentId), findings);
+  }
+
+  function getReviewAutofixPlanPath(agentId: string): string {
+    return pathImpl.join(getAgentDir(agentId), 'review-autofix-plan.json');
+  }
+
+  function readReviewAutofixPlan(agentId: string): ReviewAutofixPlan | null {
+    getAgent(agentId);
+    const planPath = getReviewAutofixPlanPath(agentId);
+    if (!fsImpl.existsSync(planPath)) {
+      return null;
+    }
+    try {
+      return JSON.parse(fsImpl.readFileSync(planPath, 'utf8')) as ReviewAutofixPlan;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeReviewAutofixPlan(agentId: string, plan: ReviewAutofixPlan): void {
+    getAgent(agentId);
+    writeJsonFileAtomic(getReviewAutofixPlanPath(agentId), plan);
   }
 
   function getWorkspaceDir(workspaceId: string): string {
@@ -184,6 +265,12 @@ export function createAgentRepository(options: {
     readReviewResult,
     getReviewSessionPath,
     readReviewSession,
+    getReviewFindingsPath,
+    readReviewFindings,
+    writeReviewFindings,
+    getReviewAutofixPlanPath,
+    readReviewAutofixPlan,
+    writeReviewAutofixPlan,
     getWorkspaceDir,
     appendInbox: (agentId, entry) => {
       fsImpl.appendFileSync(getInboxPath(agentId), `${JSON.stringify(entry)}\n`, 'utf8');

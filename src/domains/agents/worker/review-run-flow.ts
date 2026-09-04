@@ -18,9 +18,10 @@ import {
 import type { OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
 import { extractOcrTokenUsage } from '../../../integrations/open-code-review/token-usage';
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
+import { normalizeReviewFindings } from '../../../lib/review-findings';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
 import { loadRepoConfig } from './repo-config';
-import type { AgentJob, AppConfig } from '../../../types';
+import type { AgentJob, AppConfig, ReviewFindingRecord } from '../../../types';
 import type { WorkerContext } from './worker-context';
 
 const execFileAsync = promisify(execFile);
@@ -52,6 +53,23 @@ function loadParentTranscript(dataDir: string, parentAgentId: string): string {
     return readParentTranscriptLines(lines);
   } catch {
     return '';
+  }
+}
+
+/** Atomically replaces review-findings.json (temp file + rename). */
+function writeFindingsAtomic(findingsPath: string, findings: ReviewFindingRecord[]): void {
+  fs.mkdirSync(path.dirname(findingsPath), { recursive: true });
+  const tempPath = `${findingsPath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(findings, null, 2)}\n`, 'utf8');
+  try {
+    fs.renameSync(tempPath, findingsPath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // best-effort cleanup
+    }
+    throw err;
   }
 }
 
@@ -190,6 +208,27 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     headSha = await resolveHeadSha(job.workspaceDir);
   }
 
+  const findingsPath = path.join(job.dataDir, 'agents', job.agentId, 'review-findings.json');
+  let findings: ReviewFindingRecord[] = [];
+  try {
+    findings = normalizeReviewFindings(job.agentId, ocrResult, headSha);
+    writeFindingsAtomic(findingsPath, findings);
+    appendLog(logPath, `Persisted ${findings.length} structured finding(s)`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(logPath, `Warning: persisting review findings failed — ${message}`);
+  }
+
+  const persistFindings = (reason: string): void => {
+    try {
+      writeFindingsAtomic(findingsPath, findings);
+      appendLog(logPath, `${reason}: review-findings.json updated`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      appendLog(logPath, `Warning: ${reason} — persisting findings failed — ${message}`);
+    }
+  };
+
   let githubReviewId: string | null = null;
   let githubWarning: string | null = null;
 
@@ -219,6 +258,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
 
       let reviewResponse: { id: string; html_url: string };
       let postFileCommentsSeparately = true;
+      let reviewCommentsListed = false;
       try {
         reviewResponse = await githubApp.createPullRequestReview(
           config,
@@ -256,11 +296,74 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
       appendLog(logPath, `GitHub PR #${foundPrNumber} review posted`);
 
+      // Map line comments created inside the submitted review back onto
+      // findings. Submission order is authoritative but each match is
+      // validated against path/line; ambiguous mappings stay unlinked.
+      if (githubReviewId && lineComments.length > 0 && typeof foundPrNumber === 'number') {
+        try {
+          const postedComments = await githubApp.listPullRequestReviewComments(
+            config,
+            repo.owner,
+            repo.name,
+            foundPrNumber,
+            githubReviewId,
+          );
+          reviewCommentsListed = postedComments.length >= lineComments.length;
+          if (reviewCommentsListed) {
+            let cursor = 0;
+            let mapped = 0;
+            for (const lineComment of lineComments) {
+              let matched: (typeof postedComments)[number] | null = null;
+              while (cursor < postedComments.length) {
+                const candidate = postedComments[cursor];
+                cursor += 1;
+                const startMatch =
+                  typeof lineComment.start_line === 'number'
+                    ? candidate.start_line === lineComment.start_line
+                    : candidate.start_line === null;
+                if (
+                  candidate.path === lineComment.path &&
+                  candidate.line !== null &&
+                  candidate.line === lineComment.line &&
+                  startMatch
+                ) {
+                  matched = candidate;
+                  break;
+                }
+              }
+              if (!matched) {
+                appendLog(
+                  logPath,
+                  `Warning: could not map a GitHub comment to finding ordinal ${lineComment.ordinal}; leaving it unlinked`,
+                );
+                continue;
+              }
+              const record = findings[lineComment.ordinal];
+              if (!record) {
+                continue;
+              }
+              record.github.reviewId = githubReviewId;
+              record.github.commentId = matched.id;
+              record.github.commentUrl = matched.html_url || null;
+              record.github.resolutionStatus = 'pending';
+              mapped += 1;
+            }
+            appendLog(logPath, `Mapped ${mapped} line comment(s) onto findings`);
+            if (mapped > 0) {
+              persistFindings('Comment mapping');
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          appendLog(logPath, `Warning: listing review comments for mapping failed — ${message}`);
+        }
+      }
+
       if (postFileCommentsSeparately && fileComments.length > 0 && headSha) {
         let postedFileComments = 0;
         for (const comment of fileComments) {
           try {
-            await githubApp.createPullRequestReviewComment(
+            const created = await githubApp.createPullRequestReviewComment(
               config,
               repo.owner,
               repo.name,
@@ -273,6 +376,13 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
               },
             );
             postedFileComments += 1;
+            const record = findings[comment.ordinal];
+            if (record) {
+              record.github.reviewId = githubReviewId;
+              record.github.commentId = Number(created.id) || null;
+              record.github.commentUrl = created.html_url || null;
+              record.github.resolutionStatus = 'pending';
+            }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             appendLog(
@@ -282,6 +392,9 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           }
         }
         appendLog(logPath, `Posted ${postedFileComments} file-level comment(s)`);
+        if (postedFileComments > 0) {
+          persistFindings('File comment capture');
+        }
       } else if (postFileCommentsSeparately && fileComments.length > 0 && !headSha) {
         appendLog(
           logPath,

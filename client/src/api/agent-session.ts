@@ -1,5 +1,5 @@
 import { apiFetch, authHeaders } from './client';
-import type { Agent, AgentGitStatus } from './types';
+import type { Agent, AgentFindingsResponse, AgentGitStatus } from './types';
 import type { AgentEvent, AgentMessage } from './agent-events';
 
 export async function fetchAgentGitStatus(
@@ -28,6 +28,23 @@ export async function fetchAgentReviewResult(
   const body = text
     ? (JSON.parse(text) as AgentReviewResultResponse & { error?: string })
     : ({} as AgentReviewResultResponse);
+  if (!response.ok) {
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return body;
+}
+
+export async function fetchAgentFindings(
+  agentId: string,
+): Promise<AgentFindingsResponse | null> {
+  const response = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/findings`);
+  if (response.status === 404) {
+    return null;
+  }
+  const text = await response.text();
+  const body = text
+    ? (JSON.parse(text) as AgentFindingsResponse & { error?: string })
+    : ({} as AgentFindingsResponse);
   if (!response.ok) {
     throw new Error(body.error || `Request failed (${response.status})`);
   }

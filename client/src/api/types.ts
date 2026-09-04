@@ -150,6 +150,81 @@ export interface GithubStatus {
   gitUserConfigured?: boolean;
 }
 
+export type AutofixSeverityThreshold = 'disabled' | 'critical' | 'high' | 'medium' | 'low';
+
+export interface RepoAutofixSettings {
+  severityThreshold: AutofixSeverityThreshold;
+  maxFindingsPerBatch: number;
+}
+
+export type ReviewFindingFixStatus = 'available' | 'assigned' | 'fixing' | 'fixed' | 'failed';
+
+export type ReviewFindingResolutionStatus =
+  | 'not_applicable'
+  | 'pending'
+  | 'resolved'
+  | 'failed';
+
+export interface ReviewFindingRecord {
+  id: string;
+  ordinal: number;
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'unknown';
+  category: string | null;
+  path: string | null;
+  startLine: number | null;
+  endLine: number | null;
+  content: string;
+  existingCode: string | null;
+  suggestionCode: string | null;
+  reviewedSha: string | null;
+  fixStatus: ReviewFindingFixStatus;
+  assignedAgentId: string | null;
+  fixedAt: string | null;
+  github: {
+    reviewId: string | null;
+    commentId: number | null;
+    commentUrl: string | null;
+    threadId: string | null;
+    resolutionStatus: ReviewFindingResolutionStatus;
+    resolutionError: string | null;
+    resolvedAt: string | null;
+  };
+}
+
+export interface ReviewAutofixPlan {
+  schemaVersion: 1;
+  snapshot: {
+    severityThreshold: AutofixSeverityThreshold;
+    maxFindingsPerBatch: number;
+    reviewedSha: string | null;
+    baseBranch: string;
+    headBranch: string;
+    prNumber: number | null;
+    snapshottedAt: string;
+  };
+  chainStatus: 'disabled' | 'running' | 'paused' | 'completed';
+  batches: Array<{
+    index: number;
+    findingIds: string[];
+    agentId: string | null;
+    status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'skipped';
+  }>;
+  nextBatchIndex: number | null;
+  verification: {
+    status: 'none' | 'pending' | 'queued' | 'running' | 'completed' | 'failed';
+    agentId: string | null;
+  };
+}
+
+export interface AgentFindingsResponse {
+  agentId: string;
+  findings: ReviewFindingRecord[];
+  plan: ReviewAutofixPlan | null;
+  currentHeadSha: string | null;
+  staleReview: boolean;
+  verificationAgentId: string | null;
+}
+
 export interface Repo {
   repoId: string;
   owner: string;
@@ -161,6 +236,7 @@ export interface Repo {
   lastVerifyStatus?: string;
   lastVerifyMessage?: string;
   autoReviewPullRequests?: boolean | null;
+  autofix?: RepoAutofixSettings;
 }
 
 export interface AgentReviewMetadata {
