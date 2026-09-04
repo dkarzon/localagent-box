@@ -106,9 +106,16 @@ OCR receives a merged **background** string built from:
 
 When a PR matches `headBranch`:
 
-- **Summary** — markdown body on the PR review (`formatReviewSummaryMarkdown`)
-- **Line comments** — inline on changed lines when OCR returns path/line data
-- **File comments** — file-level notes when OCR returns file-scoped findings without line numbers
+- **Summary** — markdown body on the PR review (`formatReviewSummaryMarkdown`), including a **Severity & categories** breakdown table
+- **Line comments** — inline on changed lines when OCR returns path/line data; each comment body leads with severity and category badges (e.g. `🔴 **critical** · 🔒 Security`)
+- **File comments** — file-level notes when OCR returns file-scoped findings without line numbers (same badges)
+
+OCR classifies every finding with a `category` (`bug`, `security`, `performance`, `maintainability`, `test`, `style`, `documentation`, `other`) and a `severity` (`critical`, `high`, `medium`, `low`). These are surfaced in:
+
+- The review headline (severity counts, e.g. `🔍 **3 finding(s)** — critical: 1, medium: 2`)
+- A `### Severity & categories` table in both the session view and the PR summary
+- The `### Findings` list, sorted critical → low
+- Each GitHub line/file comment body
 
 If line comments fail (e.g. stale diff), the worker retries with summary-only. If GitHub posting fails entirely, the review session still completes with `result.warning` in logs.
 

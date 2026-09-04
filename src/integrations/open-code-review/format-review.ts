@@ -1,8 +1,50 @@
-import type { OcrComment, OcrCoverageItem, OcrReviewEnvelope } from './types';
+import type {
+  OcrComment,
+  OcrCommentCategory,
+  OcrCommentSeverity,
+  OcrCoverageItem,
+  OcrReviewEnvelope,
+} from './types';
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+} satisfies Record<OcrCommentSeverity, number>;
+
+const UNKNOWN_SEVERITY_RANK = 4;
+
+const SEVERITY_EMOJI: Record<string, string> = {
+  critical: '🔴',
+  high: '🟠',
+  medium: '🟡',
+  low: '🔵',
+} satisfies Record<OcrCommentSeverity, string>;
+
+const CATEGORY_LABELS: Record<string, string> = {
+  bug: '🐛 Bug',
+  security: '🔒 Security',
+  performance: '⚡ Performance',
+  maintainability: '🔧 Maintainability',
+  test: '🧪 Test',
+  style: '🎨 Style',
+  documentation: '📝 Documentation',
+  other: 'Other',
+} satisfies Record<OcrCommentCategory, string>;
+
+const KNOWN_SEVERITIES = new Set(Object.keys(SEVERITY_ORDER));
+const KNOWN_CATEGORIES = new Set(Object.keys(CATEGORY_LABELS));
 
 export function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
   if (Array.isArray(result.comments) && result.comments.length > 0) {
-    return result.comments.filter((comment) => comment.content?.trim());
+    return result.comments
+      .filter((comment) => comment.content?.trim())
+      .map((comment) => ({
+        ...comment,
+        severity: comment.severity?.trim().toLowerCase() || undefined,
+        category: comment.category?.trim().toLowerCase() || undefined,
+      }));
   }
 
   if (Array.isArray(result.issues)) {
@@ -16,6 +58,43 @@ export function normalizeComments(result: OcrReviewEnvelope): OcrComment[] {
   }
 
   return [];
+}
+
+export function compareBySeverity(a: OcrComment, b: OcrComment): number {
+  const rankA = SEVERITY_ORDER[a.severity || ''] ?? UNKNOWN_SEVERITY_RANK;
+  const rankB = SEVERITY_ORDER[b.severity || ''] ?? UNKNOWN_SEVERITY_RANK;
+  return rankA - rankB;
+}
+
+/** Returns a new array sorted by severity, critical → low. */
+export function sortFindingsBySeverity(comments: OcrComment[]): OcrComment[] {
+  return [...comments].sort(compareBySeverity);
+}
+
+/** Counts of findings per known severity, sorted critical → low. */
+export function countBySeverity(comments: OcrComment[]): Array<{ severity: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const comment of comments) {
+    if (comment.severity && KNOWN_SEVERITIES.has(comment.severity)) {
+      counts.set(comment.severity, (counts.get(comment.severity) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => (SEVERITY_ORDER[a[0]] ?? UNKNOWN_SEVERITY_RANK) - (SEVERITY_ORDER[b[0]] ?? UNKNOWN_SEVERITY_RANK))
+    .map(([severity, count]) => ({ severity, count }));
+}
+
+/** Counts of findings per known category, sorted by count descending. */
+export function countByCategory(comments: OcrComment[]): Array<{ category: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const comment of comments) {
+    if (comment.category && KNOWN_CATEGORIES.has(comment.category)) {
+      counts.set(comment.category, (counts.get(comment.category) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, count]) => ({ category, count }));
 }
 
 function getRunStats(result: OcrReviewEnvelope) {
@@ -86,6 +165,7 @@ function formatFailedItem(item: OcrCoverageItem): string {
 
 function headlineFor(
   result: OcrReviewEnvelope,
+  comments: OcrComment[],
   findingCount: number,
   filesReviewed: number,
   failedCount: number,
@@ -117,6 +197,17 @@ function headlineFor(
 
   if (message) {
     return `🔍 **${findingCount} finding(s)** — ${message}`;
+  }
+
+  const severityCounts = countBySeverity(comments);
+  const severityParts = severityCounts.map(({ severity, count }) => `${severity}: ${count}`);
+  const classifiedCount = severityCounts.reduce((sum, { count }) => sum + count, 0);
+  const otherCount = Math.max(findingCount - classifiedCount, 0);
+  if (otherCount > 0) {
+    severityParts.push(`other: ${otherCount}`);
+  }
+  if (severityParts.length > 0) {
+    return `🔍 **${findingCount} finding(s)** across ${filesReviewed} file(s) — ${severityParts.join(', ')}.`;
   }
 
   return `🔍 **${findingCount} finding(s)** across ${filesReviewed} file(s).`;
@@ -219,7 +310,33 @@ function appendToolCalls(lines: string[], result: OcrReviewEnvelope): void {
   }
 }
 
+function formatSeverityBadge(severity: string | undefined): string | null {
+  const normalized = severity?.trim().toLowerCase();
+  if (!normalized || !KNOWN_SEVERITIES.has(normalized)) {
+    return null;
+  }
+  const emoji = SEVERITY_EMOJI[normalized] || '';
+  return `${emoji} **${normalized}**`.trim();
+}
+
+function formatCategoryBadge(category: string | undefined): string | null {
+  const normalized = category?.trim().toLowerCase();
+  if (!normalized || !KNOWN_CATEGORIES.has(normalized)) {
+    return null;
+  }
+  return CATEGORY_LABELS[normalized] || null;
+}
+
+function appendFindingBadges(lines: string[], comment: OcrComment): void {
+  const badges = [formatSeverityBadge(comment.severity), formatCategoryBadge(comment.category)]
+    .filter(Boolean) as string[];
+  if (badges.length > 0) {
+    lines.push(badges.join(' · '));
+  }
+}
+
 function appendFindingBody(lines: string[], comment: OcrComment): void {
+  appendFindingBadges(lines, comment);
   lines.push(comment.content.trim());
 
   if (comment.suggestion_code?.trim()) {
@@ -252,7 +369,6 @@ export function formatFindingCommentBody(comment: OcrComment): string {
   appendFindingBody(lines, comment);
   return lines.join('\n').trim();
 }
-
 export interface GithubLineReviewComment {
   path: string;
   body: string;
@@ -267,12 +383,11 @@ export interface GithubFileReviewComment {
   body: string;
 }
 
-export function partitionReviewComments(result: OcrReviewEnvelope): {
+function partitionComments(comments: OcrComment[]): {
   lineComments: GithubLineReviewComment[];
   fileComments: GithubFileReviewComment[];
   unplacedComments: OcrComment[];
 } {
-  const comments = normalizeComments(result);
   const lineComments: GithubLineReviewComment[] = [];
   const fileComments: GithubFileReviewComment[] = [];
   const unplacedComments: OcrComment[] = [];
@@ -307,13 +422,21 @@ export function partitionReviewComments(result: OcrReviewEnvelope): {
   return { lineComments, fileComments, unplacedComments };
 }
 
+export function partitionReviewComments(result: OcrReviewEnvelope): {
+  lineComments: GithubLineReviewComment[];
+  fileComments: GithubFileReviewComment[];
+  unplacedComments: OcrComment[];
+} {
+  return partitionComments(normalizeComments(result));
+}
+
 function appendUnplacedFindings(lines: string[], comments: OcrComment[]): void {
   if (comments.length === 0) {
     return;
   }
 
   lines.push('', '### Findings without file location', '');
-  for (const comment of comments.slice(0, 25)) {
+  for (const comment of sortFindingsBySeverity(comments).slice(0, 25)) {
     appendFinding(lines, comment);
   }
   if (comments.length > 25) {
@@ -400,20 +523,47 @@ function appendRetryReport(lines: string[], result: OcrReviewEnvelope): void {
   appendRetryRequestTable(lines, result);
 }
 
+function appendSeverityCategoryBreakdown(lines: string[], comments: OcrComment[]): void {
+  const severityRows = countBySeverity(comments);
+  const categoryRows = countByCategory(comments);
+  if (severityRows.length === 0 && categoryRows.length === 0) {
+    return;
+  }
+
+  lines.push('', '### Severity & categories', '');
+
+  if (severityRows.length > 0) {
+    lines.push('| Severity | Count |', '| --- | ---: |');
+    for (const { severity, count } of severityRows) {
+      lines.push(`| ${SEVERITY_EMOJI[severity] || ''} ${severity} | ${count} |`);
+    }
+  }
+
+  if (categoryRows.length > 0) {
+    if (severityRows.length > 0) {
+      lines.push('');
+    }
+    lines.push('| Category | Count |', '| --- | ---: |');
+    for (const { category, count } of categoryRows) {
+      lines.push(`| ${CATEGORY_LABELS[category] || category} | ${count} |`);
+    }
+  }
+}
+
 function buildReviewMarkdownCore(
   result: OcrReviewEnvelope,
+  comments: OcrComment[],
   options: { includeFindings: boolean; unplacedComments?: OcrComment[] },
 ): string {
   const lines: string[] = ['## Code Review', ''];
 
   const stats = getRunStats(result);
   const coverage = getCoverage(result);
-  const comments = normalizeComments(result);
   const findingCount = stats?.comments ?? comments.length;
   const failedCount = coverage?.failed?.length ?? 0;
   const filesReviewed = stats?.files_reviewed ?? getReviewedFilePaths(result).length;
 
-  lines.push(headlineFor(result, findingCount, filesReviewed, failedCount));
+  lines.push(headlineFor(result, comments, findingCount, filesReviewed, failedCount));
 
   const statParts: string[] = [];
   if (filesReviewed > 0) {
@@ -429,11 +579,13 @@ function buildReviewMarkdownCore(
   appendBranchRange(lines, result);
   appendCoverageSummary(lines, result);
   appendRunStats(lines, result);
+  appendSeverityCategoryBreakdown(lines, comments);
 
   if (options.includeFindings && comments.length > 0) {
     lines.push('', '### Findings', '');
 
-    for (const comment of comments.slice(0, 25)) {
+    const sorted = sortFindingsBySeverity(comments);
+    for (const comment of sorted.slice(0, 25)) {
       appendFinding(lines, comment);
     }
 
@@ -494,13 +646,14 @@ function buildReviewMarkdownCore(
 
 /** Full review markdown for local session UI (includes inline findings list). */
 export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
-  return buildReviewMarkdownCore(result, { includeFindings: true });
+  return buildReviewMarkdownCore(result, normalizeComments(result), { includeFindings: true });
 }
 
 /** Summary-only markdown for the GitHub PR review body (findings posted as file comments). */
 export function formatReviewSummaryMarkdown(result: OcrReviewEnvelope): string {
-  const { unplacedComments } = partitionReviewComments(result);
-  return buildReviewMarkdownCore(result, { includeFindings: false, unplacedComments });
+  const comments = normalizeComments(result);
+  const { unplacedComments } = partitionComments(comments);
+  return buildReviewMarkdownCore(result, comments, { includeFindings: false, unplacedComments });
 }
 
 export function formatReviewBackgroundMessage(options: {

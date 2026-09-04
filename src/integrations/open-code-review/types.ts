@@ -1,3 +1,15 @@
+export type OcrCommentSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+export type OcrCommentCategory =
+  | 'bug'
+  | 'security'
+  | 'performance'
+  | 'maintainability'
+  | 'test'
+  | 'style'
+  | 'documentation'
+  | 'other';
+
 export interface OcrComment {
   path?: string;
   file?: string;
@@ -7,6 +19,8 @@ export interface OcrComment {
   suggestion_code?: string;
   existing_code?: string;
   thinking?: string;
+  severity?: OcrCommentSeverity | (string & {});
+  category?: OcrCommentCategory | (string & {});
 }
 
 export interface OcrRunSummary {
