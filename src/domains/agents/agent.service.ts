@@ -522,6 +522,7 @@ export function createAgentService(options: {
             ),
           }
         : {}),
+      ...(payload.autofix ? { autofix: payload.autofix } : {}),
       ...((mode as import('../../types').AgentMode) === 'review'
         ? {
             parentAgentId: payload.parentAgentId || null,

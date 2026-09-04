@@ -179,4 +179,66 @@ describe('parseCreateAgentPayload', () => {
       );
     }
   });
+
+  it('parses autofix metadata', () => {
+    const payload = parseCreateAgentPayload(
+      {
+        repoId: 'acme-demo',
+        prompt: 'Fix finding',
+        useExistingBranch: true,
+        autofix: {
+          kind: 'automatic',
+          sourceReviewAgentId: 'review1',
+          findingIds: ['f1', 'f2'],
+          batchIndex: 0,
+        },
+      },
+      repo,
+      'abc123',
+    );
+
+    assert.deepEqual(payload.autofix, {
+      kind: 'automatic',
+      sourceReviewAgentId: 'review1',
+      findingIds: ['f1', 'f2'],
+      batchIndex: 0,
+    });
+  });
+
+  it('leaves autofix unset when absent', () => {
+    const payload = parseCreateAgentPayload(
+      { repoId: 'acme-demo', prompt: 'Do work' },
+      repo,
+      'abc123',
+    );
+
+    assert.equal(payload.autofix, undefined);
+  });
+
+  it('rejects malformed autofix payloads', () => {
+    const invalid = [
+      ['autofix must be an object', 'not-an-object'],
+      ['autofix.kind must be', { kind: 'auto', sourceReviewAgentId: 'review1', findingIds: [] }],
+      ['autofix.sourceReviewAgentId is required', { kind: 'manual', sourceReviewAgentId: '', findingIds: [] }],
+      ['autofix.findingIds must be an array of strings', { kind: 'manual', sourceReviewAgentId: 'review1', findingIds: 'nope' }],
+      ['autofix.findingIds entries must be non-empty strings', { kind: 'manual', sourceReviewAgentId: 'review1', findingIds: ['ok', 42] }],
+      ['autofix.batchIndex must be a non-negative integer', { kind: 'manual', sourceReviewAgentId: 'review1', findingIds: ['f1'], batchIndex: -1 }],
+    ] as const;
+    for (const [messagePart, autofix] of invalid) {
+      assert.throws(
+        () =>
+          parseCreateAgentPayload(
+            { repoId: 'acme-demo', prompt: 'Fix finding', autofix: autofix as unknown },
+            repo,
+            'abc123',
+          ),
+        (err: unknown) => {
+          assert.ok(err instanceof CodedError);
+          assert.equal(err.code, 'VALIDATION_ERROR');
+          assert.match(String(err.message), new RegExp(messagePart));
+          return true;
+        },
+      );
+    }
+  });
 });

@@ -299,6 +299,37 @@ describe('createAgentService (loop mode)', () => {
     assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, undefined);
   });
 
+  it('persists autofix metadata on batch agents', () => {
+    const { service, repository } = createTestContext();
+
+    const agent = service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Fix finding',
+      mode: 'batch',
+      useExistingBranch: true,
+      baseBranch: 'feature/fix',
+      autofix: {
+        kind: 'automatic',
+        sourceReviewAgentId: 'review1',
+        findingIds: ['f1', 'f2'],
+        batchIndex: 0,
+      },
+    } as unknown as Parameters<ReturnType<typeof createAgentService>['createAgent']>[0]);
+
+    assert.deepEqual(agent.autofix, {
+      kind: 'automatic',
+      sourceReviewAgentId: 'review1',
+      findingIds: ['f1', 'f2'],
+      batchIndex: 0,
+    });
+    assert.deepEqual(repository.findById(agent.agentId)?.autofix, {
+      kind: 'automatic',
+      sourceReviewAgentId: 'review1',
+      findingIds: ['f1', 'f2'],
+      batchIndex: 0,
+    });
+  });
+
   it('returns derived loop fields when fetching an active loop agent', () => {
     const { service, repository } = createTestContext();
     const agentId = 'loopproc0001';
