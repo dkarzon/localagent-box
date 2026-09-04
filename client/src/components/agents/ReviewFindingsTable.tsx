@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type {
+  ReviewAutofixPlan,
   ReviewFindingRecord,
   ReviewFindingFixStatus,
 } from '../../api/types';
@@ -76,9 +77,26 @@ function applyFilters(
 interface ReviewFindingsTableProps {
   findings: ReviewFindingRecord[];
   staleReview?: boolean;
+  plan?: ReviewAutofixPlan | null;
+  /** Present when the caller supports resuming a paused automatic chain. */
+  onResume?: (() => void) | null;
+  resumeBusy?: boolean;
 }
 
-export function ReviewFindingsTable({ findings, staleReview }: ReviewFindingsTableProps) {
+const chainStatusLabel: Record<ReviewAutofixPlan['chainStatus'], string> = {
+  disabled: 'Autofix off',
+  running: 'Autofix running',
+  paused: 'Autofix paused',
+  completed: 'Autofix completed',
+};
+
+export function ReviewFindingsTable({
+  findings,
+  staleReview,
+  plan,
+  onResume,
+  resumeBusy = false,
+}: ReviewFindingsTableProps) {
   const [sort, setSort] = useState<TableSort>('severity');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filters, setFilters] = useState<FindingsFilters>({
@@ -103,6 +121,10 @@ export function ReviewFindingsTable({ findings, staleReview }: ReviewFindingsTab
 
   if (findings.length === 0) return null;
 
+  const hasPendingBatches = Boolean(
+    plan && plan.chainStatus === 'paused' && plan.batches.some((b) => b.status === 'pending'),
+  );
+
   const selectClass =
     'rounded border border-outline-variant bg-surface-lowest px-2 py-1 text-xs text-on-surface';
 
@@ -112,6 +134,12 @@ export function ReviewFindingsTable({ findings, staleReview }: ReviewFindingsTab
         <h3 className="text-sm font-medium text-primary">
           Review findings
           <span className="ml-2 text-on-surface-variant">({findings.length})</span>
+          {plan && plan.chainStatus !== 'disabled' ? (
+            <span className="ml-2 text-on-surface-variant text-xs">
+              {chainStatusLabel[plan.chainStatus]}
+              {plan.batches.length > 0 ? ` · ${plan.batches.length} batch(es)` : ''}
+            </span>
+          ) : null}
           {staleReview ? (
             <span className="ml-2 text-warning text-xs">
               Reviewed SHA no longer matches branch head
@@ -119,6 +147,16 @@ export function ReviewFindingsTable({ findings, staleReview }: ReviewFindingsTab
           ) : null}
         </h3>
         <div className="flex flex-wrap items-center gap-2">
+          {onResume && hasPendingBatches ? (
+            <button
+              type="button"
+              className="inline-flex items-center rounded border border-primary bg-transparent px-3 py-1 text-xs text-primary transition-colors hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={resumeBusy}
+              onClick={onResume}
+            >
+              {resumeBusy ? 'Resuming…' : 'Resume Remaining Batches'}
+            </button>
+          ) : null}
           <select
             aria-label="Filter by severity"
             className={selectClass}

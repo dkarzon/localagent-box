@@ -1362,3 +1362,239 @@ describe('scheduleVerificationReview', () => {
     assert.equal(created?.review?.sourceReviewAgentId, 'review1');
   });
 });
+
+describe('reconcileAutofixPlansOnStartup', () => {
+  function reconcileFinding(
+    ordinal: number,
+    fixStatus: ReviewFindingRecord['fixStatus'],
+    assignedAgentId: string | null,
+  ): ReviewFindingRecord {
+    return finding({
+      id: `review1:finding:${ordinal}`,
+      ordinal,
+      severity: 'high',
+      fixStatus,
+      assignedAgentId,
+      fixedAt: null,
+      github: {
+        reviewId: '1',
+        commentId: null,
+        commentUrl: null,
+        threadId: null,
+        resolutionStatus: 'not_applicable',
+        resolutionError: null,
+        resolvedAt: null,
+      },
+    });
+  }
+
+  function writePlan(
+    repository: AgentRepository,
+    options: {
+      batches: Array<{ index: number; agentId: string | null; status: AutofixBatchPlan['status'] }>;
+      chainStatus: 'running' | 'paused';
+      nextBatchIndex?: number | null;
+    },
+  ): void {
+    repository.writeReviewAutofixPlan('review1', {
+      schemaVersion: 1,
+      snapshot: {
+        severityThreshold: 'high',
+        maxFindingsPerBatch: 5,
+        reviewedSha: 'sha-old',
+        baseBranch: 'main',
+        headBranch: 'feature',
+        prNumber: 7,
+        snapshottedAt: '2026-09-04T00:00:00.000Z',
+      },
+      chainStatus: options.chainStatus,
+      batches: options.batches.map((batch) => ({
+        ...batch,
+        findingIds: [`review1:finding:${batch.index}`],
+      })),
+      nextBatchIndex: options.nextBatchIndex ?? null,
+      verification: { status: 'none', agentId: null },
+    });
+  }
+
+  function seedFixAgent(
+    ctx: TestContext,
+    agentId: string,
+    status: Agent['status'],
+    findingIds: string[],
+    batchIndex?: number,
+  ): void {
+    ctx.repository.save({
+      ...(ctx.repository.findById('review1') as Agent),
+      agentId,
+      mode: 'batch',
+      prompt: 'fix findings',
+      status,
+      pushed: false,
+      autofix: {
+        kind: batchIndex === undefined ? ('manual' as const) : ('automatic' as const),
+        sourceReviewAgentId: 'review1',
+        findingIds,
+        ...(batchIndex === undefined ? {} : { batchIndex }),
+      },
+    } as Agent);
+  }
+
+  it('retains a queued fix agent and keeps the chain running for re-enqueue', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'assigned', 'fix1')] });
+    writePlan(ctx.repository, {
+      batches: [{ index: 0, agentId: 'fix1', status: 'queued' }],
+      chainStatus: 'running',
+      nextBatchIndex: null,
+    });
+    seedFixAgent(ctx, 'fix1', 'queued', ['review1:finding:0'], 0);
+
+    ctx.service.reconcileAutofixPlansOnStartup();
+
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.chainStatus, 'running');
+    assert.equal(plan?.batches[0].status, 'queued');
+    assert.equal(plan?.batches[0].agentId, 'fix1');
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'assigned');
+    assert.equal(ctx.calls.created.length, 0, 'no agents created during reconciliation');
+  });
+
+  it('marks a queued batch failed and pauses when the agent record is missing', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'assigned', 'fix-ghost')] });
+    writePlan(ctx.repository, {
+      batches: [{ index: 0, agentId: 'fix-ghost', status: 'queued' }],
+      chainStatus: 'running',
+      nextBatchIndex: null,
+    });
+
+    ctx.service.reconcileAutofixPlansOnStartup();
+
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.chainStatus, 'paused');
+    assert.equal(plan?.batches[0].status, 'failed');
+    assert.equal(plan?.nextBatchIndex, null);
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'failed', 'assigned finding becomes failed/actionable');
+    assert.equal(ctx.calls.created.length, 0);
+  });
+
+  it('derives completed for a running batch whose agent completed with a push', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
+    writePlan(ctx.repository, {
+      batches: [{ index: 0, agentId: 'fix1', status: 'running' }],
+      chainStatus: 'running',
+      nextBatchIndex: null,
+    });
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0'], 0);
+    ctx.repository.update('fix1', { status: 'completed', pushed: true });
+
+    ctx.service.reconcileAutofixPlansOnStartup();
+
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.batches[0].status, 'completed');
+    assert.equal(plan?.chainStatus, 'paused', 'no batch is created automatically after restart');
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'fixed');
+    assert.ok(persisted?.[0].fixedAt);
+  });
+
+  it('derives failed for a running batch whose agent completed without a push', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
+    writePlan(ctx.repository, {
+      batches: [{ index: 0, agentId: 'fix1', status: 'running' }],
+      chainStatus: 'running',
+      nextBatchIndex: null,
+    });
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0'], 0);
+    ctx.repository.update('fix1', { status: 'completed', pushed: false });
+
+    ctx.service.reconcileAutofixPlansOnStartup();
+
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.batches[0].status, 'failed');
+    assert.equal(plan?.chainStatus, 'paused');
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'failed');
+  });
+
+  it('pauses a running chain with no active batch and nothing to create', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
+    writePlan(ctx.repository, {
+      batches: [{ index: 0, agentId: 'fix1', status: 'completed' }],
+      chainStatus: 'running',
+      nextBatchIndex: null,
+    });
+
+    ctx.service.reconcileAutofixPlansOnStartup();
+
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.chainStatus, 'paused');
+  });
+
+  it('is a no-op for paused chains, missing plans, and completed chains', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
+    writePlan(ctx.repository, {
+      batches: [{ index: 0, agentId: 'fix1', status: 'completed' }],
+      chainStatus: 'paused',
+      nextBatchIndex: null,
+    });
+
+    // Paused plan: untouched.
+    ctx.service.reconcileAutofixPlansOnStartup();
+    let plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.chainStatus, 'paused');
+    assert.equal(plan?.batches[0].status, 'completed');
+
+    // Missing plan: no throw, no writes.
+    ctx.repository.save({
+      ...(ctx.repository.findById('review1') as Agent),
+      agentId: 'review2',
+      mode: 'review' as const,
+      review: { baseBranch: 'main', headBranch: 'feat2', prNumber: null, headSha: null },
+    });
+    ctx.service.reconcileAutofixPlansOnStartup();
+    assert.equal(ctx.repository.readReviewAutofixPlan('review2'), null);
+
+    // Completed plan: untouched.
+    ctx.repository.writeReviewAutofixPlan('review2', {
+      schemaVersion: 1,
+      snapshot: {
+        severityThreshold: 'high',
+        maxFindingsPerBatch: 5,
+        reviewedSha: 'sha-old',
+        baseBranch: 'main',
+        headBranch: 'feat2',
+        prNumber: null,
+        snapshottedAt: '2026-09-04T00:00:00.000Z',
+      },
+      chainStatus: 'completed',
+      batches: [],
+      nextBatchIndex: null,
+      verification: { status: 'completed', agentId: 'verify1' },
+    });
+    ctx.service.reconcileAutofixPlansOnStartup();
+    plan = ctx.repository.readReviewAutofixPlan('review2');
+    assert.equal(plan?.chainStatus, 'completed');
+    assert.equal(ctx.calls.created.length, 0);
+  });
+
+  it('does not create agents for a plan with all batches terminal', () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
+    writePlan(ctx.repository, {
+      batches: [
+        { index: 0, agentId: 'fix1', status: 'completed' },
+        { index: 1, agentId: 'fix2', status: 'failed' },
+      ],
+      chainStatus: 'paused',
+      nextBatchIndex: null,
+    });
+
+    ctx.service.reconcileAutofixPlansOnStartup();
+
+    assert.equal(ctx.calls.created.length, 0);
+    const plan = ctx.repository.readReviewAutofixPlan('review1');
+    assert.equal(plan?.batches[0].status, 'completed');
+    assert.equal(plan?.batches[1].status, 'failed');
+  });
+});

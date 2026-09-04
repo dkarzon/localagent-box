@@ -1580,5 +1580,95 @@ describe('restoreOnStartup', () => {
     assert.equal(hasStartedWorker(ctx, 'queued-b'), true);
     assert.equal(hasStartedWorker(ctx, 'queued-a'), true);
   });
+
+  it('reconciles an interrupted autofix plan: queued fix agent re-enqueued, missing agent paused', () => {
+    const ctx = createTestContext();
+
+    const writePlan = (
+      reviewId: string,
+      chainStatus: 'running' | 'paused',
+      batches: Array<{ index: number; agentId: string | null; status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'skipped' }>,
+      nextBatchIndex: number | null,
+    ): void => {
+      ctx.repository.writeReviewAutofixPlan(reviewId, {
+        schemaVersion: 1,
+        snapshot: {
+          severityThreshold: 'high',
+          maxFindingsPerBatch: 5,
+          reviewedSha: 'sha-old',
+          baseBranch: 'main',
+          headBranch: 'feature/project',
+          prNumber: null,
+          snapshottedAt: '2026-08-16T00:00:00.000Z',
+        },
+        chainStatus,
+        batches: batches.map((batch) => ({
+          ...batch,
+          findingIds: [`${reviewId}:finding:${batch.index}`],
+        })),
+        nextBatchIndex,
+        verification: { status: 'none', agentId: null },
+      });
+    };
+
+    // Review A: chain running, batch 0 queued under a surviving fix agent —
+    // restoreOnStartup re-enqueues it and the chain stays running.
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'reviewa00001',
+        mode: 'review',
+        status: 'completed',
+        agentBranch: 'feature/project',
+        review: { baseBranch: 'main', headBranch: 'feature/project', prNumber: null, headSha: null },
+      }),
+    );
+    writePlan('reviewa00001', 'running', [{ index: 0, agentId: 'fixqueued01', status: 'queued' }], null);
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'fixqueued01',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:01.000Z',
+        startedAt: null,
+        autofix: {
+          kind: 'automatic',
+          sourceReviewAgentId: 'reviewa00001',
+          findingIds: ['reviewa00001:finding:0'],
+          batchIndex: 0,
+        },
+      }),
+    );
+
+    // Review B: chain running, batch 0 queued under an agent whose record is
+    // gone — the batch is failed and the chain paused (no duplicate creation).
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'reviewb00001',
+        mode: 'review',
+        status: 'completed',
+        agentBranch: 'feature/other',
+        review: { baseBranch: 'main', headBranch: 'feature/other', prNumber: null, headSha: null },
+      }),
+    );
+    writePlan('reviewb00001', 'running', [{ index: 0, agentId: 'fixghost001', status: 'queued' }], null);
+
+    ctx.service.restoreOnStartup();
+
+    const planA = ctx.repository.readReviewAutofixPlan('reviewa00001');
+    assert.equal(planA?.chainStatus, 'running');
+    assert.equal(planA?.batches[0].status, 'queued');
+    assert.equal(planA?.batches[0].agentId, 'fixqueued01');
+    // The surviving queued fix agent was re-enqueued for the worker pipeline.
+    assert.equal(ctx.service.getAgent('fixqueued01').status, 'queued');
+
+    const planB = ctx.repository.readReviewAutofixPlan('reviewb00001');
+    assert.equal(planB?.chainStatus, 'paused');
+    assert.equal(planB?.batches[0].status, 'failed');
+    assert.equal(planB?.nextBatchIndex, null);
+  });
 });
 

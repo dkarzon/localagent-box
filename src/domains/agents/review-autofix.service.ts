@@ -1,9 +1,15 @@
 import { CodedError } from '../../types';
-import type { Agent, AutofixBatchPlan, ReviewFindingRecord } from '../../types';
+import type {
+  Agent,
+  AutofixBatchPlan,
+  ReviewAutofixPlan,
+  ReviewFindingRecord,
+} from '../../types';
 import type { AgentRepository } from './agent.repository';
 import type { ConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
 import type { GithubAppService } from '../../services/github-app';
+import { getLogger } from '../../lib/logger';
 import { buildFixAgentPrompt } from '../../lib/review-autofix-prompt';
 import { getAgentMode } from './agent.types';
 import { appendLog } from './worker/agent-state-writer';
@@ -20,6 +26,16 @@ const ACTIVE_FIX_STATUSES = new Set<Agent['status']>([
   'running',
   'processing',
   'completing',
+]);
+
+/** Agent statuses a fix agent can have after an interrupted run (non-live). */
+const ACTIVE_FIX_TERMINAL_OR_STOPPED = new Set<Agent['status']>([
+  'running',
+  'processing',
+  'completing',
+  'completed',
+  'failed',
+  'cancelled',
 ]);
 
 export interface ManualFixResult {
@@ -90,6 +106,19 @@ export interface ReviewAutofixService {
     reviewAgentId: string,
     trigger: 'automatic' | 'manual',
   ) => Promise<string | null>;
+  /**
+   * Reconciles every persisted autofix plan after a server restart (plan:
+   * Phase 7 "Reconcile plans during server startup"). Never creates agents —
+   * it only derives safe outcomes from existing agent records so an
+   * interruption cannot duplicate fix agents:
+   * - queued agent record exists: assignment retained.
+   * - running status with no live worker: outcome derived from the agent record
+   *   (completed+pushed → completed; otherwise failed) and the chain is paused.
+   * - missing agent record: batch failed, chain paused, findings actionable.
+   * - a running chain whose queued agent still exists is enqueued for the
+   *   normal worker pipeline by the caller (restoreOnStartup re-enqueue).
+   */
+  reconcileAutofixPlansOnStartup: () => void;
 }
 
 export function createReviewAutofixService({
@@ -109,6 +138,33 @@ export function createReviewAutofixService({
   /** Host-provided review agent factory (agentService.createAgent). */
   createReviewAgent?: (body: Record<string, unknown>) => Agent;
 }): ReviewAutofixService {
+  /**
+   * Structured log for autofix orchestration events (plan: Phase 7 task 6).
+   * Carries the review ID, batch index, finding IDs, and fix agent ID so each
+   * lifecycle event is traceable without parsing free-text logs.
+   */
+  function logAutofixEvent(
+    event: string,
+    data: {
+      reviewAgentId: string;
+      batchIndex?: number | null;
+      findingIds?: string[];
+      fixAgentId?: string | null;
+      detail?: string;
+    },
+  ): void {
+    getLogger().info(
+      {
+        event,
+        reviewAgentId: data.reviewAgentId,
+        batchIndex: data.batchIndex ?? undefined,
+        findingIds: data.findingIds,
+        fixAgentId: data.fixAgentId ?? undefined,
+        detail: data.detail,
+      },
+      `autofix.${event}`,
+    );
+  }
   /**
    * Manual Fix endpoint behavior per plan:
    *
@@ -321,6 +377,12 @@ export function createReviewAutofixService({
       repository.getLogPath(reviewAgentId),
       `Autofix batch 0 assigned to fix agent ${fixAgent.agentId} (${batch.findingIds.length} finding(s))`,
     );
+    logAutofixEvent('batch.created', {
+      reviewAgentId,
+      batchIndex: batch.index,
+      findingIds: batch.findingIds,
+      fixAgentId: fixAgent.agentId,
+    });
   }
 
   /**
@@ -459,6 +521,11 @@ export function createReviewAutofixService({
       repository.getLogPath(reviewAgentId),
       `Autofix verification review ${verificationAgent.agentId} scheduled (${trigger})`,
     );
+    logAutofixEvent('verification.scheduled', {
+      reviewAgentId,
+      fixAgentId: verificationAgent.agentId,
+      detail: trigger,
+    });
     return verificationAgent.agentId;
   }
 
@@ -757,7 +824,223 @@ export function createReviewAutofixService({
       repository.getLogPath(reviewAgentId),
       `Autofix batch ${batch.index} assigned to fix agent ${fixAgent.agentId} (${batch.findingIds.length} finding(s))`,
     );
+    logAutofixEvent('batch.created', {
+      reviewAgentId,
+      batchIndex: batch.index,
+      findingIds: batch.findingIds,
+      fixAgentId: fixAgent.agentId,
+    });
     return { batchIndex: batch.index };
+  }
+
+  /**
+   * Fails the batch's assigned findings when the fix agent record itself is
+   * missing after a restart — the assignment can never be recovered, so the
+   * findings become manually actionable again.
+   */
+  function reconcileFindingsForMissingAgent(
+    reviewAgentId: string,
+    batch: AutofixBatchPlan,
+  ): void {
+    if (!batch.agentId) {
+      return;
+    }
+    const findings = repository.readReviewFindings(reviewAgentId);
+    if (!findings) {
+      return;
+    }
+    let changed = false;
+    for (const finding of findings) {
+      if (
+        batch.findingIds.includes(finding.id) &&
+        finding.assignedAgentId === batch.agentId &&
+        (finding.fixStatus === 'assigned' || finding.fixStatus === 'fixing')
+      ) {
+        finding.fixStatus = 'failed';
+        changed = true;
+      }
+    }
+    if (changed) {
+      repository.writeReviewFindings(reviewAgentId, findings);
+    }
+  }
+
+  /**
+   * Startup reconciliation for a single plan (plan: Phase 7 "Reconcile plans
+   * during server startup"). Mutates the plan in place and returns whether the
+   * chain needs re-enqueueing. Rules:
+   * - Queued agent record still exists: retain the assignment (queued batch).
+   * - Queued/running batch whose agent record is missing: mark the batch
+   *   failed and pause the chain.
+   * - Batch stuck in `running` with no live worker: derive the outcome from
+   *   the agent record — completed+pushed → completed, otherwise failed — and
+   *   pause the chain (creating later batches is the caller's decision via
+   *   resume, never automatic here).
+   */
+  function reconcileAutofixPlan(
+    reviewAgentId: string,
+    plan: ReviewAutofixPlan,
+  ): { needsResume: boolean } {
+    let changed = false;
+    let needsResume = false;
+
+    if (plan.chainStatus === 'running' && plan.nextBatchIndex === null) {
+      // A running chain with nothing left to create is waiting on its active
+      // agent; whether that agent exists decides the outcome below.
+      const activeBatch = plan.batches.find(
+        (entry) => entry.status === 'queued' || entry.status === 'running',
+      );
+      if (!activeBatch) {
+        // Nothing active and nothing to create: the chain cannot progress.
+        plan.chainStatus = 'paused';
+        changed = true;
+      }
+    }
+
+    for (const batch of plan.batches) {
+      if (batch.status !== 'queued' && batch.status !== 'running') {
+        continue;
+      }
+
+      const fixAgent = batch.agentId ? repository.findById(batch.agentId) : undefined;
+      if (!fixAgent) {
+        // Missing agent record: nothing to retry — pause for manual/resume.
+        batch.status = 'failed';
+        plan.chainStatus = 'paused';
+        plan.nextBatchIndex = null;
+        changed = true;
+        reconcileFindingsForMissingAgent(reviewAgentId, batch);
+        logAutofixEvent('startup.batch_failed', {
+          reviewAgentId,
+          batchIndex: batch.index,
+          findingIds: batch.findingIds,
+          fixAgentId: batch.agentId,
+          detail: 'fix agent record missing after restart',
+        });
+        appendLog(
+          repository.getLogPath(reviewAgentId),
+          `Autofix batch ${batch.index} failed after restart — fix agent record missing`,
+        );
+        continue;
+      }
+
+      if (fixAgent.status === 'queued') {
+        // Queued agent still exists — retain the assignment and re-enqueue.
+        if (batch.status === 'running') {
+          batch.status = 'queued';
+          changed = true;
+        }
+        needsResume = true;
+        logAutofixEvent('startup.batch.requeued', {
+          reviewAgentId,
+          batchIndex: batch.index,
+          findingIds: batch.findingIds,
+          fixAgentId: fixAgent.agentId,
+        });
+        continue;
+      }
+
+      // No live worker can exist for a queued/running batch after a restart
+      // (restoreOnStartup failed in-progress agents). Derive the outcome.
+      const succeeded = fixAgent.status === 'completed' && fixAgent.pushed === true;
+      batch.status = succeeded ? 'completed' : 'failed';
+      plan.chainStatus = 'paused';
+      changed = true;
+      logAutofixEvent('startup.batch.reconciled', {
+        reviewAgentId,
+        batchIndex: batch.index,
+        findingIds: batch.findingIds,
+        fixAgentId: fixAgent.agentId,
+        detail: `derived ${batch.status} from agent status ${fixAgent.status}`,
+      });
+      appendLog(
+        repository.getLogPath(reviewAgentId),
+        `Autofix batch ${batch.index} reconciled after restart — ${batch.status} (agent ${fixAgent.agentId} ${fixAgent.status}, pushed=${fixAgent.pushed === true})`,
+      );
+    }
+
+    if (changed) {
+      repository.writeReviewAutofixPlan(reviewAgentId, plan);
+    }
+    return { needsResume };
+  }
+
+  /**
+   * Derives the startup outcome for one fix agent's assigned findings: fixed
+   * when the agent completed with a push, failed when the agent is stopped and
+   * no live worker exists, and untouched while the agent is still queued (its
+   * batch will run after re-enqueue). Findings assigned to other/unknown
+   * agents are left alone.
+   */
+  function reconcileFindingsForFixAgent(fixAgent: Agent): void {
+    const autofix = fixAgent.autofix;
+    if (!autofix) {
+      return;
+    }
+    const reviewAgentId = autofix.sourceReviewAgentId;
+    const findings = repository.readReviewFindings(reviewAgentId);
+    if (!findings) {
+      return;
+    }
+    const succeeded = fixAgent.status === 'completed' && fixAgent.pushed === true;
+    let changed = false;
+    for (const finding of findings) {
+      if (!autofix.findingIds.includes(finding.id) || finding.assignedAgentId !== fixAgent.agentId) {
+        continue;
+      }
+      if (finding.fixStatus === 'assigned' || finding.fixStatus === 'fixing') {
+        if (fixAgent.status === 'queued') {
+          // Still queued: restoreOnStartup re-enqueues it; keep assigned.
+          continue;
+        }
+        finding.fixStatus = succeeded ? 'fixed' : 'failed';
+        if (succeeded) {
+          finding.fixedAt = new Date().toISOString();
+        }
+        changed = true;
+      }
+    }
+    if (changed) {
+      repository.writeReviewFindings(reviewAgentId, findings);
+      logAutofixEvent('startup.findings.reconciled', {
+        reviewAgentId,
+        findingIds: autofix.findingIds,
+        fixAgentId: fixAgent.agentId,
+        detail: succeeded ? 'fixed' : 'failed (manually actionable)',
+      });
+    }
+  }
+
+  /**
+   * Reconciles every persisted autofix plan after a server restart. See the
+   * interface doc for the rules. Never creates agents — a chain whose queued
+   * agent survives restart continues only because restoreOnStartup re-enqueues
+   * queued agents; the plan stays `running` for that path.
+   */
+  function reconcileAutofixPlansOnStartup(): void {
+    for (const reviewAgent of repository.findAll()) {
+      if (getAgentMode(reviewAgent) !== 'review') {
+        continue;
+      }
+      const plan = repository.readReviewAutofixPlan(reviewAgent.agentId);
+      if (!plan || plan.chainStatus === 'disabled' || plan.chainStatus === 'completed') {
+        continue;
+      }
+
+      reconcileAutofixPlan(reviewAgent.agentId, plan);
+
+      // Derive finding outcomes for any fix agent that was in flight during
+      // the interruption so its findings are not stuck on assigned/fixing.
+      for (const fixAgent of repository.findAll()) {
+        if (
+          fixAgent.autofix?.sourceReviewAgentId !== reviewAgent.agentId ||
+          !ACTIVE_FIX_TERMINAL_OR_STOPPED.has(fixAgent.status)
+        ) {
+          continue;
+        }
+        reconcileFindingsForFixAgent(fixAgent);
+      }
+    }
   }
 
   /**
@@ -807,6 +1090,12 @@ export function createReviewAutofixService({
             repository.getLogPath(reviewAgentId),
             `Autofix batch ${batch.index} running (fix agent ${fixAgentId})`,
           );
+          logAutofixEvent('batch.running', {
+            reviewAgentId,
+            batchIndex: batch.index,
+            findingIds: autofix.findingIds,
+            fixAgentId,
+          });
         }
       }
     }
@@ -904,6 +1193,11 @@ export function createReviewAutofixService({
         finding.fixedAt = new Date().toISOString();
       }
       repository.writeReviewFindings(reviewAgentId, findings);
+      logAutofixEvent('findings.fixed', {
+        reviewAgentId,
+        findingIds: assignedFindings.map((entry) => entry.id),
+        fixAgentId,
+      });
 
       for (const finding of assignedFindings) {
         await resolveFindingThreadAfterFix(reviewAgentId, finding);
@@ -986,6 +1280,13 @@ export function createReviewAutofixService({
         repository.getLogPath(reviewAgentId),
         `Autofix chain paused — batch ${batch.index} fix agent ${fixAgentId} finished without a successful push`,
       );
+      logAutofixEvent('chain.paused', {
+        reviewAgentId,
+        batchIndex: batch.index,
+        findingIds: autofix.findingIds,
+        fixAgentId,
+        detail: 'fix agent finished without a successful push',
+      });
     }
   }
 
@@ -997,5 +1298,6 @@ export function createReviewAutofixService({
     handleFixAgentStarted,
     handleFixAgentFinished,
     scheduleVerificationReview,
+    reconcileAutofixPlansOnStartup,
   };
 }

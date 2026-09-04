@@ -51,6 +51,19 @@ export async function fetchAgentFindings(
   return body;
 }
 
+export async function resumeAutofixChain(
+  agentId: string,
+  token: string,
+): Promise<{ agentId: string; batchIndex: number }> {
+  return apiFetch<{ agentId: string; batchIndex: number }>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/autofix/resume`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  );
+}
+
 export async function fetchAgentMessages(
   agentId: string,
   since = 0,

@@ -1288,6 +1288,12 @@ export function createAgentService(options: {
       repository.saveAll(agents);
     }
 
+    // Derive safe outcomes for interrupted autofix plans before re-enqueueing:
+    // queued agents are retained (and their chains stay running), batches with
+    // missing/in-flight agents are failed or resolved and chains paused. Never
+    // creates agents, so no duplicate fix agents can appear after a restart.
+    reviewAutofix.reconcileAutofixPlansOnStartup();
+
     const queued = agents
       .filter((agent) => agent.status === 'queued')
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.agentId.localeCompare(b.agentId));

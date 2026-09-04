@@ -10,6 +10,7 @@ import {
 import {
   fetchAgentFindings,
   fetchAgentReviewResult,
+  resumeAutofixChain,
   type AgentReviewResultResponse,
 } from '../api/agent-session';
 import { apiFetch, authHeaders } from '../api/client';
@@ -149,6 +150,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [pageStatusVariant, setPageStatusVariant] = useState<StatusVariant>('');
   const [reviewResult, setReviewResult] = useState<AgentReviewResultResponse | null>(null);
   const [findings, setFindings] = useState<AgentFindingsResponse | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const desktopHeaderRef = useRef<HTMLDivElement>(null);
   const mobileHeaderRef = useRef<HTMLElement>(null);
@@ -239,6 +241,21 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     setFindings(null);
     void loadReviewResult();
   }, [agentId, loadReviewResult]);
+
+  const handleResumeAutofix = useCallback(async () => {
+    setResumeBusy(true);
+    try {
+      await resumeAutofixChain(agentId, token);
+      setPageStatus('Automatic fix chain resumed — next batch created.');
+      setPageStatusVariant('success');
+      await loadReviewResult();
+    } catch (err) {
+      setPageStatus(err instanceof Error ? err.message : 'Failed to resume the automatic chain');
+      setPageStatusVariant('error');
+    } finally {
+      setResumeBusy(false);
+    }
+  }, [agentId, token, loadReviewResult]);
 
   usePolling(
     () => {
@@ -846,6 +863,9 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
             <ReviewFindingsTable
               findings={findings.findings}
               staleReview={findings.staleReview}
+              plan={findings.plan}
+              onResume={findings.plan ? handleResumeAutofix : null}
+              resumeBusy={resumeBusy}
             />
           </div>
         ) : null}
