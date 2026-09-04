@@ -21,7 +21,6 @@ import type { GitService } from '../../services/git-service';
 import {
   createRepoRepository,
   validateRepoId,
-  normalizeRepoAutofixSettings,
   type RepoUpdateFields,
   type RepoRepository,
 } from './repo.repository';
@@ -223,9 +222,7 @@ export function createRepoService({
     updateRepo: (repoId, updates) => {
       const { autofix, ...rest } = updates;
       const normalized: Partial<RepoUpdateFields> =
-        autofix !== undefined
-          ? { ...rest, autofix: normalizeRepoAutofixSettings(validateAutofixUpdates(autofix)) }
-          : { ...rest };
+        autofix !== undefined ? { ...rest, autofix: validateAutofixUpdates(autofix) } : { ...rest };
       const repo = repository.update(repoId, normalized);
       if (!repo) {
         throw new CodedError('Repository not found', 'NOT_FOUND');

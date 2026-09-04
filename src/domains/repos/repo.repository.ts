@@ -31,7 +31,10 @@ export function normalizeRepoAutofixSettings(value: unknown): RepoAutofixSetting
   return { severityThreshold, maxFindingsPerBatch };
 }
 
-export type RepoUpdateFields = Pick<Repo, 'autoReviewPullRequests' | 'autofix'>;
+export interface RepoUpdateFields {
+  autoReviewPullRequests: Repo['autoReviewPullRequests'];
+  autofix: Partial<RepoAutofixSettings>;
+}
 
 export function validateRepoId(repoId: unknown): string {
   if (!repoId || typeof repoId !== 'string') {
@@ -81,7 +84,7 @@ export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): 
     if (partial.autofix) {
       const merged = normalizeRepoAutofixSettings({
         ...normalizeRepoAutofixSettings(repo.autofix),
-        ...normalizeRepoAutofixSettings(partial.autofix),
+        ...partial.autofix,
       });
       repo.autofix = merged;
       const rest = { ...partial };
