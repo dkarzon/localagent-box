@@ -597,7 +597,7 @@ describe('startAutomaticChain', () => {
     assert.equal(body.mode, 'batch');
     assert.equal(body.repoId, 'r1');
     assert.equal(body.agentBranch, 'feature');
-    assert.equal(body.baseBranch, 'main');
+    assert.equal(body.baseBranch, 'feature');
     assert.equal(body.useExistingBranch, true);
     assert.equal(body.push, true);
     assert.deepEqual((body.autofix as { kind: string }).kind, 'automatic');
