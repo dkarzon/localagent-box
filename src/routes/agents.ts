@@ -99,6 +99,11 @@ const handleManualFix = withErrorHandling(async (_req, res, ctx, agentId, findin
   });
 });
 
+const handleResumeAutofix = withErrorHandling(async (_req, res, ctx, agentId) => {
+  const result = await ctx.agentManager.resumeAutomaticChain(agentId);
+  sendJson(res, 200, { agentId, ...result });
+});
+
 const handleGetMessages = withErrorHandling((req, res, ctx, agentId) => {
   const sinceSeq = parseSinceSeq(req, parseUrl(req));
   const messages = ctx.agentManager.readMessages(agentId);
@@ -228,6 +233,15 @@ const agentsRoute: Route = {
         return;
       }
       await handleRetryResolution(req, res, ctx, retryResolutionMatch[1], retryResolutionMatch[2]);
+      return;
+    }
+
+    const resumeAutofixMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/autofix\/resume$/);
+    if (resumeAutofixMatch && req.method === 'POST') {
+      if (!requireAuth(req, res)) {
+        return;
+      }
+      await handleResumeAutofix(req, res, ctx, resumeAutofixMatch[1]);
       return;
     }
 

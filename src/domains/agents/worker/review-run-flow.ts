@@ -18,10 +18,21 @@ import {
 import type { OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
 import { extractOcrTokenUsage } from '../../../integrations/open-code-review/token-usage';
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
-import { normalizeReviewFindings } from '../../../lib/review-findings';
+import {
+  isFindingAutoEligible,
+  normalizeReviewFindings,
+  sortFindingsForAutofix,
+  splitFindingsIntoBatches,
+} from '../../../lib/review-findings';
+import { normalizeRepoAutofixSettings } from '../../repos/repo.repository';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
 import { loadRepoConfig } from './repo-config';
-import type { AgentJob, AppConfig, ReviewFindingRecord } from '../../../types';
+import type {
+  AgentJob,
+  AppConfig,
+  ReviewAutofixPlan,
+  ReviewFindingRecord,
+} from '../../../types';
 import type { WorkerContext } from './worker-context';
 
 const execFileAsync = promisify(execFile);
@@ -71,6 +82,84 @@ function writeFindingsAtomic(findingsPath: string, findings: ReviewFindingRecord
     }
     throw err;
   }
+}
+
+/**
+ * Atomically writes review-autofix-plan.json, or removes the file when the
+ * plan is null (autofix disabled or no eligible findings).
+ */
+function writePlanAtomic(planPath: string, plan: ReviewAutofixPlan | null): void {
+  if (plan === null) {
+    try {
+      fs.unlinkSync(planPath);
+    } catch {
+      // nothing to remove
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(planPath), { recursive: true });
+  const tempPath = `${planPath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');
+  try {
+    fs.renameSync(tempPath, planPath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // best-effort cleanup
+    }
+    throw err;
+  }
+}
+
+/**
+ * Materializes review-autofix-plan.json from the repository's snapshotted
+ * autofix settings and the eligible findings (plan Phase 5, task 1–3).
+ *
+ * Returns null (and removes any stale plan file) when autofix is disabled,
+ * repository settings are unavailable, or no finding is auto-eligible.
+ */
+function materializeAutofixPlan(params: {
+  repoId: string;
+  repoAutofix: unknown;
+  findings: ReviewFindingRecord[];
+  reviewedSha: string | null;
+  baseBranch: string | null;
+  headBranch: string;
+  prNumber: number | null;
+}): ReviewAutofixPlan | null {
+  const settings = normalizeRepoAutofixSettings(params.repoAutofix);
+  if (settings.severityThreshold === 'disabled') {
+    return null;
+  }
+  const eligible = sortFindingsForAutofix(
+    params.findings.filter((finding) => isFindingAutoEligible(finding, settings.severityThreshold)),
+  );
+  if (eligible.length === 0) {
+    return null;
+  }
+  const groups = splitFindingsIntoBatches(eligible, settings.maxFindingsPerBatch);
+  return {
+    schemaVersion: 1,
+    snapshot: {
+      severityThreshold: settings.severityThreshold,
+      maxFindingsPerBatch: settings.maxFindingsPerBatch,
+      reviewedSha: params.reviewedSha,
+      baseBranch: params.baseBranch || params.headBranch,
+      headBranch: params.headBranch,
+      prNumber: params.prNumber,
+      snapshottedAt: new Date().toISOString(),
+    },
+    chainStatus: 'running',
+    batches: groups.map((group, index) => ({
+      index,
+      findingIds: group.map((finding) => finding.id),
+      agentId: null,
+      status: 'pending',
+    })),
+    nextBatchIndex: 0,
+    verification: { status: 'none', agentId: null },
+  };
 }
 
 export async function runReviewJob(ctx: WorkerContext): Promise<void> {
@@ -416,6 +505,35 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       logPath,
       `OCR token usage total: inputTokens=${tokenUsage.inputTokens} outputTokens=${tokenUsage.outputTokens}`,
     );
+  }
+
+  // Materialize the autofix plan from the repository's snapshotted settings
+  // and eligible findings (plan: required ordering steps 4–5). Never depends
+  // on GitHub posting success; batch agents are created server-side when the
+  // review-completed event is observed.
+  const autofixPlanPath = path.join(job.dataDir, 'agents', job.agentId, 'review-autofix-plan.json');
+  try {
+    const plan = materializeAutofixPlan({
+      repoId: job.repoId,
+      repoAutofix: ctx.repo?.autofix,
+      findings,
+      reviewedSha: headSha,
+      baseBranch: job.baseBranch || null,
+      headBranch,
+      prNumber: foundPrNumber,
+    });
+    writePlanAtomic(autofixPlanPath, plan);
+    if (plan) {
+      appendLog(
+        logPath,
+        `Autofix plan created: ${plan.batches.length} batch(es) from ${findings.length} finding(s)`,
+      );
+    } else {
+      appendLog(logPath, 'Autofix plan not created (disabled or no eligible findings)');
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(logPath, `Warning: materializing autofix plan failed — ${message}`);
   }
 
   updateAgentRecord(agentsStore, job.agentId, {

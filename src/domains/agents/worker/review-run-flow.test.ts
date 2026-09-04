@@ -414,3 +414,153 @@ describe('runReviewJob findings persistence', () => {
     assert.ok(log.includes('Review agent completed successfully'));
   });
 });
+
+describe('runReviewJob autofix plan materialization', () => {
+  function setRepoAutofix(
+    harness: FlowHarness,
+    autofix: { severityThreshold: string; maxFindingsPerBatch: number } | null,
+  ): void {
+    (harness.ctx as { repo: unknown }).repo = {
+      repoId: 'r1',
+      owner: 'o',
+      name: 'n',
+      defaultBranch: 'main',
+      cloneUrl: '',
+      registeredAt: '',
+      lastVerifiedAt: null,
+      lastVerifyStatus: null,
+      lastVerifyMessage: null,
+      autoReviewPullRequests: null,
+      ...(autofix ? { autofix } : {}),
+    };
+  }
+
+  it('writes review-autofix-plan.json with eligible-only batches and snapshotted settings', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    // 4 high findings + 1 critical + 1 unknown (never eligible) = 5 eligible.
+    const comments = [
+      { content: 'A', severity: 'high', path: 'a.ts', start_line: 1, end_line: 2 },
+      { content: 'B', severity: 'high', path: 'b.ts', start_line: 1, end_line: 2 },
+      { content: 'C', severity: 'high', path: 'c.ts', start_line: 1, end_line: 2 },
+      { content: 'D', severity: 'critical', path: 'd.ts', start_line: 1, end_line: 2 },
+      { content: 'E', severity: 'high', path: 'e.ts', start_line: 1, end_line: 2 },
+      { content: 'Unknown', path: 'f.ts' },
+    ];
+    writeOcrStub(stubDir, { status: 'ok', comments });
+
+    const harness = makeFlowHarness(root, null);
+    setRepoAutofix(harness, { severityThreshold: 'medium', maxFindingsPerBatch: 2 });
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.findPullRequestByHead = async () => ({ number: 7, head: { sha: 'sha123' } });
+
+    await runReviewJob(harness.ctx);
+
+    const planPath = path.join(harness.agentDir, 'review-autofix-plan.json');
+    assert.ok(fs.existsSync(planPath), 'review-autofix-plan.json should be written');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8')) as {
+      schemaVersion: number;
+      snapshot: {
+        severityThreshold: string;
+        maxFindingsPerBatch: number;
+        reviewedSha: string | null;
+        baseBranch: string;
+        headBranch: string;
+        prNumber: number | null;
+        snapshottedAt: string;
+      };
+      chainStatus: string;
+      batches: Array<{ index: number; findingIds: string[]; agentId: string | null; status: string }>;
+      nextBatchIndex: number | null;
+      verification: { status: string; agentId: string | null };
+    };
+
+    assert.equal(plan.schemaVersion, 1);
+    assert.equal(plan.snapshot.severityThreshold, 'medium');
+    assert.equal(plan.snapshot.maxFindingsPerBatch, 2);
+    assert.equal(plan.snapshot.reviewedSha, 'sha123');
+    assert.equal(plan.snapshot.baseBranch, 'main');
+    assert.equal(plan.snapshot.headBranch, 'feature');
+    assert.equal(plan.snapshot.prNumber, 7);
+    assert.ok(plan.snapshot.snapshottedAt);
+    assert.equal(plan.chainStatus, 'running');
+    assert.equal(plan.nextBatchIndex, 0);
+    assert.deepEqual(plan.verification, { status: 'none', agentId: null });
+
+    // 5 eligible findings split into batches of 2 → 2/2/1. The critical
+    // finding sorts first; the unknown-severity finding never appears.
+    assert.equal(plan.batches.length, 3);
+    assert.deepEqual(
+      plan.batches.map((batch) => batch.findingIds.length),
+      [2, 2, 1],
+    );
+    assert.ok(plan.batches[0]!.findingIds[0]!.endsWith(':finding:3'), 'critical sorts first');
+    for (const batch of plan.batches) {
+      assert.equal(batch.agentId, null);
+      assert.equal(batch.status, 'pending');
+    }
+    const allIds = plan.batches.flatMap((batch) => batch.findingIds);
+    assert.ok(!allIds.some((id) => id.endsWith(':finding:5')), 'unknown severity is excluded');
+
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(log.includes('Autofix plan created: 3 batch(es) from 6 finding(s)'));
+  });
+
+  it('does not create a plan when autofix is disabled', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [{ content: 'Fix this', severity: 'high', path: 'a.ts', start_line: 1 }],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    setRepoAutofix(harness, { severityThreshold: 'disabled', maxFindingsPerBatch: 5 });
+
+    await runReviewJob(harness.ctx);
+
+    assert.equal(
+      fs.existsSync(path.join(harness.agentDir, 'review-autofix-plan.json')),
+      false,
+      'no plan file should exist when autofix is disabled',
+    );
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(log.includes('Autofix plan not created (disabled or no eligible findings)'));
+  });
+
+  it('does not create a plan when no finding is auto-eligible', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [
+        { content: 'Unknown severity', path: 'a.ts' },
+        { content: 'Low priority', severity: 'low', path: 'b.ts' },
+      ],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    // Threshold critical excludes the low finding and the unknown one.
+    setRepoAutofix(harness, { severityThreshold: 'critical', maxFindingsPerBatch: 5 });
+
+    await runReviewJob(harness.ctx);
+
+    assert.equal(
+      fs.existsSync(path.join(harness.agentDir, 'review-autofix-plan.json')),
+      false,
+      'no plan file should exist without eligible findings',
+    );
+  });
+});

@@ -247,6 +247,9 @@ export interface AgentReviewMetadata {
   githubReviewId?: string | null;
   headSha?: string | null;
   prNumber?: number | null;
+  purpose?: 'standard' | 'verification';
+  sourceReviewAgentId?: string;
+  autofixIneligible?: boolean;
 }
 
 export interface AgentPullRequest {

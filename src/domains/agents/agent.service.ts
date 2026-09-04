@@ -114,6 +114,7 @@ export interface AgentService {
   };
   retryFindingResolution: ReviewAutofixService['retryFindingResolution'];
   createManualFix: ReviewAutofixService['createManualFix'];
+  resumeAutomaticChain: ReviewAutofixService['resumeAutomaticChain'];
   restoreOnStartup: () => void;
   shutdown: () => Promise<void>;
   maxConcurrent: number;
@@ -215,6 +216,7 @@ export function createAgentService(options: {
     configRepository,
     githubApp,
     createBatchAgent: (body) => createAgent(body as unknown as CreateAgentRequest),
+    createReviewAgent: (body) => createAgent(body as unknown as CreateAgentRequest),
   });
 
   function sendAgentWebhook(agentId: string, event: string): void {
@@ -247,6 +249,7 @@ export function createAgentService(options: {
 
     if (current.status === 'cancelled') {
       sendAgentWebhook(agentId, 'agent.cancelled');
+      void reviewAutofix.handleFixAgentFinished(agentId);
       queue.process();
       return;
     }
@@ -262,6 +265,7 @@ export function createAgentService(options: {
         error: current.error || 'Interactive worker exited unexpectedly',
       });
       sendAgentWebhook(agentId, 'agent.failed');
+      void reviewAutofix.handleFixAgentFinished(agentId);
       queue.process();
       return;
     }
@@ -273,6 +277,7 @@ export function createAgentService(options: {
         error: current.error || `Worker exited with code ${code}`,
       });
       sendAgentWebhook(agentId, 'agent.failed');
+      void reviewAutofix.handleFixAgentFinished(agentId);
       queue.process();
       return;
     }
@@ -284,6 +289,7 @@ export function createAgentService(options: {
         error: current.error || 'Loop worker exited unexpectedly',
       });
       sendAgentWebhook(agentId, 'agent.failed');
+      void reviewAutofix.handleFixAgentFinished(agentId);
       queue.process();
       return;
     }
@@ -295,6 +301,7 @@ export function createAgentService(options: {
         error: current.error || `Worker exited with code ${code}`,
       });
       sendAgentWebhook(agentId, 'agent.failed');
+      void reviewAutofix.handleFixAgentFinished(agentId);
       queue.process();
       return;
     }
@@ -314,6 +321,7 @@ export function createAgentService(options: {
       }
       if (current?.status === 'cancelled') {
         sendAgentWebhook(agentId, 'agent.cancelled');
+        void reviewAutofix.handleFixAgentFinished(agentId);
       }
       queue.process();
       return;
@@ -330,9 +338,21 @@ export function createAgentService(options: {
     current = repository.findById(agentId);
     if (current?.status === 'completed') {
       sendAgentWebhook(agentId, 'agent.completed');
-      void handleAutoCreatePullRequest(agentId);
+      // Autofix agents must not trigger the ordinary auto-review path;
+      // verification scheduling is the only review trigger for them.
+      if (current.autofix) {
+        void reviewAutofix.handleFixAgentFinished(agentId);
+      } else {
+        void handleAutoCreatePullRequest(agentId);
+        // A completed review with a materialized autofix plan starts its first
+        // automatic batch; the service no-ops for disabled/ineligible reviews.
+        if (getAgentMode(current) === 'review') {
+          void reviewAutofix.startAutomaticChain(agentId);
+        }
+      }
     } else if (current?.status === 'failed') {
       sendAgentWebhook(agentId, 'agent.failed');
+      void reviewAutofix.handleFixAgentFinished(agentId);
     }
 
     queue.process();
@@ -356,6 +376,7 @@ export function createAgentService(options: {
         error: message,
       });
       sendAgentWebhook(agentId, 'agent.failed');
+      void reviewAutofix.handleFixAgentFinished(agentId);
       queue.process();
     },
   });
@@ -369,6 +390,11 @@ export function createAgentService(options: {
       const agent = repository.findById(agentId);
       if (agent) {
         spawner.start(agent);
+        // Autofix fix agents flip their findings to `fixing` and their batch
+        // to `running` when the worker actually starts.
+        if (agent.autofix) {
+          reviewAutofix.handleFixAgentStarted(agentId);
+        }
       }
     },
   });
@@ -1103,6 +1129,16 @@ export function createAgentService(options: {
     const repo = repoManager.getRepo(parentAgent.repoId);
     const config = configRepository.load();
 
+    // Autofix fix agents must not trigger the ordinary auto-review path;
+    // verification scheduling is the only review trigger for them.
+    if (parentAgent.autofix) {
+      appendLog(
+        repository.getLogPath(parentAgent.agentId),
+        `Skipping auto-review — autofix fix agent; the host schedules a verification review instead`,
+      );
+      return;
+    }
+
     if (!resolveAutoReviewPullRequests(undefined, repo, config)) {
       return;
     }
@@ -1337,6 +1373,8 @@ export function createAgentService(options: {
     retryFindingResolution: reviewAutofix.retryFindingResolution,
     createManualFix: (reviewAgentId: string, findingId: string): Promise<ManualFixResult> =>
       reviewAutofix.createManualFix(reviewAgentId, findingId),
+    resumeAutomaticChain: (reviewAgentId: string): Promise<{ batchIndex: number }> =>
+      reviewAutofix.resumeAutomaticChain(reviewAgentId),
     sendMessage,
     finishAgent,
     commitOutstandingChanges,

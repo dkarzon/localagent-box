@@ -27,7 +27,7 @@ export async function fetchAgentReviewResult(
   const text = await response.text();
   const body = text
     ? (JSON.parse(text) as AgentReviewResultResponse & { error?: string })
-    : ({} as AgentReviewResultResponse);
+    : ({} as AgentReviewResultResponse & { error?: string });
   if (!response.ok) {
     throw new Error(body.error || `Request failed (${response.status})`);
   }
@@ -44,7 +44,7 @@ export async function fetchAgentFindings(
   const text = await response.text();
   const body = text
     ? (JSON.parse(text) as AgentFindingsResponse & { error?: string })
-    : ({} as AgentFindingsResponse);
+    : ({} as AgentFindingsResponse & { error?: string });
   if (!response.ok) {
     throw new Error(body.error || `Request failed (${response.status})`);
   }

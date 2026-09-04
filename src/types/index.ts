@@ -601,6 +601,12 @@ export interface AgentReviewMetadata {
   githubReviewId?: string | null;
   headSha?: string | null;
   prNumber?: number | null;
+  /** 'verification' marks an autofix verification review. */
+  purpose?: 'standard' | 'verification';
+  /** Source review this verification review validates. */
+  sourceReviewAgentId?: string;
+  /** Verification reviews never start an automatic fix chain. */
+  autofixIneligible?: boolean;
 }
 
 export interface ReviewJobFields {
