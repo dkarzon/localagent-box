@@ -8,6 +8,7 @@ import {
   allowAgentSuccessors,
 } from '../api/agents';
 import {
+  createManualFix,
   fetchAgentFindings,
   fetchAgentReviewResult,
   resumeAutofixChain,
@@ -151,6 +152,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [reviewResult, setReviewResult] = useState<AgentReviewResultResponse | null>(null);
   const [findings, setFindings] = useState<AgentFindingsResponse | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [manualFixBusyId, setManualFixBusyId] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   const desktopHeaderRef = useRef<HTMLDivElement>(null);
   const mobileHeaderRef = useRef<HTMLElement>(null);
@@ -256,6 +258,30 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
       setResumeBusy(false);
     }
   }, [agentId, token, loadReviewResult]);
+
+  const handleManualFix = useCallback(
+    async (findingId: string) => {
+      setManualFixBusyId(findingId);
+      setPageStatus('Queueing fix agent…');
+      setPageStatusVariant('');
+      try {
+        const result = await createManualFix(agentId, findingId, token);
+        setPageStatus(
+          result.staleReview
+            ? `Fix agent queued (reviewed branch head has moved on — agent uses the latest head).`
+            : `Fix agent queued to fix this finding.`,
+        );
+        setPageStatusVariant('success');
+        await loadReviewResult();
+      } catch (err) {
+        setPageStatus(err instanceof Error ? err.message : 'Failed to queue the fix agent');
+        setPageStatusVariant('error');
+      } finally {
+        setManualFixBusyId(null);
+      }
+    },
+    [agentId, token, loadReviewResult],
+  );
 
   usePolling(
     () => {
@@ -866,6 +892,8 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
               plan={findings.plan}
               onResume={findings.plan ? handleResumeAutofix : null}
               resumeBusy={resumeBusy}
+              onManualFix={handleManualFix}
+              manualFixBusyId={manualFixBusyId}
             />
           </div>
         ) : null}

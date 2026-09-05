@@ -1,5 +1,5 @@
 import { apiFetch, authHeaders } from './client';
-import type { Agent, AgentFindingsResponse, AgentGitStatus } from './types';
+import type { Agent, AgentFindingsResponse, AgentGitStatus, ReviewFindingRecord } from './types';
 import type { AgentEvent, AgentMessage } from './agent-events';
 
 export async function fetchAgentGitStatus(
@@ -57,6 +57,28 @@ export async function resumeAutofixChain(
 ): Promise<{ agentId: string; batchIndex: number }> {
   return apiFetch<{ agentId: string; batchIndex: number }>(
     `/api/v1/agents/${encodeURIComponent(agentId)}/autofix/resume`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  );
+}
+
+export interface ManualFixResponse {
+  agentId: string;
+  findingId: string;
+  agent: Agent;
+  finding: ReviewFindingRecord;
+  staleReview: boolean;
+}
+
+export async function createManualFix(
+  agentId: string,
+  findingId: string,
+  token: string,
+): Promise<ManualFixResponse> {
+  return apiFetch<ManualFixResponse>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/findings/${encodeURIComponent(findingId)}/fix`,
     {
       method: 'POST',
       headers: authHeaders(token),
