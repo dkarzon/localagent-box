@@ -1,5 +1,5 @@
 import { apiFetch, authHeaders } from './client';
-import type { Agent, AgentGitStatus } from './types';
+import type { Agent, AgentFindingsResponse, AgentGitStatus } from './types';
 import type { AgentEvent, AgentMessage } from './agent-events';
 
 export async function fetchAgentGitStatus(
@@ -27,11 +27,41 @@ export async function fetchAgentReviewResult(
   const text = await response.text();
   const body = text
     ? (JSON.parse(text) as AgentReviewResultResponse & { error?: string })
-    : ({} as AgentReviewResultResponse);
+    : ({} as AgentReviewResultResponse & { error?: string });
   if (!response.ok) {
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return body;
+}
+
+export async function fetchAgentFindings(
+  agentId: string,
+): Promise<AgentFindingsResponse | null> {
+  const response = await fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/findings`);
+  if (response.status === 404) {
+    return null;
+  }
+  const text = await response.text();
+  const body = text
+    ? (JSON.parse(text) as AgentFindingsResponse & { error?: string })
+    : ({} as AgentFindingsResponse & { error?: string });
+  if (!response.ok) {
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return body;
+}
+
+export async function resumeAutofixChain(
+  agentId: string,
+  token: string,
+): Promise<{ agentId: string; batchIndex: number }> {
+  return apiFetch<{ agentId: string; batchIndex: number }>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/autofix/resume`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  );
 }
 
 export async function fetchAgentMessages(

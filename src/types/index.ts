@@ -103,6 +103,99 @@ export interface OllamaProbeResult {
   models?: OllamaModel[];
 }
 
+export type AutofixSeverityThreshold =
+  | 'disabled'
+  | 'critical'
+  | 'high'
+  | 'medium'
+  | 'low';
+
+export interface RepoAutofixSettings {
+  severityThreshold: AutofixSeverityThreshold;
+  maxFindingsPerBatch: number;
+}
+
+export const AUTOFIX_SEVERITY_THRESHOLDS: readonly AutofixSeverityThreshold[] = [
+  'disabled',
+  'critical',
+  'high',
+  'medium',
+  'low',
+];
+
+export const DEFAULT_REPO_AUTOFIX_SETTINGS: RepoAutofixSettings = {
+  severityThreshold: 'disabled',
+  maxFindingsPerBatch: 5,
+};
+
+export type ReviewFindingFixStatus =
+  | 'available'
+  | 'assigned'
+  | 'fixing'
+  | 'fixed'
+  | 'failed';
+
+export type ReviewFindingResolutionStatus =
+  | 'not_applicable'
+  | 'pending'
+  | 'resolved'
+  | 'failed';
+
+export interface ReviewFindingRecord {
+  id: string;
+  ordinal: number;
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'unknown';
+  category: string | null;
+  path: string | null;
+  startLine: number | null;
+  endLine: number | null;
+  content: string;
+  existingCode: string | null;
+  suggestionCode: string | null;
+  reviewedSha: string | null;
+  fixStatus: ReviewFindingFixStatus;
+  assignedAgentId: string | null;
+  fixedAt: string | null;
+  github: {
+    reviewId: string | null;
+    commentId: number | null;
+    commentUrl: string | null;
+    threadId: string | null;
+    resolutionStatus: ReviewFindingResolutionStatus;
+      resolutionError: string | null;
+      resolvedAt: string | null;
+    };
+}
+
+export interface ReviewAutofixSnapshot {
+  severityThreshold: AutofixSeverityThreshold;
+  maxFindingsPerBatch: number;
+  reviewedSha: string | null;
+  baseBranch: string;
+  headBranch: string;
+  prNumber: number | null;
+  snapshottedAt: string;
+}
+
+export interface AutofixBatchPlan {
+  index: number;
+  findingIds: string[];
+  agentId: string | null;
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'skipped';
+}
+
+export interface ReviewAutofixPlan {
+  schemaVersion: 1;
+  snapshot: ReviewAutofixSnapshot;
+  chainStatus: 'disabled' | 'running' | 'paused' | 'completed';
+  batches: AutofixBatchPlan[];
+  nextBatchIndex: number | null;
+  verification: {
+    status: 'none' | 'pending' | 'queued' | 'running' | 'completed' | 'failed';
+    agentId: string | null;
+  };
+}
+
 export interface Repo {
   repoId: string;
   owner: string;
@@ -114,6 +207,14 @@ export interface Repo {
   lastVerifyStatus: string | null;
   lastVerifyMessage: string | null;
   autoReviewPullRequests: boolean | null;
+  autofix?: RepoAutofixSettings;
+}
+
+export interface AgentAutofixMetadata {
+  kind: 'automatic' | 'manual';
+  sourceReviewAgentId: string;
+  findingIds: string[];
+  batchIndex?: number;
 }
 
 export interface AgentResult {
@@ -402,6 +503,8 @@ export interface Agent {
   parentAgentId?: string | null;
   /** Review-specific metadata; present only when mode === 'review' */
   review?: AgentReviewMetadata | null;
+  /** Autofix orchestration metadata; present when this batch agent fixes review findings */
+  autofix?: AgentAutofixMetadata | null;
   /** Cumulative token usage across all assistant messages in this session */
   tokenUsage?: AgentTokenUsage;
   /** Host-run workspace bootstrap (setup command) before the agent starts */
@@ -498,6 +601,12 @@ export interface AgentReviewMetadata {
   githubReviewId?: string | null;
   headSha?: string | null;
   prNumber?: number | null;
+  /** 'verification' marks an autofix verification review. */
+  purpose?: 'standard' | 'verification';
+  /** Source review this verification review validates. */
+  sourceReviewAgentId?: string;
+  /** Verification reviews never start an automatic fix chain. */
+  autofixIneligible?: boolean;
 }
 
 export interface ReviewJobFields {

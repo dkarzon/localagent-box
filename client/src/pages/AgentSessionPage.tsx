@@ -8,7 +8,9 @@ import {
   allowAgentSuccessors,
 } from '../api/agents';
 import {
+  fetchAgentFindings,
   fetchAgentReviewResult,
+  resumeAutofixChain,
   type AgentReviewResultResponse,
 } from '../api/agent-session';
 import { apiFetch, authHeaders } from '../api/client';
@@ -28,11 +30,13 @@ import {
   type StatusVariant,
 } from '../api/types';
 import type { TranscriptEntry } from '../api/agent-events';
+import type { AgentFindingsResponse } from '../api/types';
 import { extractOcrTokenUsage } from '../lib/ocr-token-usage';
 import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
 import { AgentTranscript } from '../components/agents/AgentTranscript';
+import { ReviewFindingsTable } from '../components/agents/ReviewFindingsTable';
 import { IconGithub, IconInfo, IconLink, IconRefresh } from '../components/icons';
 import { Badge, agentStatusPulse, agentStatusVariant } from '../components/ui/Badge';
 import { FlyoutPanel } from '../components/ui/FlyoutPanel';
@@ -145,6 +149,8 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [pageStatus, setPageStatus] = useState('');
   const [pageStatusVariant, setPageStatusVariant] = useState<StatusVariant>('');
   const [reviewResult, setReviewResult] = useState<AgentReviewResultResponse | null>(null);
+  const [findings, setFindings] = useState<AgentFindingsResponse | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const desktopHeaderRef = useRef<HTMLDivElement>(null);
   const mobileHeaderRef = useRef<HTMLElement>(null);
@@ -205,6 +211,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const loadReviewResult = useCallback(async () => {
     if (!review) {
       setReviewResult(null);
+      setFindings(null);
       return;
     }
     try {
@@ -214,6 +221,12 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
       }
     } catch {
       /* review output may not be written yet */
+    }
+    try {
+      const findingsData = await fetchAgentFindings(agentId);
+      setFindings(findingsData);
+    } catch {
+      /* findings endpoint unavailable for historical sessions */
     }
   }, [agentId, review]);
 
@@ -225,8 +238,24 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
 
   useEffect(() => {
     setReviewResult(null);
+    setFindings(null);
     void loadReviewResult();
   }, [agentId, loadReviewResult]);
+
+  const handleResumeAutofix = useCallback(async () => {
+    setResumeBusy(true);
+    try {
+      await resumeAutofixChain(agentId, token);
+      setPageStatus('Automatic fix chain resumed — next batch created.');
+      setPageStatusVariant('success');
+      await loadReviewResult();
+    } catch (err) {
+      setPageStatus(err instanceof Error ? err.message : 'Failed to resume the automatic chain');
+      setPageStatusVariant('error');
+    } finally {
+      setResumeBusy(false);
+    }
+  }, [agentId, token, loadReviewResult]);
 
   usePolling(
     () => {
@@ -829,7 +858,19 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
           <AgentSessionInfo {...sessionInfoProps} />
         </aside>
 
-        <section className="card-surface flex min-h-[min(70vh,640px)] min-w-0 flex-col overflow-clip">
+        {review && findings && findings.findings.length > 0 ? (
+          <div className="mt-5 lg:col-span-2">
+            <ReviewFindingsTable
+              findings={findings.findings}
+              staleReview={findings.staleReview}
+              plan={findings.plan}
+              onResume={findings.plan ? handleResumeAutofix : null}
+              resumeBusy={resumeBusy}
+            />
+          </div>
+        ) : null}
+
+        <section className="card-surface flex min-h-[min(70vh,640px)] min-w-0 flex-col overflow-clip lg:col-start-2">
           <header className="card-header-rule sticky top-[var(--session-mobile-header-height,0px)] z-[1] flex items-center justify-between gap-4 bg-surface/80 px-6 py-4 backdrop-blur-sm lg:top-[var(--session-sticky-header-height,0px)]">
             <div className="min-w-0 flex flex-col gap-1 text-primary sm:flex-row sm:items-center sm:gap-3">
               <h3 className="text-lg">Conversation</h3>

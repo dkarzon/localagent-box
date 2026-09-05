@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { sendJson, readJsonBody, requireAuth, parseUrl } from '../lib/http';
 import { withErrorHandling } from '../lib/error-handler';
+import { validationError } from '../lib/validation';
 import { getServerEnv } from '../config/env';
 import { listDepCacheEntries, purgeDepCacheEntries } from '../domains/agents/worker/dep-cache';
 import type { Route, ServerContext } from '../types';
@@ -75,13 +76,34 @@ const handlePurgeDepCache = withErrorHandling(async (req, res, ctx, repoId) => {
 
 const handleUpdateRepo = withErrorHandling(async (req, res, ctx, repoId) => {
   const body = await readJsonBody(req);
-  const updates: { autoReviewPullRequests?: boolean | null } = {};
+  const updates: { autoReviewPullRequests?: boolean | null; autofix?: Record<string, unknown> } =
+    {};
   if (Object.prototype.hasOwnProperty.call(body, 'autoReviewPullRequests')) {
     if (body.autoReviewPullRequests === null) {
       updates.autoReviewPullRequests = null;
     } else if (typeof body.autoReviewPullRequests === 'boolean') {
       updates.autoReviewPullRequests = body.autoReviewPullRequests;
     }
+  }
+  if (body.autofix !== undefined && body.autofix !== null) {
+    if (typeof body.autofix !== 'object' || Array.isArray(body.autofix)) {
+      throw validationError('autofix must be an object');
+    }
+    const raw = body.autofix as Record<string, unknown>;
+    const autofix: Record<string, unknown> = {};
+    if (raw.severityThreshold !== undefined) {
+      if (typeof raw.severityThreshold !== 'string') {
+        throw validationError('autofix.severityThreshold must be a string');
+      }
+      autofix.severityThreshold = raw.severityThreshold;
+    }
+    if (raw.maxFindingsPerBatch !== undefined) {
+      if (typeof raw.maxFindingsPerBatch !== 'number' || !Number.isInteger(raw.maxFindingsPerBatch)) {
+        throw validationError('autofix.maxFindingsPerBatch must be an integer');
+      }
+      autofix.maxFindingsPerBatch = raw.maxFindingsPerBatch;
+    }
+    updates.autofix = autofix;
   }
   const repo = ctx.repoManager.updateRepo(repoId, updates);
   sendJson(res, 200, { repo });

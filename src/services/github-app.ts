@@ -93,6 +93,42 @@ export interface CreatePullRequestReviewCommentInput {
   subject_type?: 'line' | 'file';
 }
 
+/** REST review comment fields needed to map findings back to GitHub threads. */
+export interface PullRequestReviewCommentSummary {
+  id: number;
+  html_url: string;
+  path: string;
+  line: number | null;
+  start_line: number | null;
+}
+
+/** GraphQL review-thread node ID plus its current resolved state. */
+export interface ReviewThreadLookupResult {
+  threadId: string;
+  isResolved: boolean;
+}
+
+interface ReviewThreadsQueryData {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: Array<{
+          id: string;
+          isResolved: boolean;
+          comments: { nodes: Array<{ databaseId: number | null }> };
+        }>;
+      };
+    };
+  };
+}
+
+interface ResolveReviewThreadMutationData {
+  resolveReviewThread: {
+    thread: { id: string; isResolved: boolean };
+  };
+}
+
 export interface GithubAppService {
   assertConfigured: (config: AppConfig) => void;
   getCredentialSummary: (config: AppConfig) => GithubCredentialSummary;
@@ -126,6 +162,27 @@ export interface GithubAppService {
     prNumber: number,
     input: CreatePullRequestReviewCommentInput,
   ) => Promise<{ id: string; html_url: string }>;
+  /** List comments belonging to an already submitted review. */
+  listPullRequestReviewComments: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    reviewId: string,
+  ) => Promise<PullRequestReviewCommentSummary[]>;
+  /** Finds the GraphQL review-thread node ID containing a REST comment database ID. */
+  findReviewThreadIdForComment: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    commentId: number,
+  ) => Promise<ReviewThreadLookupResult | null>;
+  /** Idempotently resolves a review thread; an already-resolved thread is success. */
+  resolvePullRequestReviewThread: (
+    config: AppConfig,
+    threadId: string,
+  ) => Promise<{ threadId: string; isResolved: boolean }>;
   redactSecrets: (text: string | undefined | null) => string | undefined | null;
   createAppJwt: (appId: string, privateKeyPem: string) => string;
   normalizePrivateKey: (privateKey: string) => string;
@@ -302,6 +359,40 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     return body;
   }
 
+  async function githubGraphQLRequest<T>(
+    config: AppConfig,
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<T> {
+    const token = await getInstallationToken(config);
+    const response = await fetchImpl(`${GITHUB_API}/graphql`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...GITHUB_HEADERS,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const body = (await response.json().catch(() => ({}))) as {
+      data?: T;
+      errors?: Array<{ message?: string }>;
+      message?: string;
+    };
+    if (!response.ok) {
+      const message = body.message || `GitHub API returned HTTP ${response.status}`;
+      throw new Error(message);
+    }
+    if (body.errors && body.errors.length > 0) {
+      throw new Error(body.errors.map((entry) => entry.message || 'Unknown GraphQL error').join('; '));
+    }
+    if (!body.data) {
+      throw new Error('GitHub GraphQL response did not include data');
+    }
+    return body.data;
+  }
+
   async function fetchRepositoryBranches(config: AppConfig, owner: string, name: string): Promise<string[]> {
     const branches = await githubApiRequest<GitHubBranchResponse[]>(
       config,
@@ -449,6 +540,118 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     };
   }
 
+  async function listPullRequestReviewComments(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    reviewId: string,
+  ): Promise<PullRequestReviewCommentSummary[]> {
+    const comments = await githubApiRequest<Array<Record<string, unknown>>>(
+      config,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/reviews/${encodeURIComponent(reviewId)}/comments`,
+    );
+    return comments
+      .filter((comment) => typeof comment.id === 'number')
+      .map((comment) => ({
+        id: comment.id as number,
+        html_url: String(comment.html_url ?? ''),
+        path: String(comment.path ?? ''),
+        line: typeof comment.line === 'number' ? comment.line : null,
+        start_line: typeof comment.start_line === 'number' ? comment.start_line : null,
+      }));
+  }
+
+  async function findReviewThreadIdForComment(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    commentId: number,
+  ): Promise<ReviewThreadLookupResult | null> {
+    const query = `
+      query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100, after: $cursor) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                id
+                isResolved
+                comments(first: 100) {
+                  nodes {
+                    databaseId
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    let cursor: string | null = null;
+    let hasNextPage = true;
+    while (hasNextPage) {
+      const data: ReviewThreadsQueryData = await githubGraphQLRequest<ReviewThreadsQueryData>(
+        config,
+        query,
+        {
+          owner,
+          name: repo,
+          number: prNumber,
+          cursor,
+        },
+      );
+
+      for (const thread of data.repository.pullRequest.reviewThreads.nodes) {
+        if (
+          thread.comments.nodes.some(
+            (comment) => comment.databaseId != null && Number(comment.databaseId) === commentId,
+          )
+        ) {
+          return { threadId: thread.id, isResolved: thread.isResolved };
+        }
+      }
+
+      hasNextPage = data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage;
+      cursor = data.repository.pullRequest.reviewThreads.pageInfo.endCursor;
+    }
+
+    return null;
+  }
+
+  async function resolvePullRequestReviewThread(
+    config: AppConfig,
+    threadId: string,
+  ): Promise<{ threadId: string; isResolved: boolean }> {
+    const mutation = `
+      mutation ResolveReviewThread($threadId: ID!) {
+        resolveReviewThread(input: { threadId: $threadId }) {
+          thread {
+            id
+            isResolved
+          }
+        }
+      }
+    `;
+
+    const data: ResolveReviewThreadMutationData = await githubGraphQLRequest<ResolveReviewThreadMutationData>(
+      config,
+      mutation,
+      { threadId },
+    );
+
+    const thread = data.resolveReviewThread?.thread;
+    if (!thread || typeof thread.id !== 'string') {
+      throw new Error('GitHub GraphQL resolveReviewThread response did not include a thread');
+    }
+    return { threadId: thread.id, isResolved: Boolean(thread.isResolved) };
+  }
+
   function redactSecrets(text: string | undefined | null): string | undefined | null {
     if (!text) {
       return text;
@@ -466,6 +669,9 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     getPullRequest,
     createPullRequestReview,
     createPullRequestReviewComment,
+    listPullRequestReviewComments,
+    findReviewThreadIdForComment,
+    resolvePullRequestReviewThread,
     findPullRequestByHead,
     redactSecrets,
     createAppJwt,

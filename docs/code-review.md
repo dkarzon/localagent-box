@@ -102,6 +102,55 @@ OCR receives a merged **background** string built from:
 2. **Caller `background`** on create (API or UI)
 3. **Parent context** — when `parentAgentId` is set: parent task + transcript summary (auto-spawn fills this from the coding session)
 
+## Autofix (review findings)
+
+Completed reviews persist structured findings and, when the repository has autofix enabled, automatically fix findings at or above the configured severity threshold. Orchestration stays on the host; fix agents are ordinary batch agents (`useExistingBranch: true`) that never touch GitHub.
+
+### Repository settings
+
+Each repository (see **Repositories**) configures:
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `autofix.severityThreshold` | `disabled` | Lowest severity fixed automatically (`disabled`/`critical`/`high`/`medium`/`low`, inclusive) |
+| `autofix.maxFindingsPerBatch` | `5` | Findings per fix agent, 1–20 |
+
+Settings are snapshotted into the review's autofix plan at review completion; later settings changes affect future reviews only. Unknown severities are never automatic but stay manually fixable.
+
+### Findings and plan storage
+
+- `review-findings.json` — one record per OCR finding: severity, category, path/lines, content, OCR code suggestions, reviewed SHA, fix status (`available`/`assigned`/`fixing`/`fixed`/`failed`), assigned agent, and GitHub comment/thread/resolution state.
+- `review-autofix-plan.json` — the orchestration state: settings snapshot, sequential batch list, chain status (`disabled`/`running`/`paused`/`completed`), and the verification-review slot. Writes are atomic.
+
+### Automatic chain
+
+Eligible findings are sorted by severity (OCR order within a severity), split into batches of `maxFindingsPerBatch`, and processed one batch agent at a time:
+
+1. The review creates the first batch agent when it completes.
+2. A successful push marks the batch's findings fixed, resolves their GitHub threads (host-side), and creates the next batch.
+3. A failure, cancellation, or finish without a push pauses the chain and leaves the failed batch's findings manually fixable.
+4. **Resume Remaining Batches** (UI or API) skips the failed batch and creates the next pending one.
+5. After the last successful batch, exactly one autofix-ineligible verification review is created. Verification reviews can never start another chain; their findings still allow individual Manual Fix.
+
+Manual fixes of single findings (below-threshold, unknown severity, stale, no PR) coalesce into one verification review after all related fix agents on the branch drain.
+
+### API
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/agents/:reviewAgentId/findings` | Structured findings, autofix plan, staleness, verification link |
+| `POST /api/v1/agents/:reviewAgentId/findings/:findingId/fix` | Create a one-finding manual fix agent (conflicts while assigned) |
+| `POST /api/v1/agents/:reviewAgentId/autofix/resume` | Resume a paused chain (skips failed batches; `DUPLICATE` on conflict) |
+| `POST /api/v1/agents/:reviewAgentId/findings/:findingId/retry-resolution` | Retry GitHub thread resolution (never creates an agent) |
+
+### Restart reconciliation
+
+On startup the host reconciles every persisted plan without creating agents: a queued fix agent is retained and re-enqueued (its chain stays `running`), a batch whose agent record is missing or was interrupted is failed with the chain `paused`, and its findings become manually actionable. Never creates duplicate fix agents. Orchestration emits structured `autofix.*` logs (review ID, batch index, finding IDs, fix agent ID).
+
+### GitHub permissions
+
+Thread resolution uses the GraphQL `resolveReviewThread` mutation, so the GitHub App needs **Pull requests: Read and write** (REST review/comment posting) plus GraphQL access with the installation token. Resolution failures never change the fix agent's coding result; the finding stays retryable.
+
 ## GitHub output
 
 When a PR matches `headBranch`:

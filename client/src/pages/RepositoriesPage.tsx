@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { updateRepoSettings } from '../api/repos';
 import { apiFetch, authHeaders } from '../api/client';
-import type { Repo, StatusVariant } from '../api/types';
+import type { AutofixSeverityThreshold, Repo, StatusVariant } from '../api/types';
 import { useApiToken } from '../hooks/useApiToken';
 import { PAGE_SUBTITLES, PAGE_TITLES } from '../navigation';
 import { IconFolder, IconInfo, IconRefresh } from '../components/icons';
@@ -17,6 +17,16 @@ interface RepositoriesPageProps {
 }
 
 type RepoActionState = { message: string; variant: StatusVariant };
+
+const AUTOFIX_THRESHOLD_LABELS: Record<AutofixSeverityThreshold, string> = {
+  disabled: 'Disabled',
+  critical: 'Critical',
+  high: 'High and above',
+  medium: 'Medium and above',
+  low: 'Low and above',
+};
+
+const AUTOFIX_BATCH_SIZE_OPTIONS = Array.from({ length: 20 }, (_, index) => index + 1);
 
 export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: RepositoriesPageProps) {
   const { token } = useApiToken();
@@ -95,6 +105,21 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
       setRepoAction(
         repoId,
         err instanceof Error ? err.message : 'Failed to update review settings',
+        'error',
+      );
+    }
+  };
+
+  const updateAutofix = async (repoId: string, autofix: { severityThreshold?: AutofixSeverityThreshold; maxFindingsPerBatch?: number }) => {
+    setRepoAction(repoId, 'Updating autofix settings…', '');
+    try {
+      await updateRepoSettings(repoId, { autofix }, token);
+      setRepoAction(repoId, 'Autofix settings updated.', 'success');
+      await refreshRepos();
+    } catch (err) {
+      setRepoAction(
+        repoId,
+        err instanceof Error ? err.message : 'Failed to update autofix settings',
         'error',
       );
     }
@@ -251,7 +276,7 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
                     </div>
                   </header>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
                       <p className="label-md text-muted">Branch</p>
                       <p className="mt-1 code-md text-on-surface-variant">{repo.defaultBranch}</p>
@@ -289,6 +314,44 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
                         <option value="inherit">Inherit global</option>
                         <option value="on">On</option>
                         <option value="off">Off</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <p className="label-md text-muted">Autofix severity</p>
+                      <Select
+                        className="mt-1"
+                        value={repo.autofix?.severityThreshold ?? 'disabled'}
+                        onChange={(e) =>
+                          void updateAutofix(repo.repoId, {
+                            severityThreshold: e.target.value as AutofixSeverityThreshold,
+                          })
+                        }
+                      >
+                        {(Object.keys(AUTOFIX_THRESHOLD_LABELS) as AutofixSeverityThreshold[]).map(
+                          (threshold) => (
+                            <option key={threshold} value={threshold}>
+                              {AUTOFIX_THRESHOLD_LABELS[threshold]}
+                            </option>
+                          ),
+                        )}
+                      </Select>
+                    </div>
+                    <div>
+                      <p className="label-md text-muted">Max findings per autofix batch</p>
+                      <Select
+                        className="mt-1"
+                        value={String(repo.autofix?.maxFindingsPerBatch ?? 5)}
+                        onChange={(e) =>
+                          void updateAutofix(repo.repoId, {
+                            maxFindingsPerBatch: Number(e.target.value),
+                          })
+                        }
+                      >
+                        {AUTOFIX_BATCH_SIZE_OPTIONS.map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
                       </Select>
                     </div>
                   </div>

@@ -376,11 +376,15 @@ export interface GithubLineReviewComment {
   side?: 'LEFT' | 'RIGHT';
   start_line?: number;
   start_side?: 'LEFT' | 'RIGHT';
+  /** Zero-based ordinal of the source OCR finding, in normalizeComments order. */
+  ordinal: number;
 }
 
 export interface GithubFileReviewComment {
   path: string;
   body: string;
+  /** Zero-based ordinal of the source OCR finding, in normalizeComments order. */
+  ordinal: number;
 }
 
 function partitionComments(comments: OcrComment[]): {
@@ -392,7 +396,8 @@ function partitionComments(comments: OcrComment[]): {
   const fileComments: GithubFileReviewComment[] = [];
   const unplacedComments: OcrComment[] = [];
 
-  for (const comment of comments) {
+  for (let ordinal = 0; ordinal < comments.length; ordinal += 1) {
+    const comment = comments[ordinal];
     const filePath = comment.path || comment.file;
     if (!filePath || filePath === 'unknown') {
       unplacedComments.push(comment);
@@ -408,14 +413,20 @@ function partitionComments(comments: OcrComment[]): {
     const end = comment.end_line ?? start;
 
     if (typeof end === 'number' && end > 0) {
-      const lineComment: GithubLineReviewComment = { path: filePath, body, line: end, side: 'RIGHT' };
+      const lineComment: GithubLineReviewComment = {
+        path: filePath,
+        body,
+        line: end,
+        side: 'RIGHT',
+        ordinal,
+      };
       if (typeof start === 'number' && start > 0 && start < end) {
         lineComment.start_line = start;
         lineComment.start_side = 'RIGHT';
       }
       lineComments.push(lineComment);
     } else {
-      fileComments.push({ path: filePath, body });
+      fileComments.push({ path: filePath, body, ordinal });
     }
   }
 
