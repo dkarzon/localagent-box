@@ -859,7 +859,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         </aside>
 
         {review && findings && findings.findings.length > 0 ? (
-          <div className="mt-5 lg:col-span-2">
+          <div className="mt-5 min-w-0 lg:col-span-2">
             <ReviewFindingsTable
               findings={findings.findings}
               staleReview={findings.staleReview}
