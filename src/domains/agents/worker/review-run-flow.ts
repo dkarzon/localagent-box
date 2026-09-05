@@ -29,6 +29,7 @@ import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-wri
 import { loadRepoConfig } from './repo-config';
 import type {
   AgentJob,
+  AgentReviewMetadata,
   AppConfig,
   ReviewAutofixPlan,
   ReviewFindingRecord,
@@ -219,6 +220,22 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     parentContext,
     parentAgent?.prompt,
   );
+
+  const existingReview = agentRecord?.review;
+  let verificationMeta: Pick<
+    AgentReviewMetadata,
+    'purpose' | 'autofixIneligible' | 'sourceReviewAgentId'
+  > = {};
+  if (
+    existingReview &&
+    (existingReview.purpose === 'verification' || existingReview.autofixIneligible === true)
+  ) {
+    verificationMeta = {
+      purpose: 'verification',
+      autofixIneligible: true,
+      sourceReviewAgentId: existingReview.sourceReviewAgentId || job.agentId,
+    };
+  }
 
   const runConfig = resolveReviewRunConfig(config, job);
 
@@ -562,6 +579,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       prNumber: foundPrNumber ?? null,
       headSha: headSha ?? null,
       githubReviewId,
+      ...verificationMeta,
     },
   });
 

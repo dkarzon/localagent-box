@@ -564,3 +564,69 @@ describe('runReviewJob autofix plan materialization', () => {
     );
   });
 });
+
+describe('runReviewJob verification metadata persistence', () => {
+  it('persists verification review metadata through the worker final record update', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [{ content: 'Fix this', severity: 'high', path: 'a.ts', start_line: 1 }],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    // The verification review was created with its relationship persisted
+    // before the worker ran (see scheduleVerificationReview).
+    const stored = harness.agentsStore.load();
+    for (const agent of stored.agents) {
+      agent.review = {
+        baseBranch: 'main',
+        headBranch: 'feature',
+        purpose: 'verification',
+        autofixIneligible: true,
+        sourceReviewAgentId: 'review1',
+      };
+    }
+    harness.agentsStore.save(stored);
+
+    await runReviewJob(harness.ctx);
+
+    const loaded = harness.agentsStore.load();
+    const agent = loaded.agents.find((entry) => entry.agentId === 'rev1');
+    assert.ok(agent, 'review agent record should exist');
+    const review = agent!.review;
+    assert.ok(review, 'review metadata should be persisted');
+    assert.equal(review!.purpose, 'verification');
+    assert.equal(review!.autofixIneligible, true);
+    assert.equal(review!.sourceReviewAgentId, 'review1');
+  });
+
+  it('does not add verification metadata for a standard review run', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [{ content: 'Fix this', severity: 'high', path: 'a.ts', start_line: 1 }],
+    });
+
+    const harness = makeFlowHarness(root, null);
+
+    await runReviewJob(harness.ctx);
+
+    const loaded = harness.agentsStore.load();
+    const agent = loaded.agents.find((entry) => entry.agentId === 'rev1');
+    assert.ok(agent, 'review agent record should exist');
+    const review = agent!.review;
+    assert.equal(review!.purpose, undefined);
+    assert.equal(review!.autofixIneligible, undefined);
+    assert.equal(review!.sourceReviewAgentId, undefined);
+  });
+});
