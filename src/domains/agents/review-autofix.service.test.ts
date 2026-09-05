@@ -793,6 +793,40 @@ describe('resumeAutomaticChain', () => {
     assert.equal(ctx.calls.created.length, 1, 'no duplicate agent created');
   });
 
+  it('rejects resume while a manual fix agent is active on a next-pending finding', async () => {
+    const ctx = setup({
+      findings: [resumeFinding(0), resumeFinding(1)],
+    });
+    writeMultiBatchPlan(ctx.repository, {
+      batches: [
+        { index: 0, agentId: 'fix1', status: 'failed' },
+        { index: 1, agentId: null, status: 'pending' },
+      ],
+      chainStatus: 'paused',
+      nextBatchIndex: null,
+    });
+    // A manual fix agent active on the next pending batch's finding.
+    ctx.repository.save({
+      ...(ctx.repository.findById('review1') as Agent),
+      agentId: 'manual1',
+      mode: 'batch' as const,
+      prompt: 'fix',
+      status: 'queued' as const,
+      pushed: false,
+      autofix: {
+        kind: 'manual' as const,
+        sourceReviewAgentId: 'review1',
+        findingIds: ['review1:finding:1'],
+      },
+    });
+
+    await assert.rejects(
+      () => ctx.service.resumeAutomaticChain('review1'),
+      (err: unknown) => err instanceof CodedError && err.code === 'DUPLICATE',
+    );
+    assert.deepEqual(ctx.calls.created, []);
+  });
+
   it('rejects a second resume after the chain already advanced without an active agent', async () => {
     const ctx = setup({
       findings: [resumeFinding(0), resumeFinding(1), resumeFinding(2)],

@@ -61,12 +61,12 @@ export interface ReviewAutofixService {
   startAutomaticChain: (reviewAgentId: string) => Promise<void>;
   /**
    * Resumes a paused automatic chain (plan: `POST .../autofix/resume`).
-   * Validation: the plan exists, the chain is `paused`, no automatic fix agent
-   * for this plan is still active, and a later pending batch exists. The
-   * failed batch is marked skipped (its findings stay manually fixable), the
-   * chain returns to `running`, and the next pending batch is created.
-   * Duplicate invocations reject with `DUPLICATE` instead of creating
-   * duplicate agents.
+   * Validation: the plan exists, the chain is `paused`, no related fix agent
+   * (manual or automatic) for this plan is still active, and a later pending
+   * batch exists. The failed batch is marked skipped (its findings stay
+   * manually fixable), the chain returns to `running`, and the next pending
+   * batch is created. Duplicate invocations reject with `DUPLICATE` instead
+   * of creating duplicate agents.
    */
   resumeAutomaticChain: (reviewAgentId: string) => Promise<{ batchIndex: number }>;
   /**
@@ -228,6 +228,21 @@ export function createReviewAutofixService({
         `Head branch ${headBranch} no longer exists on the remote`,
         'VALIDATION_ERROR',
       );
+    }
+
+    // Re-check the finding's claimable status after the async branch
+    // verification — another request may have claimed the finding while this
+    // one awaited GitHub. The initial check above only covers the start of the
+    // call, so the finding can be taken (its status flipped to
+    // `assigned`/`fixing`) in the gap; claiming it here would let a second
+    // manual agent run with no recorded owner for the first one.
+    const recheckedFindings = repository.readReviewFindings(reviewAgentId);
+    const currentFinding = recheckedFindings?.find((entry) => entry.id === finding.id);
+    if (
+      !currentFinding ||
+      !MANUALLY_ACTIONABLE_STATUSES.has(currentFinding.fixStatus)
+    ) {
+      throw new CodedError('Finding was claimed by another fix request', 'DUPLICATE');
     }
 
     const reviewedSha = finding.reviewedSha;
@@ -687,21 +702,22 @@ export function createReviewAutofixService({
       throw new CodedError('No autofix plan exists for this review', 'NOT_FOUND');
     }
 
-    // Duplicate-click guard: any still-active automatic fix agent for this
-    // plan means resume work is already in flight — conflict, never a second
-    // agent. Checked before the chain status so a click racing a just-resumed
-    // (running) chain also rejects with a conflict.
+    // Duplicate-click guard: any still-active related fix agent (manual or
+    // automatic) for this plan means resume work would steal a finding that is
+    // already claimed — conflict, never a second agent. Checked before the
+    // chain status so a click racing a just-resumed (running) chain, or a
+    // manual fix agent active on a next-pending finding, also rejects with a
+    // conflict (the created batch would have overwritten that claim).
     const activeBatchAgent = repository
       .findAll()
       .find(
         (entry) =>
-          entry.autofix?.kind === 'automatic' &&
-          entry.autofix.sourceReviewAgentId === reviewAgentId &&
+          entry.autofix?.sourceReviewAgentId === reviewAgentId &&
           ACTIVE_FIX_STATUSES.has(entry.status),
       );
     if (activeBatchAgent) {
       throw new CodedError(
-        `Automatic fix agent ${activeBatchAgent.agentId} is still active`,
+        `Fix agent ${activeBatchAgent.agentId} is still active`,
         'DUPLICATE',
       );
     }
