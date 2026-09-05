@@ -66,6 +66,23 @@ describe('repo service updateRepo autofix partial update', () => {
     assert.equal(reloaded.autofix?.maxFindingsPerBatch, 10, 'batch size should be persisted');
   });
 
+  it('preserves the other setting for every single-key update', () => {
+    const service = setup();
+    const id = 'acme-demo';
+
+    const severityOnly = service.updateRepo(id, { autofix: { severityThreshold: 'low' } });
+    assert.equal(severityOnly.autofix?.severityThreshold, 'low');
+    assert.equal(severityOnly.autofix?.maxFindingsPerBatch, 10, 'batch size should be preserved');
+
+    const batchOnly = service.updateRepo(id, { autofix: { maxFindingsPerBatch: 3 } });
+    assert.equal(batchOnly.autofix?.severityThreshold, 'low', 'severity should be preserved');
+    assert.equal(batchOnly.autofix?.maxFindingsPerBatch, 3);
+
+    const reloaded = service.getRepo(id);
+    assert.equal(reloaded.autofix?.severityThreshold, 'low');
+    assert.equal(reloaded.autofix?.maxFindingsPerBatch, 3, 'both settings should be persisted');
+  });
+
   it('preserves the severity when only the batch size is updated', () => {
     const service = setup();
     const id = 'acme-demo';
@@ -103,6 +120,24 @@ describe('repo repository autofix merge', () => {
       result?.autofix?.maxFindingsPerBatch,
       10,
       'batch size should be preserved when only severity is updated',
+    );
+  });
+
+  it('preserves the severity when only the batch size is updated', () => {
+    const dataDir = makeDataDir();
+    const reposStore = createJsonStore<{ repos: Repo[] }>(path.join(dataDir, 'repos.json'), {
+      repos: [],
+    }, fs);
+    reposStore.save({ repos: [makeRepo()] });
+    const repository = createRepoRepository(reposStore);
+    const id = 'acme-demo';
+    const partial: Partial<RepoAutofixSettings> = { maxFindingsPerBatch: 4 };
+    const result = repository.update(id, { autofix: partial });
+    assert.equal(result?.autofix?.maxFindingsPerBatch, 4);
+    assert.equal(
+      result?.autofix?.severityThreshold,
+      'high',
+      'severity should be preserved when only the batch size is updated',
     );
   });
 });

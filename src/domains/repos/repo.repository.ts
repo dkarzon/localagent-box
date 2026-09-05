@@ -81,7 +81,7 @@ export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): 
     const repos = loadRepos();
     const repo = repos.find((entry) => entry.repoId === validateRepoId(repoId));
     if (!repo) return undefined;
-    if (partial.autofix) {
+    if (partial.autofix !== undefined) {
       const merged = normalizeRepoAutofixSettings({
         ...normalizeRepoAutofixSettings(repo.autofix),
         ...partial.autofix,
