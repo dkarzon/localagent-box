@@ -859,7 +859,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         </aside>
 
         {review && findings && findings.findings.length > 0 ? (
-          <div className="mt-5">
+          <div className="mt-5 lg:col-span-2">
             <ReviewFindingsTable
               findings={findings.findings}
               staleReview={findings.staleReview}
@@ -870,7 +870,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
           </div>
         ) : null}
 
-        <section className="card-surface flex min-h-[min(70vh,640px)] min-w-0 flex-col overflow-clip">
+        <section className="card-surface flex min-h-[min(70vh,640px)] min-w-0 flex-col overflow-clip lg:col-start-2">
           <header className="card-header-rule sticky top-[var(--session-mobile-header-height,0px)] z-[1] flex items-center justify-between gap-4 bg-surface/80 px-6 py-4 backdrop-blur-sm lg:top-[var(--session-sticky-header-height,0px)]">
             <div className="min-w-0 flex flex-col gap-1 text-primary sm:flex-row sm:items-center sm:gap-3">
               <h3 className="text-lg">Conversation</h3>
