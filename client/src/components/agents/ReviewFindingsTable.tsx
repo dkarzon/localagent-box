@@ -81,6 +81,10 @@ interface ReviewFindingsTableProps {
   /** Present when the caller supports resuming a paused automatic chain. */
   onResume?: (() => void) | null;
   resumeBusy?: boolean;
+  /** Present when the caller supports queueing a fix agent for one finding. */
+  onManualFix?: ((findingId: string) => void) | null;
+  /** Finding ID currently being sent to the manual-fix endpoint. */
+  manualFixBusyId?: string | null;
 }
 
 const chainStatusLabel: Record<ReviewAutofixPlan['chainStatus'], string> = {
@@ -96,6 +100,8 @@ export function ReviewFindingsTable({
   plan,
   onResume,
   resumeBusy = false,
+  onManualFix,
+  manualFixBusyId = null,
 }: ReviewFindingsTableProps) {
   const [sort, setSort] = useState<TableSort>('severity');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -227,6 +233,8 @@ export function ReviewFindingsTable({
                 finding={finding}
                 expanded={expandedId === finding.id}
                 onToggle={() => setExpandedId((id) => (id === finding.id ? null : finding.id))}
+                onManualFix={onManualFix}
+                manualFixBusy={manualFixBusyId === finding.id}
               />
             ))}
             {visible.length === 0 ? (
@@ -247,14 +255,19 @@ function FindingRow({
   finding,
   expanded,
   onToggle,
+  onManualFix,
+  manualFixBusy = false,
 }: {
   finding: ReviewFindingRecord;
   expanded: boolean;
   onToggle: () => void;
+  onManualFix?: ((findingId: string) => void) | null;
+  manualFixBusy?: boolean;
 }) {
   const badgeVariant = severityBadgeVariant[finding.severity] ?? 'neutral';
   const statusVariant = fixStatusBadgeVariant[finding.fixStatus] ?? 'neutral';
   const commentUrl = finding.github.commentUrl;
+  const manualFixPending = finding.fixStatus === 'assigned' || finding.fixStatus === 'fixing';
 
   return (
     <>
@@ -314,7 +327,30 @@ function FindingRow({
             {finding.fixStatus}
           </span>
         </td>
-        <td className="px-4 py-2 text-xs text-muted">Manual Fix</td>
+        <td className="px-4 py-2 text-xs">
+          {onManualFix && !manualFixPending ? (
+            <button
+              type="button"
+              className="inline-flex items-center rounded border border-primary bg-transparent px-2 py-0.5 text-xs text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={manualFixBusy}
+              title={
+                finding.fixStatus === 'failed'
+                  ? 'Queue a new fix agent for this finding'
+                  : 'Queue an agent to fix this finding'
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                onManualFix(finding.id);
+              }}
+            >
+              {manualFixBusy ? 'Queueing…' : finding.fixStatus === 'failed' ? 'Retry Fix' : 'Manual Fix'}
+            </button>
+          ) : manualFixPending ? (
+            <span className="text-muted">Fix agent {finding.fixStatus}…</span>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+        </td>
       </tr>
       {expanded ? (
         <tr className="border-b border-surface-container-highest bg-surface-container/20">
