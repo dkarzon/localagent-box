@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { sendJson, readJsonBody, requireAuth, parseUrl } from '../lib/http';
+import { sendJson, readJsonBody, requireAuth, parseUrl, decodePathParam } from '../lib/http';
 import { parseSinceSeq } from '../lib/sse';
 import { withErrorHandling } from '../lib/error-handler';
 import { parsePositiveInt } from '../lib/parse';
@@ -232,7 +232,13 @@ const agentsRoute: Route = {
       if (!requireAuth(req, res)) {
         return;
       }
-      await handleRetryResolution(req, res, ctx, retryResolutionMatch[1], retryResolutionMatch[2]);
+      await handleRetryResolution(
+        req,
+        res,
+        ctx,
+        decodePathParam(retryResolutionMatch[1]),
+        decodePathParam(retryResolutionMatch[2]),
+      );
       return;
     }
 
@@ -250,7 +256,13 @@ const agentsRoute: Route = {
       if (!requireAuth(req, res)) {
         return;
       }
-      await handleManualFix(req, res, ctx, manualFixMatch[1], manualFixMatch[2]);
+      await handleManualFix(
+        req,
+        res,
+        ctx,
+        decodePathParam(manualFixMatch[1]),
+        decodePathParam(manualFixMatch[2]),
+      );
       return;
     }
 

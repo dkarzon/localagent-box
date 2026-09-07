@@ -78,6 +78,15 @@ export function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url || '/', 'http://localhost');
 }
 
+/** Decode a path segment captured from a route regex (e.g. finding IDs with colons). */
+export function decodePathParam(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
   const token = getApiToken();
   const header = req.headers.authorization || '';
