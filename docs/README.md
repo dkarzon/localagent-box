@@ -22,6 +22,7 @@ These documents record decisions and planning made during development. They aren
 - [loop-verb-models.plan.md](./plans/loop-verb-models.plan.md)
 - [loop-token-efficiency.plan.md](./plans/loop-token-efficiency.plan.md)
 - [pr-code-review.plan.md](./plans/pr-code-review.plan.md)
+- [review-github-checks.plan.md](./plans/review-github-checks.plan.md) — GitHub Checks API for review agents
 - [deepseek-harness-integration.plan.md](./plans/deepseek-harness-integration.plan.md) — dual coding harness (OpenCode / DeepSeek Harness)
 - [question-tool-handling.plan.md](./plans/question-tool-handling.plan.md)
 - [shared-branch-queue.plan.md](./plans/shared-branch-queue.plan.md)
