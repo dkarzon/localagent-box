@@ -34,8 +34,9 @@ import {
 } from '../../lib/resolve-auto-review';
 import { formatReviewMarkdown, formatOcrSessionMarkdown } from '../../integrations/open-code-review/format-review';
 import type { OcrReviewEnvelope } from '../../integrations/open-code-review/types';
+import { checkOutputForComplete } from '../../lib/review-github-check';
 import { CodedError, getErrorMessage } from '../../types';
-import type { Agent, AgentJob, SpawnFn } from '../../types';
+import type { Agent, AgentJob, AgentReviewMetadata, Repo, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import type { ConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
@@ -237,6 +238,53 @@ export function createAgentService(options: {
     }).catch((err) => {
       getLogger().warn({ err, agentId, event: 'webhook.failed' }, 'Webhook delivery failed');
     });
+  }
+
+  /**
+   * Best-effort PATCH of the review's check run to `cancelled`. Used when the
+   * review agent ends without its worker reaching the terminal-check path
+   * (user cancel, host restart). Failures are logged warnings only.
+   */
+  function cancelReviewCheckRun(agentId: string, review: AgentReviewMetadata): void {
+    const checkRunId = review.githubCheckRunId;
+    if (!checkRunId) {
+      return;
+    }
+    if (review.githubCheckConclusion) {
+      // Check already reached a terminal state; nothing to cancel.
+      return;
+    }
+    let repo: Repo;
+    try {
+      repo = repoManager.getRepo(
+        repository.findById(agentId)?.repoId || review.baseBranch || '',
+      );
+    } catch {
+      return;
+    }
+    if (!repo) {
+      return;
+    }
+    const config = configRepository.load();
+    githubApp
+      .updateCheckRun(config, repo.owner, repo.name, checkRunId, {
+        status: 'completed',
+        conclusion: 'cancelled',
+        completedAt: new Date().toISOString(),
+        output: checkOutputForComplete({ conclusion: 'cancelled', findings: [] }),
+      })
+      .then(() => {
+        repository.update(agentId, {
+          review: { ...review, githubCheckConclusion: 'cancelled' },
+        });
+        getLogger().info({ agentId, checkRunId }, 'Review check run cancelled');
+      })
+      .catch((err) => {
+        getLogger().warn(
+          { err, agentId, checkRunId },
+          'Failed to cancel review check run (non-fatal)',
+        );
+      });
   }
 
   function handleWorkerExit(agentId: string, code: number | null, signal: NodeJS.Signals | null): void {
@@ -733,6 +781,10 @@ export function createAgentService(options: {
       finishedAt: new Date().toISOString(),
       error: 'Cancelled by user',
     });
+
+    if (getAgentMode(agent) === 'review' && agent.review) {
+      cancelReviewCheckRun(agentId, agent.review);
+    }
 
     if (!child) {
       sendAgentWebhook(agentId, 'agent.cancelled');
@@ -1280,6 +1332,10 @@ export function createAgentService(options: {
         }
         if (mode === 'loop') {
           agent.loop = buildLoopState('failed', agent.loop, agent);
+        }
+        if (mode === 'review' && agent.review?.githubCheckRunId) {
+          // Interrupted review: cancel its in-progress check run (best-effort).
+          cancelReviewCheckRun(agent.agentId, agent.review);
         }
         changed = true;
       }

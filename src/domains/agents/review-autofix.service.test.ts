@@ -36,6 +36,10 @@ interface TestContext {
   createReviewAgentError: Error | null;
   /** True when the service factory omitted the review-agent factory. */
   reviewAgentFactoryMissing: boolean;
+  /** Captured check-run PATCH calls (id + input). */
+  checkUpdates: Array<{ checkRunId: number; input: Record<string, unknown> }>;
+  /** When set, check-run PATCH throws. */
+  updateCheckError: Error | null;
 }
 
 function finding(overrides: Partial<ReviewFindingRecord> = {}): ReviewFindingRecord {
@@ -138,6 +142,8 @@ function setup(options: {
     nextFixAgentId: 0,
     createReviewAgentError: null,
     reviewAgentFactoryMissing: false,
+    checkUpdates: [],
+    updateCheckError: null,
   };
 
   const repoManager = {
@@ -176,6 +182,24 @@ function setup(options: {
         throw new Error('branch listing failed');
       }
       return ctx.branches;
+    },
+    updateCheckRun: async (
+      _config: unknown,
+      _owner: string,
+      _repo: string,
+      checkRunId: number,
+      input: Record<string, unknown>,
+    ) => {
+      ctx.checkUpdates.push({ checkRunId, input });
+      if (ctx.updateCheckError) {
+        throw ctx.updateCheckError;
+      }
+      return {
+        id: checkRunId,
+        html_url: 'https://example.com/check/1',
+        status: 'completed',
+        conclusion: (input as { conclusion?: string }).conclusion ?? null,
+      };
     },
   } as unknown as GithubAppService;
 
@@ -1690,5 +1714,86 @@ describe('reconcileAutofixPlansOnStartup', () => {
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.batches[0].status, 'completed');
     assert.equal(plan?.batches[1].status, 'failed');
+  });
+});
+
+describe('maybeSucceedReviewCheck', () => {
+  function reviewWithCheck(review: Partial<Agent['review']> = {}): Partial<Agent['review']> {
+    return {
+      baseBranch: 'main',
+      headBranch: 'feature',
+      prNumber: 7,
+      githubCheckRunId: 555,
+      githubCheckHeadSha: 'sha123',
+      githubCheckConclusion: null,
+      ...review,
+    };
+  }
+
+  function setReview(ctx: TestContext, review: Partial<Agent['review']>): void {
+    const agent = ctx.repository.findById('review1');
+    if (agent) {
+      ctx.repository.update('review1', { review: { ...agent.review, ...review } as Agent['review'] });
+    }
+  }
+
+  it('patches the check to success when every finding is cleared', async () => {
+    const ctx = setup({
+      findings: [
+        finding({ fixStatus: 'fixed' }),
+        finding({ id: 'review1:finding:1', github: { ...finding().github, resolutionStatus: 'resolved', resolutionError: null, resolvedAt: 'x' } }),
+      ],
+    });
+    setReview(ctx, reviewWithCheck());
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.deepEqual(
+      ctx.checkUpdates.map((update) => [update.checkRunId, update.input.conclusion]),
+      [[555, 'success']],
+    );
+    assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, 'success');
+  });
+
+  it('is a no-op when an uncleared finding remains', async () => {
+    const ctx = setup({
+      findings: [
+        finding({ fixStatus: 'fixed' }),
+        finding({ id: 'review1:finding:1', fixStatus: 'available' }),
+      ],
+    });
+    setReview(ctx, reviewWithCheck());
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.equal(ctx.checkUpdates.length, 0);
+  });
+
+  it('is a no-op when the review has no check run id', async () => {
+    const ctx = setup({ findings: [finding({ fixStatus: 'fixed' })] });
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.equal(ctx.checkUpdates.length, 0);
+  });
+
+  it('is a no-op when the check already reached a terminal conclusion', async () => {
+    const ctx = setup({ findings: [finding({ fixStatus: 'fixed' })] });
+    setReview(ctx, reviewWithCheck({ githubCheckConclusion: 'cancelled' }));
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.equal(ctx.checkUpdates.length, 0);
+  });
+
+  it('keeps finding state authoritative when the PATCH fails', async () => {
+    const ctx = setup({ findings: [finding({ fixStatus: 'fixed' })] });
+    setReview(ctx, reviewWithCheck());
+    ctx.updateCheckError = new Error('checks unavailable');
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.equal(ctx.checkUpdates.length, 1);
+    assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, null);
   });
 });

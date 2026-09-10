@@ -11,6 +11,7 @@ import type { RepoService } from '../repos/repo.service';
 import type { GithubAppService } from '../../services/github-app';
 import { getLogger } from '../../lib/logger';
 import { buildFixAgentPrompt } from '../../lib/review-autofix-prompt';
+import { allFindingsCleared, checkOutputForComplete } from '../../lib/review-github-check';
 import { getAgentMode } from './agent.types';
 import { appendLog } from './worker/agent-state-writer';
 
@@ -119,6 +120,14 @@ export interface ReviewAutofixService {
    *   normal worker pipeline by the caller (restoreOnStartup re-enqueue).
    */
   reconcileAutofixPlansOnStartup: () => void;
+  /**
+   * Flips the review's GitHub check run to `success` when every finding is
+   * locally fixed or its thread is resolved. No-op without a check id, when
+   * the check already has a terminal conclusion, or when findings remain
+   * uncleared. PATCH failure is a logged warning; retry happens on the next
+   * successful resolve/fix.
+   */
+  maybeSucceedReviewCheck: (reviewAgentId: string) => Promise<void>;
 }
 
 export function createReviewAutofixService({
@@ -658,6 +667,7 @@ export function createReviewAutofixService({
       finding.github.resolutionError = null;
       finding.github.resolvedAt = new Date().toISOString();
       repository.writeReviewFindings(reviewAgentId, findings);
+      await maybeSucceedReviewCheck(reviewAgentId);
       return finding;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1259,6 +1269,7 @@ export function createReviewAutofixService({
         await resolveFindingThreadAfterFix(reviewAgentId, finding);
       }
       repository.writeReviewFindings(reviewAgentId, findings);
+      await maybeSucceedReviewCheck(reviewAgentId);
     } else {
       for (const finding of assignedFindings) {
         finding.fixStatus = 'failed';
@@ -1346,6 +1357,57 @@ export function createReviewAutofixService({
     }
   }
 
+  /**
+   * PATCHes the review's check run to `success` when every finding on the
+   * review is locally `fixed` or its GitHub thread is `resolved`. Non-fatal:
+   * finding state stays authoritative and a PATCH failure stays retryable.
+   */
+  async function maybeSucceedReviewCheck(reviewAgentId: string): Promise<void> {
+    const agent = repository.getAgent(reviewAgentId);
+    const review = agent.review;
+    const checkRunId = review?.githubCheckRunId;
+    if (!checkRunId) {
+      return;
+    }
+    if (
+      review?.githubCheckConclusion === 'success' ||
+      review?.githubCheckConclusion === 'failure' ||
+      review?.githubCheckConclusion === 'cancelled'
+    ) {
+      return;
+    }
+
+    const findings = repository.readReviewFindings(reviewAgentId) ?? [];
+    if (!allFindingsCleared(findings)) {
+      return;
+    }
+
+    const repo = repoManager.getRepo(agent.repoId);
+    const config = configRepository.load();
+    try {
+      await githubApp.updateCheckRun(config, repo.owner, repo.name, checkRunId, {
+        status: 'completed',
+        conclusion: 'success',
+        completedAt: new Date().toISOString(),
+        output: checkOutputForComplete({ conclusion: 'success', findings: [] }),
+      });
+      repository.update(reviewAgentId, {
+        review: { ...(review || {}), githubCheckConclusion: 'success' },
+      });
+      logAutofixEvent('check.succeeded', {
+        reviewAgentId,
+        findingIds: findings.map((entry) => entry.id),
+        detail: 'all findings cleared — check run flipped to success',
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      appendLog(
+        repository.getLogPath(reviewAgentId),
+        `Warning: flipping the check run to success failed — ${message}`,
+      );
+    }
+  }
+
   return {
     createManualFix,
     startAutomaticChain,
@@ -1355,5 +1417,6 @@ export function createReviewAutofixService({
     handleFixAgentFinished,
     scheduleVerificationReview,
     reconcileAutofixPlansOnStartup,
+    maybeSucceedReviewCheck,
   };
 }

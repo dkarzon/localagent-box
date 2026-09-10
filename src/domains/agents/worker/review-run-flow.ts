@@ -27,8 +27,15 @@ import {
 import { normalizeRepoAutofixSettings } from '../../repos/repo.repository';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
 import { loadRepoConfig } from './repo-config';
+import {
+  REVIEW_CHECK_NAME,
+  checkOutputForComplete,
+  checkOutputForInProgress,
+  conclusionForReviewComplete,
+} from '../../../lib/review-github-check';
 import type {
   AgentJob,
+  AgentReviewCheckConclusion,
   AgentReviewMetadata,
   AppConfig,
   ReviewAutofixPlan,
@@ -163,6 +170,118 @@ function materializeAutofixPlan(params: {
   };
 }
 
+/**
+ * Looks up the PR for the review's head branch and creates the
+ * `localagent-box / review` check run on the PR head SHA, before OCR.
+ *
+ * Returns the PR number, head SHA, and created check-run id (null when there
+ * is no matching PR or creation failed — both are non-fatal).
+ */
+async function startReviewCheck(
+  ctx: WorkerContext,
+  headBranch: string,
+): Promise<{
+  prNumber: number | null;
+  headSha: string | null;
+  checkRunId: number | null;
+}> {
+  const { config, githubApp, job, logPath, agentsStore } = ctx;
+  const repo = ctx.repo;
+  if (!repo) {
+    return { prNumber: null, headSha: null, checkRunId: null };
+  }
+
+  let prNumber: number | null = null;
+  let headSha: string | null = null;
+  try {
+    appendLog(logPath, `Searching for PR with head branch ${headBranch}`);
+    const pr = await githubApp.findPullRequestByHead(config, repo.owner, repo.name, headBranch);
+    if (pr && typeof pr.number === 'number') {
+      prNumber = pr.number;
+      headSha = pr.head?.sha || null;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(logPath, `Warning: PR lookup failed — ${message}`);
+    return { prNumber: null, headSha: null, checkRunId: null };
+  }
+
+  if (!prNumber || !headSha) {
+    appendLog(logPath, `No matching open PR with head SHA for branch ${headBranch}, skipping check`);
+    return { prNumber, headSha, checkRunId: null };
+  }
+
+  try {
+    appendLog(logPath, `Creating check run "${REVIEW_CHECK_NAME}" on ${headSha.slice(0, 7)}`);
+    const check = await githubApp.createCheckRun(config, repo.owner, repo.name, {
+      name: REVIEW_CHECK_NAME,
+      headSha,
+      status: 'in_progress',
+      startedAt: new Date().toISOString(),
+      output: checkOutputForInProgress(),
+    });
+    appendLog(logPath, `Check run created: id=${check.id}`);
+
+    const review: Partial<AgentReviewMetadata> = {
+      prNumber,
+      headSha,
+      githubCheckRunId: check.id,
+      githubCheckHeadSha: headSha,
+      githubCheckConclusion: null,
+    };
+    updateAgentRecord(agentsStore, job.agentId, { review: review as AgentReviewMetadata });
+    return { prNumber, headSha, checkRunId: check.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(logPath, `Warning: creating check run failed — ${message}`);
+    // Still persist prNumber/headSha so comment posting can reuse the lookup.
+    updateAgentRecord(agentsStore, job.agentId, {
+      review: { prNumber, headSha } as AgentReviewMetadata,
+    });
+    return { prNumber, headSha, checkRunId: null };
+  }
+}
+
+/**
+ * PATCHes the review's check run to a terminal state. Best-effort: failures
+ * are logged warnings and never affect the review's local outcome.
+ *
+ * `summaryOverride` replaces the default per-conclusion summary text (used by
+ * the worker crash path, which wants the actual error message).
+ */
+export async function completeReviewCheck(
+  ctx: WorkerContext,
+  checkRunId: number,
+  conclusion: AgentReviewCheckConclusion,
+  findings: ReviewFindingRecord[],
+  summaryMarkdown?: string | null,
+  summaryOverride?: string,
+): Promise<void> {
+  const { config, githubApp, logPath, agentsStore, job } = ctx;
+  const repo = ctx.repo;
+  if (!repo) {
+    return;
+  }
+  try {
+    const output = summaryOverride
+      ? checkOutputForComplete({ conclusion, findings: [], summary: summaryOverride })
+      : checkOutputForComplete({ conclusion, findings, summaryMarkdown });
+    await githubApp.updateCheckRun(config, repo.owner, repo.name, checkRunId, {
+      status: 'completed',
+      conclusion,
+      completedAt: new Date().toISOString(),
+      output,
+    });
+    appendLog(logPath, `Check run ${checkRunId} completed with ${conclusion}`);
+    updateAgentRecord(agentsStore, job.agentId, {
+      review: { githubCheckConclusion: conclusion } as AgentReviewMetadata,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(logPath, `Warning: updating check run ${checkRunId} failed — ${message}`);
+  }
+}
+
 export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   const { job, logPath, config, agentsStore, githubApp } = ctx;
 
@@ -239,7 +358,16 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
 
   const runConfig = resolveReviewRunConfig(config, job);
 
-  let ocrResult: OcrReviewEnvelope;
+  // PR lookup + check-run creation happen before OCR so the check appears as
+  // soon as the review starts. Both steps are non-fatal.
+  const started = await startReviewCheck(ctx, headBranch);
+  const foundPrNumber = started.prNumber;
+  let headSha = started.headSha;
+  const checkRunId = started.checkRunId;
+
+  let ocrResult: OcrReviewEnvelope | null = null;
+  let ocrFailed = false;
+  let ocrErrorMessage: string | null = null;
 
   try {
     writeOcrConfig(runConfig, job.workspaceDir);
@@ -258,28 +386,37 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(logPath, `OCR review failed: ${message}`);
+    ocrFailed = true;
+    ocrErrorMessage = message;
+  }
 
+  if (ocrFailed || !ocrResult) {
+    if (checkRunId) {
+      await completeReviewCheck(ctx, checkRunId, 'failure', [], null);
+    }
     updateAgentRecord(agentsStore, job.agentId, {
       status: 'failed',
       finishedAt: new Date().toISOString(),
-      error: message,
+      error: ocrErrorMessage,
     });
     return;
   }
+
+  const successfulOcrResult: OcrReviewEnvelope = ocrResult;
 
   let storedPath = '';
   try {
     const agentDir = path.join(job.dataDir, 'agents', job.agentId);
     fs.mkdirSync(agentDir, { recursive: true });
     storedPath = path.join(agentDir, 'review-result.json');
-    fs.writeFileSync(storedPath, JSON.stringify(ocrResult, null, 2));
+    fs.writeFileSync(storedPath, JSON.stringify(successfulOcrResult, null, 2));
     appendLog(logPath, `OCR result saved to ${storedPath}`);
 
-    if (ocrResult.session_id) {
+    if (successfulOcrResult.session_id) {
       try {
         const sessionDetail = await runOcrSessionShow({
           workspaceDir: job.workspaceDir,
-          sessionId: ocrResult.session_id,
+          sessionId: successfulOcrResult.session_id,
         });
         const sessionPath = path.join(agentDir, 'review-session.json');
         fs.writeFileSync(sessionPath, JSON.stringify(sessionDetail ?? {}, null, 2));
@@ -294,22 +431,6 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, `Warning: saving OCR result failed — ${message}`);
   }
 
-  let foundPrNumber: number | null = null;
-  let headSha: string | null = null;
-  const repo = ctx.repo;
-  if (repo) {
-    try {
-      appendLog(logPath, `Searching for PR with head branch ${headBranch}`);
-      const pr = await githubApp.findPullRequestByHead(config, repo.owner, repo.name, headBranch);
-      if (pr && typeof pr.number === 'number') {
-        foundPrNumber = pr.number;
-        headSha = pr.head?.sha || null;
-      }
-    } catch {
-      // non-fatal
-    }
-  }
-
   if (!headSha) {
     headSha = await resolveHeadSha(job.workspaceDir);
   }
@@ -317,7 +438,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   const findingsPath = path.join(job.dataDir, 'agents', job.agentId, 'review-findings.json');
   let findings: ReviewFindingRecord[] = [];
   try {
-    findings = normalizeReviewFindings(job.agentId, ocrResult, headSha);
+    findings = normalizeReviewFindings(job.agentId, successfulOcrResult, headSha);
     writeFindingsAtomic(findingsPath, findings);
     appendLog(logPath, `Persisted ${findings.length} structured finding(s)`);
   } catch (err) {
@@ -337,12 +458,26 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
 
   let githubReviewId: string | null = null;
   let githubWarning: string | null = null;
+  const repo = ctx.repo;
+
+  // Complete the check run before posting PR comments; comments can fail
+  // without rolling back the check.
+  if (checkRunId) {
+    const conclusion = conclusionForReviewComplete(findings);
+    await completeReviewCheck(
+      ctx,
+      checkRunId,
+      conclusion,
+      findings,
+      formatReviewSummaryMarkdown(successfulOcrResult),
+    );
+  }
 
   try {
     if (foundPrNumber && repo) {
       appendLog(logPath, `Posting review to GitHub for PR #${foundPrNumber}`);
-      const { lineComments, fileComments } = partitionReviewComments(ocrResult);
-      const reviewBody = formatReviewSummaryMarkdown(ocrResult);
+      const { lineComments, fileComments } = partitionReviewComments(successfulOcrResult);
+      const reviewBody = formatReviewSummaryMarkdown(successfulOcrResult);
 
       if (lineComments.length > 0) {
         appendLog(
@@ -394,7 +529,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           repo.name,
           foundPrNumber,
           {
-            body: formatReviewMarkdown(ocrResult),
+            body: formatReviewMarkdown(successfulOcrResult),
             event: 'COMMENT',
           },
         );
@@ -516,7 +651,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, `Warning: ${githubWarning}`);
   }
 
-  const tokenUsage = extractOcrTokenUsage(ocrResult);
+  const tokenUsage = extractOcrTokenUsage(successfulOcrResult);
   if (tokenUsage) {
     appendLog(
       logPath,
@@ -553,6 +688,11 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, `Warning: materializing autofix plan failed — ${message}`);
   }
 
+  const finishedRecord = readAgentRecord(agentsStore, job.agentId);
+  const preservedCheckFields: Partial<AgentReviewMetadata> = finishedRecord?.review?.githubCheckConclusion
+    ? { githubCheckConclusion: finishedRecord.review.githubCheckConclusion }
+    : {};
+
   updateAgentRecord(agentsStore, job.agentId, {
     status: 'completed',
     finishedAt: new Date().toISOString(),
@@ -579,6 +719,9 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       prNumber: foundPrNumber ?? null,
       headSha: headSha ?? null,
       githubReviewId,
+      githubCheckRunId: checkRunId,
+      githubCheckHeadSha: checkRunId ? headSha : null,
+      ...preservedCheckFields,
       ...verificationMeta,
     },
   });

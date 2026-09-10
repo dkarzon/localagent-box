@@ -161,6 +161,12 @@ function makeFlowHarness(root: string, expectedSha: string | null): FlowHarness 
     agentsStore,
     githubApp: {
       findPullRequestByHead: async () => null,
+      createCheckRun: async () => {
+        throw new Error('not implemented');
+      },
+      updateCheckRun: async () => {
+        throw new Error('not implemented');
+      },
       createPullRequestReview: async () => ({ id: '1', html_url: 'x' }),
       createPullRequestReviewComment: async () => ({ id: '2', html_url: 'x' }),
       listPullRequestReviewComments: async () => postedReviewComments,
@@ -628,5 +634,191 @@ describe('runReviewJob verification metadata persistence', () => {
     assert.equal(review!.purpose, undefined);
     assert.equal(review!.autofixIneligible, undefined);
     assert.equal(review!.sourceReviewAgentId, undefined);
+  });
+});
+
+describe('runReviewJob check-run lifecycle', () => {
+  interface CheckHarness extends FlowHarness {
+    checkRequests: Array<{ path: string; method: string; body: Record<string, unknown> }>;
+  }
+
+  function makeCheckHarness(
+    root: string,
+    options: {
+      pr?: { number: number; head: { sha: string } } | null;
+      createCheckError?: Error;
+    } = {},
+  ): CheckHarness {
+    const harness = makeFlowHarness(root, null);
+    (harness.ctx as { repo: unknown }).repo = {
+      repoId: 'r1',
+      owner: 'o',
+      name: 'n',
+      defaultBranch: 'main',
+      cloneUrl: '',
+      registeredAt: '',
+      lastVerifiedAt: null,
+      lastVerifyStatus: null,
+      lastVerifyMessage: null,
+      autoReviewPullRequests: null,
+    };
+
+    const checkRequests: CheckHarness['checkRequests'] = [];
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.findPullRequestByHead = async () =>
+      options.pr === undefined ? null : (options.pr ?? null);
+    githubApp.createCheckRun = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      input: { name: string; headSha: string; status: string },
+    ) => {
+      checkRequests.push({
+        path: '/check-runs',
+        method: 'POST',
+        body: input as unknown as Record<string, unknown>,
+      });
+      if (options.createCheckError) {
+        throw options.createCheckError;
+      }
+      return { id: 555, html_url: 'https://github.com/o/n/checks/555', status: 'in_progress', conclusion: null };
+    };
+    githubApp.updateCheckRun = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      checkRunId: number,
+      input: { status?: string; conclusion?: string },
+    ) => {
+      checkRequests.push({
+        path: `/check-runs/${checkRunId}`,
+        method: 'PATCH',
+        body: input as unknown as Record<string, unknown>,
+      });
+      return { id: checkRunId, html_url: 'x', status: 'completed', conclusion: input.conclusion ?? null };
+    };
+
+    return { ...harness, checkRequests };
+  }
+
+  it('creates the check before OCR and completes it with action_required', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [{ content: 'Fix this', severity: 'high', path: 'a.ts', start_line: 1 }],
+    });
+
+    const harness = makeCheckHarness(root, { pr: { number: 7, head: { sha: 'sha123' } } });
+
+    await runReviewJob(harness.ctx);
+
+    assert.deepEqual(
+      harness.checkRequests.map((request) => `${request.method} ${request.path}`),
+      ['POST /check-runs', 'PATCH /check-runs/555'],
+    );
+    const create = harness.checkRequests[0]!.body;
+    assert.equal(create.name, 'localagent-box / review');
+    assert.equal(create.headSha, 'sha123');
+    assert.equal(create.status, 'in_progress');
+    const patch = harness.checkRequests[1]!.body;
+    assert.equal(patch.status, 'completed');
+    assert.equal(patch.conclusion, 'action_required');
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.review?.githubCheckRunId, 555);
+    assert.equal(agent?.review?.githubCheckHeadSha, 'sha123');
+    assert.equal(agent?.review?.githubCheckConclusion, 'action_required');
+    assert.equal(agent?.review?.prNumber, 7);
+  });
+
+  it('completes with success when the review has no findings', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, { status: 'ok', comments: [] });
+
+    const harness = makeCheckHarness(root, { pr: { number: 7, head: { sha: 'sha123' } } });
+
+    await runReviewJob(harness.ctx);
+
+    const patch = harness.checkRequests.find((request) => request.method === 'PATCH');
+    assert.ok(patch);
+    assert.equal(patch.body.conclusion, 'success');
+  });
+
+  it('completes with failure when OCR fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'nonexistent-ocr');
+
+    const harness = makeCheckHarness(root, { pr: { number: 7, head: { sha: 'sha123' } } });
+
+    await runReviewJob(harness.ctx);
+
+    const patch = harness.checkRequests.find((request) => request.method === 'PATCH');
+    assert.ok(patch);
+    assert.equal(patch.body.conclusion, 'failure');
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.status, 'failed');
+  });
+
+  it('skips the check when no PR matches', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, { status: 'ok', comments: [] });
+
+    const harness = makeCheckHarness(root, { pr: null });
+
+    await runReviewJob(harness.ctx);
+
+    assert.equal(harness.checkRequests.length, 0);
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.review?.githubCheckRunId ?? null, null);
+  });
+
+  it('continues without a check when creation fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, { status: 'ok', comments: [] });
+
+    const harness = makeCheckHarness(root, {
+      pr: { number: 7, head: { sha: 'sha123' } },
+      createCheckError: new Error('This app does not have access to checks'),
+    });
+
+    await runReviewJob(harness.ctx);
+
+    assert.deepEqual(
+      harness.checkRequests.map((request) => request.method),
+      ['POST'],
+    );
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.status, 'completed');
+    assert.equal(agent?.review?.githubCheckRunId ?? null, null);
+    assert.equal(agent?.review?.prNumber, 7);
+
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(log.includes('creating check run failed'));
+    assert.ok(log.includes('Review agent completed successfully'));
   });
 });

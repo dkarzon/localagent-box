@@ -151,10 +151,13 @@ On startup the host reconciles every persisted plan without creating agents: a q
 
 Thread resolution uses the GraphQL `resolveReviewThread` mutation, so the GitHub App needs **Pull requests: Read and write** (REST review/comment posting) plus GraphQL access with the installation token. Resolution failures never change the fix agent's coding result; the finding stays retryable.
 
+Review check runs additionally need **Checks: Read and write** (see [github-app-setup.md](./github-app-setup.md)). When every finding on a review is fixed or its thread resolved, the review's check run is flipped to `success`; a PATCH failure is a warning and the next resolve/fix retries it.
+
 ## GitHub output
 
 When a PR matches `headBranch`:
 
+- **Check run** — a `localagent-box / review` check run is created on the PR head SHA before the review starts and completed when it finishes (see below)
 - **Summary** — markdown body on the PR review (`formatReviewSummaryMarkdown`), including a **Severity & categories** breakdown table
 - **Line comments** — inline on changed lines when OCR returns path/line data; each comment body leads with severity and category badges (e.g. `🔴 **critical** · 🔒 Security`)
 - **File comments** — file-level notes when OCR returns file-scoped findings without line numbers (same badges)
@@ -168,7 +171,23 @@ OCR classifies every finding with a `category` (`bug`, `security`, `performance`
 
 If line comments fail (e.g. stale diff), the worker retries with summary-only. If GitHub posting fails entirely, the review session still completes with `result.warning` in logs.
 
-If no PR exists for the head branch, OCR still runs and results are saved locally; GitHub posting is skipped.
+If no PR exists for the head branch, OCR still runs and results are saved locally; GitHub posting and the check run are skipped.
+
+### Check run lifecycle
+
+The review is reported as a GitHub **check run** (Checks API) named `localagent-box / review` on the PR head SHA, so operators can add it as a required status check in branch protection.
+
+| Review outcome | Check state |
+|----------------|-------------|
+| Review starts | `in_progress` (created after workspace prepare, before OCR) |
+| Review completes with no findings | `completed` / `success` |
+| Review completes with findings | `completed` / `action_required` |
+| OCR/worker failure | `completed` / `failure` |
+| Cancelled or interrupted (restart) | `completed` / `cancelled` |
+| Every finding later fixed locally or its thread resolved | the same check run is PATCHed to `success` |
+| Autofix pushes a new SHA | the next review (usually verification) creates a new check on the new SHA |
+
+Check-run creation/update errors are non-fatal: the review still runs and posts PR comments; a warning is logged. Until the GitHub App's **Checks: Read and write** permission is accepted by the installation, `POST /check-runs` returns 403 and no check appears.
 
 ## Failure semantics
 
@@ -203,6 +222,6 @@ Match the version pinned in the [Dockerfile](../Dockerfile). Ensure `ocr` is on 
 
 ## Related
 
-- [github-app-setup.md](./github-app-setup.md) — GitHub App needs pull request read/write for posting reviews
+- [github-app-setup.md](./github-app-setup.md) — GitHub App needs pull request and Checks read/write for posting reviews and check runs
 - [repo-config.md](./repo-config.md) — per-repo `reviewBackground`
 - [README.md](../README.md) — full API reference and agent modes

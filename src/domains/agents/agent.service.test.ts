@@ -169,6 +169,15 @@ function createTestContext(options?: {
       throw new Error('not implemented');
     },
     findPullRequestByHead: async () => null,
+    createCheckRun: async () => {
+      throw new Error('not implemented');
+    },
+    updateCheckRun: async (_config, _owner, _repoName, checkRunId) => ({
+      id: checkRunId,
+      html_url: 'https://example.com/check/1',
+      status: 'completed',
+      conclusion: null,
+    }),
     createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
     createPullRequestReviewComment: async () => ({ id: '2', html_url: 'https://example.com/review/comment/2' }),
     listPullRequestReviewComments: async () => [],
@@ -1703,3 +1712,66 @@ describe('restoreOnStartup', () => {
   });
 });
 
+
+describe('review check-run reconciliation', () => {
+  async function flushAsync(): Promise<void> {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  function reviewWithCheck(): Agent['review'] {
+    return {
+      baseBranch: 'main',
+      headBranch: 'feature',
+      prNumber: 7,
+      headSha: 'sha123',
+      githubCheckRunId: 555,
+      githubCheckHeadSha: 'sha123',
+      githubCheckConclusion: null,
+    };
+  }
+
+  it('cancelAgent PATCHes the review check run to cancelled', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewcxl01';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'running',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    const updated = service.cancelAgent(agentId);
+
+    assert.equal(updated.status, 'cancelled');
+    await flushAsync();
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
+  it('restoreOnStartup PATCHes cancelled for interrupted review agents', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewintr01';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'running',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    service.restoreOnStartup();
+
+    const failed = service.getAgent(agentId);
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error || '', /Server restarted/);
+    await flushAsync();
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+});

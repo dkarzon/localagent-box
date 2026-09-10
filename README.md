@@ -155,7 +155,7 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 
 ## GitHub App setup
 
-Agents authenticate to GitHub as an installed **GitHub App** (no PAT or SSH key). See [docs/github-app-setup.md](./docs/github-app-setup.md) for step-by-step instructions: creating the app, scoping permissions (Contents + Pull requests, read/write), installing it on your repos, generating a private key, and wiring the resulting `githubAppId` / `githubAppInstallationId` / `githubAppPrivateKey` into Settings.
+Agents authenticate to GitHub as an installed **GitHub App** (no PAT or SSH key). See [docs/github-app-setup.md](./docs/github-app-setup.md) for step-by-step instructions: creating the app, scoping permissions (Contents + Pull requests + Checks, read/write), installing it on your repos, generating a private key, and wiring the resulting `githubAppId` / `githubAppInstallationId` / `githubAppPrivateKey` into Settings.
 
 ## Security
 
@@ -179,6 +179,8 @@ Read [SECURITY.md](./SECURITY.md) before deploying anywhere beyond a local trial
 | Agent finishes but no PR appears | `push` was `false`, or the OpenCode run didn't produce a commit — batch/loop runs fail if nothing was committed; check `GET /agents/:id/logs` |
 | Review agent fails immediately | Ollama not configured or unreachable — OCR requires `ollamaBaseUrl`; check Settings and [docs/code-review.md](./docs/code-review.md) |
 | Review completes but nothing on GitHub | No PR exists for `headBranch`, or GitHub App lacks pull request write — check logs for "No matching PR" or GitHub warnings |
+| The `localagent-box / review` check is missing on PRs | The installation hasn't accepted the **Checks: Read and write** permission — update the app's permissions and re-approve the installation (GitHub notifies the owner); reviews still complete without it |
+| The `localagent-box / review` check is stuck `in_progress` | The server was restarted mid-review — startup reconciliation cancels interrupted reviews' checks; if one remains, retry the review (a new check run replaces it) |
 | `npm install` hangs or loops | Use `npm install --ignore-scripts` at the repo root, then `npm install --prefix client` separately (see [Install dependencies](#install-dependencies)) |
 
 For anything else, check `GET /agents/:id/logs` and `GET /agents/:id/events` for the failing session, and [SECURITY.md](./SECURITY.md) if the question is auth/network-related.

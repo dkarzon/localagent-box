@@ -12,7 +12,7 @@ import { runLoopJob } from '../../domains/agents/worker/loop-run-flow';
 import { createWorkerContext, getAgentMode } from '../../domains/agents/worker/worker-context';
 import { prepareWorkspace } from '../../domains/agents/worker/workspace-setup';
 import { runInteractiveSession } from '../../domains/agents/worker/interactive-session';
-import { runReviewJob } from '../../domains/agents/worker/review-run-flow';
+import { runReviewJob, completeReviewCheck } from '../../domains/agents/worker/review-run-flow';
 
 export async function runJob(job: AgentJob): Promise<void> {
   const ctx = await createWorkerContext(job);
@@ -83,6 +83,28 @@ async function main(): Promise<void> {
       if (mode === 'loop') {
         agents[index].loop = buildLoopState('failed', agents[index].loop, agents[index]);
       }
+      const review = agents[index].review;
+      const checkRunId = review?.githubCheckRunId;
+      const checkConcluded =
+        review?.githubCheckConclusion != null || review?.githubCheckRunId == null;
+      agentsStore.save({ agents });
+
+      // An in-flight review check must not stay stuck; the worker is dying
+      // after creating it, so PATCH failure best-effort (fire-and-forget).
+      if (checkRunId && !checkConcluded) {
+        const checkCtx = await createWorkerContext(job).catch(() => null);
+        if (checkCtx) {
+          void completeReviewCheck(
+            checkCtx,
+            checkRunId,
+            'failure',
+            [],
+            null,
+            `Worker error: ${message}`,
+          );
+        }
+      }
+    } else {
       agentsStore.save({ agents });
     }
 
