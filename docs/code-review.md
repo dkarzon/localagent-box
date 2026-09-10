@@ -92,7 +92,7 @@ Review-specific create fields:
 
 `push` defaults to `false`; review agents do not commit. `useExistingBranch` is forced to `true` for review mode.
 
-Poll `GET /api/v1/agents/<reviewAgentId>` — `agent.review` includes `baseBranch`, `headBranch`, `prNumber`, `headSha`, `githubReviewId`, and `ocrResultPath`.
+Poll `GET /api/v1/agents/<reviewAgentId>` — `agent.review` includes `baseBranch`, `headBranch`, `prNumber`, `headSha`, `githubReviewId`, `ocrResultPath`, plus the check-run fields `githubCheckRunId`, `githubCheckHeadSha`, and `githubCheckConclusion`.
 
 ## Review background context
 

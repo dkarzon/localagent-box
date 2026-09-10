@@ -2,7 +2,7 @@
 
 Report each localagent-box review as a GitHub **check run** on the PR head SHA. Operators can add `localagent-box / review` as a required status check. Existing PR review comments stay as they are; checks are additive.
 
-**Status:** Planned
+**Status:** Done
 
 **Related:** [pr-code-review.plan.md](./pr-code-review.plan.md), [code-review.md](../code-review.md), [github-app-setup.md](../github-app-setup.md)
 
@@ -204,10 +204,7 @@ Do not create a new check on the post-autofix SHA here. That is the verification
 
 ### 7. Docs
 
-- `docs/github-app-setup.md` — Checks read/write row + re-approve installations
-- `docs/code-review.md` — check lifecycle, conclusions, required-check name
-- `README.md` — troubleshooting: check missing → permission not accepted; check stuck → restart reconcile
-- `SECURITY.md` — mention Checks in the minimum-permission list
+**Status:** Done — `docs/github-app-setup.md` (Checks row + troubleshooting entry), `docs/code-review.md` (check lifecycle section, conclusions, required-check name, `agent.review` check fields), `README.md` (missing + stuck `in_progress` troubleshooting rows, permissions mention), and `SECURITY.md` (minimum-permission list includes checks).
 
 No Settings UI. No webhook work (still Phase 2 of the original review plan).
 
