@@ -181,6 +181,8 @@ Do not create a check for clone/checkout failures in `prepareWorkspace` (review 
 
 ### 5. Flip to success after findings clear
 
+**Status:** Done — `maybeSucceedReviewCheck` in `review-autofix.service.ts`, called from the autofix exit path (`handleFixAgentFinished`, covers manual + automatic fix agents), `retryFindingResolution`, and covered by tests (direct no-op/guards plus manual-fix integration).
+
 Call a shared `maybeSucceedReviewCheck(reviewAgentId)` from:
 
 - Autofix after a successful push marks findings `fixed` and resolves threads (`review-autofix.service.ts`)

@@ -1237,6 +1237,55 @@ describe('handleFixAgentStarted / handleFixAgentFinished', () => {
     assert.deepEqual(ctx.calls.resolved, ['thread-1']);
   });
 
+  it('a successful manual fix on the last uncleared finding flips the check run to success', async () => {
+    const ctx = setup({ findings: [automaticFinding(0)] });
+    ctx.branches = ['feature'];
+    ctx.lookupResult = { threadId: 'thread-1', isResolved: false };
+    const reviewAgent = ctx.repository.findById('review1')!;
+    ctx.repository.update('review1', {
+      review: {
+        ...reviewAgent.review,
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
+      } as Agent['review'],
+    });
+    const result = await ctx.service.createManualFix('review1', 'review1:finding:0');
+    ctx.service.handleFixAgentStarted(result.agent.agentId);
+
+    setTerminalStatus(ctx.repository, result.agent.agentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    assert.deepEqual(
+      ctx.checkUpdates.map((update) => [update.checkRunId, update.input.conclusion]),
+      [[555, 'success']],
+    );
+    assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, 'success');
+  });
+
+  it('a partial manual fix leaves the check run untouched while another finding remains', async () => {
+    const ctx = setup({ findings: [automaticFinding(0), automaticFinding(1)] });
+    ctx.branches = ['feature'];
+    ctx.lookupResult = { threadId: 'thread-1', isResolved: false };
+    const reviewAgent = ctx.repository.findById('review1')!;
+    ctx.repository.update('review1', {
+      review: {
+        ...reviewAgent.review,
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
+      } as Agent['review'],
+    });
+    const result = await ctx.service.createManualFix('review1', 'review1:finding:0');
+    ctx.service.handleFixAgentStarted(result.agent.agentId);
+
+    setTerminalStatus(ctx.repository, result.agent.agentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    assert.equal(ctx.checkUpdates.length, 0);
+    assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, null);
+  });
+
   it('is a no-op for agents without autofix metadata', async () => {
     const ctx = setup({ findings: [automaticFinding(0)] });
     const unrelated = {
