@@ -186,6 +186,7 @@ The review is reported as a GitHub **check run** (Checks API) named `localagent-
 | Cancelled or interrupted (restart) | `completed` / `cancelled` |
 | Every finding later fixed locally or its thread resolved | the same check run is PATCHed to `success` |
 | Autofix pushes a new SHA | the next review (usually verification) creates a new check on the new SHA |
+| Review retried after failure/cancel | retry clears the stale check metadata; the new run creates a fresh check on the current head SHA (same name — GitHub uses the latest run for required checks) |
 
 Check-run creation/update errors are non-fatal: the review still runs and posts PR comments; a warning is logged. Until the GitHub App's **Checks: Read and write** permission is accepted by the installation, `POST /check-runs` returns 403 and no check appears.
 

@@ -835,6 +835,20 @@ export function createAgentService(options: {
     if (mode === 'loop') {
       patch.loop = buildLoopState('queued');
     }
+    if (mode === 'review') {
+      // The next runReviewJob creates a fresh check run (same name + SHA; GitHub
+      // uses the latest run for required checks). Clear the previous attempt's
+      // check fields so cancel/restart logic cannot PATCH stale state, and so
+      // the final record reflects only this run's check.
+      patch.review = {
+        ...agent.review,
+        baseBranch: agent.review?.baseBranch ?? null,
+        headBranch: agent.review?.headBranch ?? null,
+        githubCheckRunId: null,
+        githubCheckHeadSha: null,
+        githubCheckConclusion: null,
+      };
+    }
 
     repository.update(agentId, patch);
     appendLog(repository.getLogPath(agentId), 'Retry requested — re-queued');

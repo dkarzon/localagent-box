@@ -200,7 +200,7 @@ Do not create a new check on the post-autofix SHA here. That is the verification
 
 ### 6. Retry of a failed/cancelled review
 
-`retryAgent` re-queues the same agent. On the next `runReviewJob`, create a **new** check run and overwrite `githubCheckRunId`. Same name + SHA: GitHub uses the latest run for required checks.
+**Status:** Done — `retryAgent` clears the previous attempt's `githubCheckRunId` / `githubCheckHeadSha` / `githubCheckConclusion` before re-queueing (so cancel/restart logic cannot PATCH a stale check), and the next `runReviewJob` creates a **new** check run via `startReviewCheck`, overwriting `githubCheckRunId`. The final record's preserved `githubCheckConclusion` now only comes from the check this run created. Same name + SHA: GitHub uses the latest run for required checks.
 
 ### 7. Docs
 

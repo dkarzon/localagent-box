@@ -749,9 +749,15 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   }
 
   const finishedRecord = readAgentRecord(agentsStore, job.agentId);
-  const preservedCheckFields: Partial<AgentReviewMetadata> = finishedRecord?.review?.githubCheckConclusion
-    ? { githubCheckConclusion: finishedRecord.review.githubCheckConclusion }
-    : {};
+  // A retry overwrites the previous attempt's check id in startReviewCheck;
+  // the preserved conclusion must belong to this run's check, not a stale
+  // one from an earlier attempt (which also PATCHed its own terminal state).
+  const preservedCheckFields: Partial<AgentReviewMetadata> =
+    checkRunId && finishedRecord?.review?.githubCheckRunId === checkRunId
+      ? finishedRecord.review.githubCheckConclusion
+        ? { githubCheckConclusion: finishedRecord.review.githubCheckConclusion }
+        : {}
+      : {};
 
   updateAgentRecord(agentsStore, job.agentId, {
     status: 'completed',

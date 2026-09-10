@@ -1795,4 +1795,46 @@ describe('review check-run reconciliation', () => {
     await flushAsync();
     assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
   });
+
+  it('retryAgent clears stale check-run metadata from the previous attempt', () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewretry01';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'failed',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    const retried = service.retryAgent(agentId);
+
+    assert.equal(retried.status, 'queued');
+    const review = repository.findById(agentId)?.review;
+    assert.equal(review?.githubCheckRunId ?? null, null);
+    assert.equal(review?.githubCheckHeadSha ?? null, null);
+    assert.equal(review?.githubCheckConclusion ?? null, null);
+    // Non-check review metadata must survive the retry.
+    assert.equal(review?.baseBranch, 'main');
+    assert.equal(review?.headBranch, 'feature');
+    assert.equal(review?.prNumber, 7);
+    assert.equal(review?.headSha, 'sha123');
+  });
+
+  it('retryAgent leaves non-review agents untouched by check metadata resets', () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'batchretry01';
+    seedAgent(
+      repository,
+      baseAgentFields({ agentId, mode: 'batch', status: 'failed', agentBranch: 'feature' }),
+    );
+
+    const retried = service.retryAgent(agentId);
+
+    assert.equal(retried.status, 'queued');
+    assert.equal(repository.findById(agentId)?.review, undefined);
+  });
 });
