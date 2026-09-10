@@ -647,6 +647,7 @@ describe('runReviewJob check-run lifecycle', () => {
     options: {
       pr?: { number: number; head: { sha: string } } | null;
       createCheckError?: Error;
+      lookupError?: Error;
     } = {},
   ): CheckHarness {
     const harness = makeFlowHarness(root, null);
@@ -665,8 +666,12 @@ describe('runReviewJob check-run lifecycle', () => {
 
     const checkRequests: CheckHarness['checkRequests'] = [];
     const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
-    githubApp.findPullRequestByHead = async () =>
-      options.pr === undefined ? null : (options.pr ?? null);
+    githubApp.findPullRequestByHead = async () => {
+      if (options.lookupError) {
+        throw options.lookupError;
+      }
+      return options.pr === undefined ? null : (options.pr ?? null);
+    };
     githubApp.createCheckRun = async (
       _config: unknown,
       _owner: string,
@@ -820,5 +825,88 @@ describe('runReviewJob check-run lifecycle', () => {
     const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
     assert.ok(log.includes('creating check run failed'));
     assert.ok(log.includes('Review agent completed successfully'));
+  });
+
+  it('preserves pre-existing review metadata when the check is created and OCR fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'nonexistent-ocr');
+
+    const harness = makeCheckHarness(root, { pr: { number: 7, head: { sha: 'sha123' } } });
+    const stored = harness.agentsStore.load();
+    for (const agent of stored.agents) {
+      agent.review = {
+        baseBranch: 'main',
+        headBranch: 'feature',
+        purpose: 'verification',
+        autofixIneligible: true,
+        sourceReviewAgentId: 'review1',
+      };
+    }
+    harness.agentsStore.save(stored);
+
+    await runReviewJob(harness.ctx);
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.status, 'failed');
+    const review = agent?.review;
+    assert.equal(review?.purpose, 'verification', 'verification metadata must survive');
+    assert.equal(review?.autofixIneligible, true);
+    assert.equal(review?.sourceReviewAgentId, 'review1');
+    assert.equal(review?.baseBranch, 'main');
+    assert.equal(review?.githubCheckRunId, 555);
+    assert.equal(review?.githubCheckHeadSha, 'sha123');
+    assert.equal(review?.githubCheckConclusion, 'failure');
+    assert.equal(review?.prNumber, 7);
+    assert.equal(review?.headSha, 'sha123');
+  });
+
+  it('retries the PR lookup for comment posting when the pre-OCR lookup failed', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, { status: 'ok', comments: [] });
+
+    const harness = makeCheckHarness(root, {
+      pr: { number: 7, head: { sha: 'sha123' } },
+      lookupError: new Error('GitHub down'),
+    });
+
+    let lookupCount = 0;
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.findPullRequestByHead = async () => {
+      lookupCount += 1;
+      if (lookupCount === 1) {
+        throw new Error('GitHub down');
+      }
+      return { number: 7, head: { sha: 'sha123' } };
+    };
+
+    const postedBodies: Array<Record<string, unknown>> = [];
+    githubApp.createPullRequestReview = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      _prNumber: number,
+      input: Record<string, unknown>,
+    ) => {
+      postedBodies.push(input);
+      return { id: '9', html_url: 'x' };
+    };
+
+    await runReviewJob(harness.ctx);
+
+    assert.equal(lookupCount, 2, 'PR lookup should be retried after the transient failure');
+    assert.equal(postedBodies.length, 1, 'review comments should post after the retry');
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.status, 'completed');
+    assert.equal(agent?.review?.prNumber, 7);
   });
 });

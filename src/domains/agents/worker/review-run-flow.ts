@@ -184,12 +184,16 @@ async function startReviewCheck(
   prNumber: number | null;
   headSha: string | null;
   checkRunId: number | null;
+  lookupFailed: boolean;
 }> {
   const { config, githubApp, job, logPath, agentsStore } = ctx;
   const repo = ctx.repo;
   if (!repo) {
-    return { prNumber: null, headSha: null, checkRunId: null };
+    return { prNumber: null, headSha: null, checkRunId: null, lookupFailed: false };
   }
+  // The pre-existing review metadata must survive every persist below.
+  const agentRecord = readAgentRecord(agentsStore, job.agentId);
+  const existingReview = agentRecord?.review ?? null;
 
   let prNumber: number | null = null;
   let headSha: string | null = null;
@@ -203,12 +207,12 @@ async function startReviewCheck(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(logPath, `Warning: PR lookup failed — ${message}`);
-    return { prNumber: null, headSha: null, checkRunId: null };
+    return { prNumber: null, headSha: null, checkRunId: null, lookupFailed: true };
   }
 
   if (!prNumber || !headSha) {
     appendLog(logPath, `No matching open PR with head SHA for branch ${headBranch}, skipping check`);
-    return { prNumber, headSha, checkRunId: null };
+    return { prNumber, headSha, checkRunId: null, lookupFailed: false };
   }
 
   try {
@@ -229,16 +233,18 @@ async function startReviewCheck(
       githubCheckHeadSha: headSha,
       githubCheckConclusion: null,
     };
-    updateAgentRecord(agentsStore, job.agentId, { review: review as AgentReviewMetadata });
-    return { prNumber, headSha, checkRunId: check.id };
+    updateAgentRecord(agentsStore, job.agentId, {
+      review: { ...existingReview, ...review } as AgentReviewMetadata,
+    });
+    return { prNumber, headSha, checkRunId: check.id, lookupFailed: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(logPath, `Warning: creating check run failed — ${message}`);
     // Still persist prNumber/headSha so comment posting can reuse the lookup.
     updateAgentRecord(agentsStore, job.agentId, {
-      review: { prNumber, headSha } as AgentReviewMetadata,
+      review: { ...existingReview, prNumber, headSha } as AgentReviewMetadata,
     });
-    return { prNumber, headSha, checkRunId: null };
+    return { prNumber, headSha, checkRunId: null, lookupFailed: false };
   }
 }
 
@@ -273,8 +279,12 @@ export async function completeReviewCheck(
       output,
     });
     appendLog(logPath, `Check run ${checkRunId} completed with ${conclusion}`);
+    const finishedRecord = readAgentRecord(agentsStore, job.agentId);
     updateAgentRecord(agentsStore, job.agentId, {
-      review: { githubCheckConclusion: conclusion } as AgentReviewMetadata,
+      review: {
+        ...finishedRecord?.review,
+        githubCheckConclusion: conclusion,
+      } as AgentReviewMetadata,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -361,9 +371,10 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   // PR lookup + check-run creation happen before OCR so the check appears as
   // soon as the review starts. Both steps are non-fatal.
   const started = await startReviewCheck(ctx, headBranch);
-  const foundPrNumber = started.prNumber;
+  let foundPrNumber = started.prNumber;
   let headSha = started.headSha;
   const checkRunId = started.checkRunId;
+  const prLookupFailed = started.lookupFailed;
 
   let ocrResult: OcrReviewEnvelope | null = null;
   let ocrFailed = false;
@@ -459,6 +470,29 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   let githubReviewId: string | null = null;
   let githubWarning: string | null = null;
   const repo = ctx.repo;
+
+  // Retry the PR lookup when the pre-OCR lookup failed (transient GitHub
+  // error) so comment posting is not permanently skipped by a hiccup.
+  if (!foundPrNumber && prLookupFailed && repo && ctx.repo) {
+    appendLog(logPath, `Retrying PR lookup for head branch ${headBranch}`);
+    try {
+      const pr = await githubApp.findPullRequestByHead(
+        ctx.config,
+        ctx.repo.owner,
+        ctx.repo.name,
+        headBranch,
+      );
+      if (pr && typeof pr.number === 'number') {
+        foundPrNumber = pr.number;
+        if (!headSha) {
+          headSha = pr.head?.sha || null;
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      appendLog(logPath, `Warning: PR lookup retry failed — ${message}`);
+    }
+  }
 
   // Complete the check run before posting PR comments; comments can fail
   // without rolling back the check.
