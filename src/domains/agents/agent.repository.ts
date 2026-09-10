@@ -138,7 +138,9 @@ export function createAgentRepository(options: {
   }
 
   function readJsonArrayFile<T>(agentId: string, filePath: string): T[] | null {
-    getAgent(agentId);
+    if (!findById(agentId)) {
+      return null;
+    }
     if (!fsImpl.existsSync(filePath)) {
       return null;
     }
