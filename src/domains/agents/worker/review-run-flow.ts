@@ -38,6 +38,7 @@ import type {
   AgentReviewCheckConclusion,
   AgentReviewMetadata,
   AppConfig,
+  Repo,
   ReviewAutofixPlan,
   ReviewFindingRecord,
 } from '../../../types';
@@ -171,6 +172,25 @@ function materializeAutofixPlan(params: {
 }
 
 /**
+ * Reads a repo from the worker's repos store without the full repo service.
+ * Used by paths that need `owner`/`name` for GitHub calls on a context that
+ * never ran `prepareWorkspace` (worker crash path). Returns null when the
+ * repo record is missing or unreadable.
+ */
+function readRepoFromStore(job: Pick<AgentJob, 'dataDir' | 'repoId'>): Repo | null {
+  try {
+    const reposPath = path.join(job.dataDir, 'repos.json');
+    if (!fs.existsSync(reposPath)) {
+      return null;
+    }
+    const raw = JSON.parse(fs.readFileSync(reposPath, 'utf8')) as { repos?: Repo[] };
+    return raw.repos?.find((entry) => entry.repoId === job.repoId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Looks up the PR for the review's head branch and creates the
  * `localagent-box / review` check run on the PR head SHA, before OCR.
  *
@@ -264,7 +284,13 @@ export async function completeReviewCheck(
   summaryOverride?: string,
 ): Promise<void> {
   const { config, githubApp, logPath, agentsStore, job } = ctx;
-  const repo = ctx.repo;
+  let repo = ctx.repo;
+  if (!repo) {
+    // A context rebuilt after a worker crash never ran prepareWorkspace, so
+    // hydrate the repo from the repos store (same store workspace setup uses).
+    repo = readRepoFromStore(job) ?? undefined;
+    ctx.repo = repo;
+  }
   if (!repo) {
     return;
   }

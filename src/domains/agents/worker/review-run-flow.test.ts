@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import type { Agent, AgentJob, AppConfig } from '../../../types';
 import { createJsonStore } from '../../../lib/json-store';
-import { resolveReviewRunConfig, runReviewJob } from './review-run-flow';
+import { completeReviewCheck, resolveReviewRunConfig, runReviewJob } from './review-run-flow';
 import type { WorkerContext } from './worker-context';
 
 describe('resolveReviewRunConfig', () => {
@@ -908,5 +908,82 @@ describe('runReviewJob check-run lifecycle', () => {
     const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
     assert.equal(agent?.status, 'completed');
     assert.equal(agent?.review?.prNumber, 7);
+  });
+
+  it('completeReviewCheck hydrates the repo from repos.json on a crash-rebuilt context', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const harness = makeFlowHarness(root, null);
+    // Crash-rebuilt context: prepareWorkspace never ran, so ctx.repo is unset
+    // and repos.json exists on disk from the original clone.
+    fs.writeFileSync(
+      path.join(harness.dataDir, 'repos.json'),
+      JSON.stringify({
+        repos: [
+          {
+            repoId: 'r1',
+            owner: 'o',
+            name: 'n',
+            defaultBranch: 'main',
+            cloneUrl: '',
+            registeredAt: '',
+            lastVerifiedAt: null,
+            lastVerifyStatus: null,
+            lastVerifyMessage: null,
+            autoReviewPullRequests: null,
+          },
+        ],
+      }),
+      'utf8',
+    );
+
+    const patches: Array<Record<string, unknown>> = [];
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.updateCheckRun = async (
+      _config: unknown,
+      owner: string,
+      repoName: string,
+      checkRunId: number,
+      input: Record<string, unknown>,
+    ) => {
+      patches.push({ owner, repoName, checkRunId, ...input });
+      return { id: checkRunId, html_url: 'x', status: 'completed', conclusion: input.conclusion ?? null };
+    };
+
+    await completeReviewCheck(harness.ctx, 555, 'failure', [], null, 'Worker error: boom');
+
+    assert.equal(patches.length, 1, 'failure PATCH must be sent, not silently skipped');
+    assert.equal(patches[0].owner, 'o');
+    assert.equal(patches[0].repoName, 'n');
+    assert.equal(patches[0].checkRunId, 555);
+    assert.equal(patches[0].status, 'completed');
+    assert.equal(patches[0].conclusion, 'failure');
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.review?.githubCheckConclusion, 'failure');
+  });
+
+  it('completeReviewCheck still skips when the repo record is missing entirely', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const harness = makeFlowHarness(root, null);
+    const patches: Array<Record<string, unknown>> = [];
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.updateCheckRun = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      _checkRunId: number,
+      input: Record<string, unknown>,
+    ) => {
+      patches.push(input);
+      return { id: 555, html_url: 'x', status: 'completed', conclusion: null };
+    };
+
+    await completeReviewCheck(harness.ctx, 555, 'failure', [], null, 'Worker error: boom');
+
+    assert.equal(patches.length, 0, 'no repo means no PATCH target');
   });
 });

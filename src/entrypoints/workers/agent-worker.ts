@@ -90,11 +90,14 @@ async function main(): Promise<void> {
       agentsStore.save({ agents });
 
       // An in-flight review check must not stay stuck; the worker is dying
-      // after creating it, so PATCH failure best-effort (fire-and-forget).
+      // after creating it, so PATCH failure best-effort. The fresh context
+      // never ran prepareWorkspace, so hydrate its repo from the repos store
+      // (the workspace was cloned before the crash). Awaited: process.exit
+      // below would otherwise kill the in-flight PATCH.
       if (checkRunId && !checkConcluded) {
         const checkCtx = await createWorkerContext(job).catch(() => null);
         if (checkCtx) {
-          void completeReviewCheck(
+          await completeReviewCheck(
             checkCtx,
             checkRunId,
             'failure',

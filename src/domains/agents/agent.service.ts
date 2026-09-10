@@ -254,15 +254,15 @@ export function createAgentService(options: {
       // Check already reached a terminal state; nothing to cancel.
       return;
     }
-    let repo: Repo;
-    try {
-      repo = repoManager.getRepo(
-        repository.findById(agentId)?.repoId || review.baseBranch || '',
-      );
-    } catch {
+    const agent = repository.findById(agentId);
+    if (!agent) {
       return;
     }
-    if (!repo) {
+    let repo: Repo;
+    try {
+      repo = repoManager.getRepo(agent.repoId);
+    } catch {
+      // Repo unregistered since the review started; nothing to PATCH.
       return;
     }
     const config = configRepository.load();

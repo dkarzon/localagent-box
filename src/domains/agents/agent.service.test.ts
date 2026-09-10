@@ -1752,6 +1752,27 @@ describe('review check-run reconciliation', () => {
     assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
   });
 
+  it('cancelAgent skips the check PATCH when the repo is unregistered', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewcxl02';
+    const agent = baseAgentFields({
+      agentId,
+      mode: 'review',
+      status: 'running',
+      agentBranch: 'feature',
+      review: reviewWithCheck(),
+    });
+    agent.repoId = 'missing-repo';
+    seedAgent(repository, agent);
+
+    const updated = service.cancelAgent(agentId);
+
+    assert.equal(updated.status, 'cancelled');
+    await flushAsync();
+    // Unknown repo → no PATCH target; local state must not claim cancelled.
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, null);
+  });
+
   it('restoreOnStartup PATCHes cancelled for interrupted review agents', async () => {
     const { service, repository } = createTestContext();
     const agentId = 'reviewintr01';
