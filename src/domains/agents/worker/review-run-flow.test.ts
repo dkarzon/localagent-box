@@ -950,7 +950,8 @@ describe('runReviewJob check-run lifecycle', () => {
     };
 
     // Seed the first attempt's state (check 555 on sha123, concluded failure),
-    // as retryAgent leaves it after clearing the check fields.
+    // as retryAgent leaves it: the check id is preserved until the new run
+    // exists, only the stale conclusion is cleared.
     const stored = harness.agentsStore.load();
     for (const agent of stored.agents) {
       agent.review = {
@@ -958,9 +959,9 @@ describe('runReviewJob check-run lifecycle', () => {
         headBranch: 'feature',
         prNumber: 7,
         headSha: 'sha123',
-        githubCheckRunId: null,
-        githubCheckHeadSha: null,
-        githubCheckConclusion: 'failure',
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
       };
     }
     harness.agentsStore.save(stored);
@@ -983,7 +984,7 @@ describe('runReviewJob check-run lifecycle', () => {
     assert.equal(agent?.review?.headSha, 'sha456');
   });
 
-  it('drops a stale conclusion when the retry cannot create a check', async () => {
+  it('keeps the previous check id but drops its stale conclusion when the retry cannot create a check', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
     cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -1004,9 +1005,9 @@ describe('runReviewJob check-run lifecycle', () => {
         headBranch: 'feature',
         prNumber: 7,
         headSha: 'sha123',
-        githubCheckRunId: null,
-        githubCheckHeadSha: null,
-        githubCheckConclusion: 'failure',
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
       };
     }
     harness.agentsStore.save(stored);
@@ -1015,7 +1016,10 @@ describe('runReviewJob check-run lifecycle', () => {
 
     const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
     assert.equal(agent?.status, 'completed');
-    assert.equal(agent?.review?.githubCheckRunId ?? null, null);
+    // The orphaned previous check run stays reconcilable (cancel/restart can
+    // still PATCH it); no fresh run existed to replace it.
+    assert.equal(agent?.review?.githubCheckRunId, 555);
+    assert.equal(agent?.review?.githubCheckHeadSha, 'sha123');
     assert.equal(agent?.review?.githubCheckConclusion ?? null, null, 'stale conclusion must not survive');
   });
 

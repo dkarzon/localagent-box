@@ -1839,7 +1839,7 @@ describe('review check-run reconciliation', () => {
     assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
   });
 
-  it('retryAgent clears stale check-run metadata from the previous attempt', () => {
+  it('retryAgent preserves the check-run id until the fresh run is created', () => {
     const { service, repository } = createTestContext();
     const agentId = 'reviewretry01';
     seedAgent(
@@ -1857,8 +1857,11 @@ describe('review check-run reconciliation', () => {
 
     assert.equal(retried.status, 'queued');
     const review = repository.findById(agentId)?.review;
-    assert.equal(review?.githubCheckRunId ?? null, null);
-    assert.equal(review?.githubCheckHeadSha ?? null, null);
+    // The previous attempt's check run (possibly still in_progress on GitHub
+    // after a worker crash) stays reconcilable until startReviewCheck
+    // overwrites it with the freshly created run.
+    assert.equal(review?.githubCheckRunId ?? null, 555);
+    assert.equal(review?.githubCheckHeadSha ?? null, 'sha123');
     assert.equal(review?.githubCheckConclusion ?? null, null);
     // Non-check review metadata must survive the retry.
     assert.equal(review?.baseBranch, 'main');

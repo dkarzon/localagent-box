@@ -852,16 +852,16 @@ export function createAgentService(options: {
       patch.loop = buildLoopState('queued');
     }
     if (mode === 'review') {
-      // The next runReviewJob creates a fresh check run (same name + SHA; GitHub
-      // uses the latest run for required checks). Clear the previous attempt's
-      // check fields so cancel/restart logic cannot PATCH stale state, and so
-      // the final record reflects only this run's check.
+      // Keep the previous attempt's check id until the fresh run is created,
+      // so an orphaned in_progress check stays reconcilable (restoreOnStartup
+      // can still PATCH it to cancelled); startReviewCheck overwrites these
+      // fields once the fresh check run exists. Only the stale conclusion is
+      // cleared so cancel/restart logic never treats the old run as terminal
+      // for this attempt.
       patch.review = {
         ...agent.review,
         baseBranch: agent.review?.baseBranch ?? null,
         headBranch: agent.review?.headBranch ?? null,
-        githubCheckRunId: null,
-        githubCheckHeadSha: null,
         githubCheckConclusion: null,
       };
     }

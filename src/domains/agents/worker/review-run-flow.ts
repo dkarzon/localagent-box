@@ -763,6 +763,18 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
         : {}
       : {};
 
+  // When this run created no check run (no PR, lookup/creation failure), keep
+  // the previous attempt's check id so an orphaned in_progress run stays
+  // reconcilable (retryAgent preserves it for exactly this window); only a
+  // successfully created fresh run may replace it.
+  const previousCheckFields: Partial<AgentReviewMetadata> =
+    checkRunId || !finishedRecord?.review
+      ? {}
+      : {
+          githubCheckRunId: finishedRecord.review.githubCheckRunId ?? null,
+          githubCheckHeadSha: finishedRecord.review.githubCheckHeadSha ?? null,
+        };
+
   updateAgentRecord(agentsStore, job.agentId, {
     status: 'completed',
     finishedAt: new Date().toISOString(),
@@ -791,6 +803,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       githubReviewId,
       githubCheckRunId: checkRunId,
       githubCheckHeadSha: checkRunId ? headSha : null,
+      ...previousCheckFields,
       ...preservedCheckFields,
       ...verificationMeta,
     },
