@@ -617,6 +617,58 @@ describe('createGithubAppService', () => {
     });
   });
 
+  it('forces status to completed when patching a check run with a conclusion', async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const githubApp = createGithubAppService({
+      fetchImpl: async (url, init) => {
+        const path = String(url).replace('https://api.github.com', '');
+        if (path.includes('/access_tokens')) {
+          return {
+            ok: true,
+            json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+          } as Response;
+        }
+
+        requests.push({
+          path,
+          method: String(init?.method ?? 'GET'),
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+
+        if (path.endsWith('/check-runs/555') && init?.method === 'PATCH') {
+          return {
+            ok: true,
+            json: async () => ({
+              id: 555,
+              html_url: 'https://github.com/o/r/checks/555',
+              status: 'completed',
+              conclusion: 'success',
+            }),
+          } as Response;
+        }
+
+        return {
+          ok: false,
+          json: async () => ({ message: `unexpected path ${path}` }),
+        } as Response;
+      },
+    });
+
+    const check = await githubApp.updateCheckRun(config, 'owner', 'repo', 555, {
+      conclusion: 'success',
+      completedAt: '2026-09-10T00:05:00.000Z',
+    });
+
+    assert.equal(check.status, 'completed');
+    const patchRequest = requests.find((request) => request.path.endsWith('/check-runs/555'));
+    assert.ok(patchRequest);
+    assert.deepEqual(patchRequest.body, {
+      status: 'completed',
+      conclusion: 'success',
+      completed_at: '2026-09-10T00:05:00.000Z',
+    });
+  });
+
   it('maps check-run API errors to messages', async () => {
     const githubApp = createGithubAppService({
       fetchImpl: async (url, init) => {

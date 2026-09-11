@@ -549,8 +549,10 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     if (input.status) {
       payload.status = input.status;
     }
+    // GitHub rejects conclusion/completed_at unless status is 'completed'.
     if (input.conclusion) {
       payload.conclusion = input.conclusion;
+      payload.status = 'completed';
     }
     if (input.completedAt) {
       payload.completed_at = input.completedAt;
