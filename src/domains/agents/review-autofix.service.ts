@@ -1382,9 +1382,9 @@ export function createReviewAutofixService({
       return;
     }
 
-    const repo = repoManager.getRepo(agent.repoId);
-    const config = configRepository.load();
     try {
+      const repo = repoManager.getRepo(agent.repoId);
+      const config = configRepository.load();
       await githubApp.updateCheckRun(config, repo.owner, repo.name, checkRunId, {
         status: 'completed',
         conclusion: 'success',

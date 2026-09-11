@@ -40,6 +40,10 @@ interface TestContext {
   checkUpdates: Array<{ checkRunId: number; input: Record<string, unknown> }>;
   /** When set, check-run PATCH throws. */
   updateCheckError: Error | null;
+  /** When set, repo lookup throws (repo unregistered mid-review). */
+  getRepoError: Error | null;
+  /** When set, config load throws (corrupt config.json). */
+  configLoadError: Error | null;
 }
 
 function finding(overrides: Partial<ReviewFindingRecord> = {}): ReviewFindingRecord {
@@ -144,14 +148,26 @@ function setup(options: {
     reviewAgentFactoryMissing: false,
     checkUpdates: [],
     updateCheckError: null,
+    getRepoError: null,
+    configLoadError: null,
   };
 
   const repoManager = {
-    getRepo: () => ({ owner: 'acme', name: 'demo' }),
+    getRepo: () => {
+      if (ctx.getRepoError) {
+        throw ctx.getRepoError;
+      }
+      return { owner: 'acme', name: 'demo' };
+    },
   } as unknown as RepoService;
 
   const configRepository = {
-    load: () => ({}),
+    load: () => {
+      if (ctx.configLoadError) {
+        throw ctx.configLoadError;
+      }
+      return {};
+    },
     save: (partial: unknown) => partial,
     toPublic: (config: unknown) => config,
   } as unknown as ConfigRepository;
@@ -1843,6 +1859,28 @@ describe('maybeSucceedReviewCheck', () => {
     await ctx.service.maybeSucceedReviewCheck('review1');
 
     assert.equal(ctx.checkUpdates.length, 1);
+    assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, null);
+  });
+
+  it('stays non-fatal when the repo was unregistered since the review started', async () => {
+    const ctx = setup({ findings: [finding({ fixStatus: 'fixed' })] });
+    setReview(ctx, reviewWithCheck());
+    ctx.getRepoError = new CodedError('Repository not found', 'NOT_FOUND');
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.equal(ctx.checkUpdates.length, 0);
+    assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, null);
+  });
+
+  it('stays non-fatal when the config file is corrupt', async () => {
+    const ctx = setup({ findings: [finding({ fixStatus: 'fixed' })] });
+    setReview(ctx, reviewWithCheck());
+    ctx.configLoadError = new Error('invalid JSON in config.json');
+
+    await ctx.service.maybeSucceedReviewCheck('review1');
+
+    assert.equal(ctx.checkUpdates.length, 0);
     assert.equal(ctx.repository.findById('review1')?.review?.githubCheckConclusion, null);
   });
 });
