@@ -36,7 +36,7 @@ import { formatReviewMarkdown, formatOcrSessionMarkdown } from '../../integratio
 import type { OcrReviewEnvelope } from '../../integrations/open-code-review/types';
 import { checkOutputForComplete } from '../../lib/review-github-check';
 import { CodedError, getErrorMessage } from '../../types';
-import type { Agent, AgentJob, AgentReviewMetadata, Repo, SpawnFn } from '../../types';
+import type { Agent, AgentJob, AgentReviewMetadata, AppConfig, Repo, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import type { ConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
@@ -265,7 +265,16 @@ export function createAgentService(options: {
       // Repo unregistered since the review started; nothing to PATCH.
       return;
     }
-    const config = configRepository.load();
+    let config: AppConfig;
+    try {
+      config = configRepository.load();
+    } catch (err) {
+      getLogger().warn(
+        { err, agentId, checkRunId },
+        'Failed to load config for check-run cancel (non-fatal)',
+      );
+      return;
+    }
     githubApp
       .updateCheckRun(config, repo.owner, repo.name, checkRunId, {
         status: 'completed',
