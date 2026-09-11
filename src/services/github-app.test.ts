@@ -494,4 +494,214 @@ describe('createGithubAppService', () => {
       /Something went wrong/,
     );
   });
+
+  it('creates a check run with name, head sha, and in-progress output', async () => {
+    const requests: Array<{ path: string; body: unknown }> = [];
+    const githubApp = createGithubAppService({
+      fetchImpl: async (url, init) => {
+        const path = String(url).replace('https://api.github.com', '');
+        if (path.includes('/access_tokens')) {
+          return {
+            ok: true,
+            json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+          } as Response;
+        }
+
+        requests.push({ path, body: init?.body ? JSON.parse(String(init.body)) : null });
+
+        if (path.endsWith('/check-runs') && init?.method === 'POST') {
+          return {
+            ok: true,
+            json: async () => ({
+              id: 555,
+              html_url: 'https://github.com/o/r/checks/555',
+              status: 'in_progress',
+              conclusion: null,
+            }),
+          } as Response;
+        }
+
+        return {
+          ok: false,
+          json: async () => ({ message: `unexpected path ${path}` }),
+        } as Response;
+      },
+    });
+
+    const check = await githubApp.createCheckRun(config, 'owner', 'repo', {
+      name: 'localagent-box / review',
+      headSha: 'abc123',
+      status: 'in_progress',
+      startedAt: '2026-09-10T00:00:00.000Z',
+      output: { title: 'Review in progress', summary: 'Running.' },
+    });
+
+    assert.deepEqual(check, {
+      id: 555,
+      html_url: 'https://github.com/o/r/checks/555',
+      status: 'in_progress',
+      conclusion: null,
+    });
+
+    const createRequest = requests.find((request) => request.path.endsWith('/check-runs'));
+    assert.ok(createRequest);
+    assert.ok(createRequest.path.includes('/repos/owner/repo/check-runs'));
+    assert.deepEqual(createRequest.body, {
+      name: 'localagent-box / review',
+      head_sha: 'abc123',
+      status: 'in_progress',
+      started_at: '2026-09-10T00:00:00.000Z',
+      output: { title: 'Review in progress', summary: 'Running.' },
+    });
+  });
+
+  it('patches a check run to a terminal conclusion', async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const githubApp = createGithubAppService({
+      fetchImpl: async (url, init) => {
+        const path = String(url).replace('https://api.github.com', '');
+        if (path.includes('/access_tokens')) {
+          return {
+            ok: true,
+            json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+          } as Response;
+        }
+
+        requests.push({
+          path,
+          method: String(init?.method ?? 'GET'),
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+
+        if (path.endsWith('/check-runs/555') && init?.method === 'PATCH') {
+          return {
+            ok: true,
+            json: async () => ({
+              id: 555,
+              html_url: 'https://github.com/o/r/checks/555',
+              status: 'completed',
+              conclusion: 'action_required',
+            }),
+          } as Response;
+        }
+
+        return {
+          ok: false,
+          json: async () => ({ message: `unexpected path ${path}` }),
+        } as Response;
+      },
+    });
+
+    const check = await githubApp.updateCheckRun(config, 'owner', 'repo', 555, {
+      status: 'completed',
+      conclusion: 'action_required',
+      completedAt: '2026-09-10T00:05:00.000Z',
+      output: { title: 'Review found issues', summary: '1 finding(s).' },
+    });
+
+    assert.deepEqual(check, {
+      id: 555,
+      html_url: 'https://github.com/o/r/checks/555',
+      status: 'completed',
+      conclusion: 'action_required',
+    });
+
+    const patchRequest = requests.find((request) => request.path.endsWith('/check-runs/555'));
+    assert.ok(patchRequest);
+    assert.equal(patchRequest.method, 'PATCH');
+    assert.deepEqual(patchRequest.body, {
+      status: 'completed',
+      conclusion: 'action_required',
+      completed_at: '2026-09-10T00:05:00.000Z',
+      output: { title: 'Review found issues', summary: '1 finding(s).' },
+    });
+  });
+
+  it('forces status to completed when patching a check run with a conclusion', async () => {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const githubApp = createGithubAppService({
+      fetchImpl: async (url, init) => {
+        const path = String(url).replace('https://api.github.com', '');
+        if (path.includes('/access_tokens')) {
+          return {
+            ok: true,
+            json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+          } as Response;
+        }
+
+        requests.push({
+          path,
+          method: String(init?.method ?? 'GET'),
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+
+        if (path.endsWith('/check-runs/555') && init?.method === 'PATCH') {
+          return {
+            ok: true,
+            json: async () => ({
+              id: 555,
+              html_url: 'https://github.com/o/r/checks/555',
+              status: 'completed',
+              conclusion: 'success',
+            }),
+          } as Response;
+        }
+
+        return {
+          ok: false,
+          json: async () => ({ message: `unexpected path ${path}` }),
+        } as Response;
+      },
+    });
+
+    const check = await githubApp.updateCheckRun(config, 'owner', 'repo', 555, {
+      conclusion: 'success',
+      completedAt: '2026-09-10T00:05:00.000Z',
+    });
+
+    assert.equal(check.status, 'completed');
+    const patchRequest = requests.find((request) => request.path.endsWith('/check-runs/555'));
+    assert.ok(patchRequest);
+    assert.deepEqual(patchRequest.body, {
+      status: 'completed',
+      conclusion: 'success',
+      completed_at: '2026-09-10T00:05:00.000Z',
+    });
+  });
+
+  it('maps check-run API errors to messages', async () => {
+    const githubApp = createGithubAppService({
+      fetchImpl: async (url, init) => {
+        const path = String(url).replace('https://api.github.com', '');
+        if (path.includes('/access_tokens')) {
+          return {
+            ok: true,
+            json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+          } as Response;
+        }
+
+        if (path.endsWith('/check-runs') && init?.method === 'POST') {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({ message: 'This app does not have access to checks' }),
+          } as Response;
+        }
+
+        return {
+          ok: false,
+          json: async () => ({ message: `unexpected path ${path}` }),
+        } as Response;
+      },
+    });
+
+    await assert.rejects(
+      githubApp.createCheckRun(config, 'owner', 'repo', {
+        name: 'localagent-box / review',
+        headSha: 'abc123',
+        status: 'in_progress',
+      }),
+      /does not have access to checks/,
+    );
+  });
 });

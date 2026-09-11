@@ -15,6 +15,7 @@ localagent-box authenticates to GitHub as a **GitHub App**, not with a personal 
    |------------|--------|-----|
    | Contents | Read and write | Clone, commit, and push agent branches |
    | Pull requests | Read and write | Open PRs and post review comments after agent runs |
+   | Checks | Read and write | Create and update the `localagent-box / review` check run on PR head SHAs |
    | Metadata | Read-only (mandatory default) | Required by GitHub for any app |
 
    No other repository or account permissions are required. Avoid granting broader access (Actions, Admin, etc.) than this table.
@@ -66,6 +67,7 @@ The new repo appears under **Active Inventory**. Click **Verify clone** on its c
 | `GitHub API returned HTTP 401` when verifying | Private key doesn't match the App ID, or the key wasn't saved with real newlines |
 | `GitHub API returned HTTP 404` on clone/verify | The app isn't installed on that repository, or the installation ID is wrong |
 | Clone succeeds but PR creation fails | The installation doesn't have **Pull requests: Read and write** permission — update permissions on the app, then re-approve the installation |
+| The `localagent-box / review` check is missing on PRs | The installation hasn't accepted the **Checks: Read and write** permission yet — update permissions on the app, then re-approve the installation (GitHub notifies the owner). Until then, review runs log a warning and continue without a check |
 | Permission changes not taking effect | After changing permissions on the GitHub App, existing installations must accept the new permissions (GitHub sends the org/user owner a notification) before they apply |
 
 See [SECURITY.md](../SECURITY.md) for how the private key is stored and what to do if you suspect it's been compromised (regenerate/revoke the key from the app's settings page immediately).

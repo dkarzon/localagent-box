@@ -6,7 +6,12 @@ import type { ChildProcess } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import { createJsonStore } from '../../lib/json-store';
 import { buildLoopState } from '../../lib/loop-state';
-import { CodedError, type Agent, type Repo } from '../../types';
+import {
+  CodedError,
+  type Agent,
+  type AgentReviewMetadata,
+  type Repo,
+} from '../../types';
 import type { GithubAppService } from '../../services/github-app';
 import type { GitService } from '../../services/git-service';
 import type { OllamaChatService } from '../../services/ollama-client';
@@ -169,6 +174,15 @@ function createTestContext(options?: {
       throw new Error('not implemented');
     },
     findPullRequestByHead: async () => null,
+    createCheckRun: async () => {
+      throw new Error('not implemented');
+    },
+    updateCheckRun: async (_config, _owner, _repoName, checkRunId) => ({
+      id: checkRunId,
+      html_url: 'https://example.com/check/1',
+      status: 'completed',
+      conclusion: null,
+    }),
     createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
     createPullRequestReviewComment: async () => ({ id: '2', html_url: 'https://example.com/review/comment/2' }),
     listPullRequestReviewComments: async () => [],
@@ -1703,3 +1717,228 @@ describe('restoreOnStartup', () => {
   });
 });
 
+
+describe('review check-run reconciliation', () => {
+  async function flushAsync(): Promise<void> {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  function reviewWithCheck(): Agent['review'] {
+    return {
+      baseBranch: 'main',
+      headBranch: 'feature',
+      prNumber: 7,
+      headSha: 'sha123',
+      githubCheckRunId: 555,
+      githubCheckHeadSha: 'sha123',
+      githubCheckConclusion: null,
+    };
+  }
+
+  it('cancelAgent PATCHes the review check run to cancelled', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewcxl01';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'running',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    const updated = service.cancelAgent(agentId);
+
+    assert.equal(updated.status, 'cancelled');
+    await flushAsync();
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
+  it('cancelAgent skips the check PATCH when the repo is unregistered', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewcxl02';
+    const agent = baseAgentFields({
+      agentId,
+      mode: 'review',
+      status: 'running',
+      agentBranch: 'feature',
+      review: reviewWithCheck(),
+    });
+    agent.repoId = 'missing-repo';
+    seedAgent(repository, agent);
+
+    const updated = service.cancelAgent(agentId);
+
+    assert.equal(updated.status, 'cancelled');
+    await flushAsync();
+    // Unknown repo → no PATCH target; local state must not claim cancelled.
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, null);
+  });
+
+  it('cancelAgent skips the check PATCH when the worker already completed the check', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewcxl03';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'running',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    // Simulate the worker persisting a terminal conclusion (its own process
+    // writes agents.json) between the snapshot taken in cancelAgent and the
+    // fresh re-read at the top of cancelReviewCheckRun: the first findById
+    // call (the gate re-read) observes the worker's conclusion.
+    const originalFindById = repository.findById.bind(repository);
+    let findByIdCalls = 0;
+    repository.findById = (id: string) => {
+      findByIdCalls += 1;
+      if (findByIdCalls === 1 && id === agentId) {
+        repository.update(agentId, {
+          review: { ...reviewWithCheck(), githubCheckConclusion: 'success' } as AgentReviewMetadata,
+        });
+      }
+      return originalFindById(id);
+    };
+
+    const updated = service.cancelAgent(agentId);
+
+    assert.equal(updated.status, 'cancelled');
+    await flushAsync();
+    // The worker's conclusion must not be clobbered with 'cancelled'.
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'success');
+  });
+
+  it('restoreOnStartup PATCHes cancelled for interrupted review agents', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewintr01';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'running',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    service.restoreOnStartup();
+
+    const failed = service.getAgent(agentId);
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error || '', /Server restarted/);
+    await flushAsync();
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
+  it('worker SIGTERM exit PATCHes the review check run to cancelled', async () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Review the diff',
+      mode: 'review',
+      headBranch: 'feature',
+    });
+    const agentId = agent.agentId;
+    ctx.repository.update(agentId, {
+      status: 'running',
+      review: {
+        ...agent.review,
+        prNumber: 7,
+        headSha: 'sha123',
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
+      } as AgentReviewMetadata,
+    });
+    assert.equal(ctx.spawned.length, 1);
+
+    ctx.spawned[0].emitExit(null, 'SIGTERM');
+
+    assert.equal(ctx.service.getAgent(agentId).status, 'cancelled');
+    await flushAsync();
+    assert.equal(ctx.repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
+  it('worker nonzero exit PATCHes the review check run to cancelled', async () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Review the diff',
+      mode: 'review',
+      headBranch: 'feature',
+    });
+    const agentId = agent.agentId;
+    ctx.repository.update(agentId, {
+      status: 'running',
+      review: {
+        ...agent.review,
+        prNumber: 7,
+        headSha: 'sha123',
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
+      } as AgentReviewMetadata,
+    });
+    assert.equal(ctx.spawned.length, 1);
+
+    ctx.spawned[0].emitExit(137, null);
+
+    assert.equal(ctx.service.getAgent(agentId).status, 'failed');
+    await flushAsync();
+    assert.equal(ctx.repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
+  it('retryAgent preserves the check-run id until the fresh run is created', () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewretry01';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'failed',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    const retried = service.retryAgent(agentId);
+
+    assert.equal(retried.status, 'queued');
+    const review = repository.findById(agentId)?.review;
+    // The previous attempt's check run (possibly still in_progress on GitHub
+    // after a worker crash) stays reconcilable until startReviewCheck
+    // overwrites it with the freshly created run.
+    assert.equal(review?.githubCheckRunId ?? null, 555);
+    assert.equal(review?.githubCheckHeadSha ?? null, 'sha123');
+    assert.equal(review?.githubCheckConclusion ?? null, null);
+    // Non-check review metadata must survive the retry.
+    assert.equal(review?.baseBranch, 'main');
+    assert.equal(review?.headBranch, 'feature');
+    assert.equal(review?.prNumber, 7);
+    assert.equal(review?.headSha, 'sha123');
+  });
+
+  it('retryAgent leaves non-review agents untouched by check metadata resets', () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'batchretry01';
+    seedAgent(
+      repository,
+      baseAgentFields({ agentId, mode: 'batch', status: 'failed', agentBranch: 'feature' }),
+    );
+
+    const retried = service.retryAgent(agentId);
+
+    assert.equal(retried.status, 'queued');
+    assert.equal(repository.findById(agentId)?.review, undefined);
+  });
+});

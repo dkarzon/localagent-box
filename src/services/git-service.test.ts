@@ -22,6 +22,12 @@ const stubGithubApp: GithubAppService = {
     throw new Error('not implemented');
   },
   findPullRequestByHead: async () => null,
+  createCheckRun: async () => {
+    throw new Error('not implemented');
+  },
+  updateCheckRun: async () => {
+    throw new Error('not implemented');
+  },
   createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
   createPullRequestReviewComment: async () => ({ id: '2', html_url: 'https://example.com/review/comment/2' }),
   listPullRequestReviewComments: async () => [],

@@ -76,7 +76,7 @@ If you need to run localagent-box somewhere more exposed than a trusted local ne
 2. **Always set a strong, non-default `API_TOKEN`**, and set `NODE_ENV=production` so the startup guard is active.
 3. **Restrict network egress** from the host/container if possible, to reduce the impact of the `webhookUrl` SSRF surface and any prompt-injection-driven tool calls that try to reach unexpected hosts.
 4. **Protect the `DATA_DIR` volume** (filesystem permissions, disk encryption, backup handling) since it holds your GitHub App private key and full agent transcripts in plaintext.
-5. **Scope the GitHub App's permissions to the minimum needed** (contents, pull requests) rather than installing it with broad org-wide access.
+5. **Scope the GitHub App's permissions to the minimum needed** (contents, pull requests, checks) rather than installing it with broad org-wide access.
 6. **Treat every registered repository and configured prompt as something an autonomous process will act on with full write/commit/push access.** Don't point it at repositories you don't trust an automated agent to modify.
 7. **Don't rely on agent ID secrecy.** The 12-character hex IDs are identifiers, not capability tokens.
 

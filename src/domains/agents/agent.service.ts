@@ -34,8 +34,9 @@ import {
 } from '../../lib/resolve-auto-review';
 import { formatReviewMarkdown, formatOcrSessionMarkdown } from '../../integrations/open-code-review/format-review';
 import type { OcrReviewEnvelope } from '../../integrations/open-code-review/types';
+import { checkOutputForComplete } from '../../lib/review-github-check';
 import { CodedError, getErrorMessage } from '../../types';
-import type { Agent, AgentJob, SpawnFn } from '../../types';
+import type { Agent, AgentJob, AgentReviewMetadata, AppConfig, Repo, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import type { ConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
@@ -239,6 +240,69 @@ export function createAgentService(options: {
     });
   }
 
+  /**
+   * Best-effort PATCH of the review's check run to `cancelled`. Used when the
+   * review agent ends without its worker reaching the terminal-check path
+   * (user cancel, host restart). Failures are logged warnings only.
+   */
+  function cancelReviewCheckRun(agentId: string, review: AgentReviewMetadata): void {
+    const checkRunId = review.githubCheckRunId;
+    if (!checkRunId) {
+      return;
+    }
+    const agent = repository.findById(agentId);
+    if (!agent) {
+      return;
+    }
+    if (agent.review?.githubCheckConclusion) {
+      // Fresh record already reached a terminal state (e.g. the worker
+      // completed the check between snapshot and cancel); nothing to cancel.
+      return;
+    }
+    let repo: Repo;
+    try {
+      repo = repoManager.getRepo(agent.repoId);
+    } catch {
+      // Repo unregistered since the review started; nothing to PATCH.
+      return;
+    }
+    let config: AppConfig;
+    try {
+      config = configRepository.load();
+    } catch (err) {
+      getLogger().warn(
+        { err, agentId, checkRunId },
+        'Failed to load config for check-run cancel (non-fatal)',
+      );
+      return;
+    }
+    githubApp
+      .updateCheckRun(config, repo.owner, repo.name, checkRunId, {
+        status: 'completed',
+        conclusion: 'cancelled',
+        completedAt: new Date().toISOString(),
+        output: checkOutputForComplete({ conclusion: 'cancelled', findings: [] }),
+      })
+      .then(() => {
+        // Re-read so a concurrent completion (which may have persisted a
+        // terminal conclusion) is not clobbered by this stale snapshot, and
+        // only stamp 'cancelled' while the check still belongs to this run.
+        const fresh = repository.findById(agentId);
+        if (fresh?.review?.githubCheckRunId === checkRunId) {
+          repository.update(agentId, {
+            review: { ...fresh.review, githubCheckConclusion: 'cancelled' },
+          });
+        }
+        getLogger().info({ agentId, checkRunId }, 'Review check run cancelled');
+      })
+      .catch((err) => {
+        getLogger().warn(
+          { err, agentId, checkRunId },
+          'Failed to cancel review check run (non-fatal)',
+        );
+      });
+  }
+
   function handleWorkerExit(agentId: string, code: number | null, signal: NodeJS.Signals | null): void {
     let current = repository.findById(agentId);
     if (!current) {
@@ -320,6 +384,11 @@ export function createAgentService(options: {
         current = repository.findById(agentId);
       }
       if (current?.status === 'cancelled') {
+        // Interrupted review: cancel its in-progress check run (best-effort),
+        // so a required check does not stay in_progress on GitHub.
+        if (current.review?.githubCheckRunId) {
+          cancelReviewCheckRun(agentId, current.review);
+        }
         sendAgentWebhook(agentId, 'agent.cancelled');
         void reviewAutofix.handleFixAgentFinished(agentId);
       }
@@ -351,6 +420,11 @@ export function createAgentService(options: {
         }
       }
     } else if (current?.status === 'failed') {
+      // Interrupted review: cancel its in-progress check run (best-effort),
+      // so a required check does not stay in_progress on GitHub.
+      if (current.review?.githubCheckRunId) {
+        cancelReviewCheckRun(agentId, current.review);
+      }
       sendAgentWebhook(agentId, 'agent.failed');
       void reviewAutofix.handleFixAgentFinished(agentId);
     }
@@ -734,6 +808,10 @@ export function createAgentService(options: {
       error: 'Cancelled by user',
     });
 
+    if (getAgentMode(agent) === 'review' && agent.review) {
+      cancelReviewCheckRun(agentId, agent.review);
+    }
+
     if (!child) {
       sendAgentWebhook(agentId, 'agent.cancelled');
     }
@@ -782,6 +860,20 @@ export function createAgentService(options: {
     }
     if (mode === 'loop') {
       patch.loop = buildLoopState('queued');
+    }
+    if (mode === 'review') {
+      // Keep the previous attempt's check id until the fresh run is created,
+      // so an orphaned in_progress check stays reconcilable (restoreOnStartup
+      // can still PATCH it to cancelled); startReviewCheck overwrites these
+      // fields once the fresh check run exists. Only the stale conclusion is
+      // cleared so cancel/restart logic never treats the old run as terminal
+      // for this attempt.
+      patch.review = {
+        ...agent.review,
+        baseBranch: agent.review?.baseBranch ?? null,
+        headBranch: agent.review?.headBranch ?? null,
+        githubCheckConclusion: null,
+      };
     }
 
     repository.update(agentId, patch);
@@ -1280,6 +1372,10 @@ export function createAgentService(options: {
         }
         if (mode === 'loop') {
           agent.loop = buildLoopState('failed', agent.loop, agent);
+        }
+        if (mode === 'review' && agent.review?.githubCheckRunId) {
+          // Interrupted review: cancel its in-progress check run (best-effort).
+          cancelReviewCheckRun(agent.agentId, agent.review);
         }
         changed = true;
       }

@@ -593,6 +593,12 @@ export function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
+export type AgentReviewCheckConclusion =
+  | 'success'
+  | 'action_required'
+  | 'failure'
+  | 'cancelled';
+
 export interface AgentReviewMetadata {
   baseBranch: string | null;
   headBranch: string | null;
@@ -601,6 +607,12 @@ export interface AgentReviewMetadata {
   githubReviewId?: string | null;
   headSha?: string | null;
   prNumber?: number | null;
+  /** Check run created for this review on the PR head SHA (Checks API). */
+  githubCheckRunId?: number | null;
+  /** Commit SHA the check run was created against. */
+  githubCheckHeadSha?: string | null;
+  /** Latest conclusion PATCHed to the check run, when completed. */
+  githubCheckConclusion?: AgentReviewCheckConclusion | null;
   /** 'verification' marks an autofix verification review. */
   purpose?: 'standard' | 'verification';
   /** Source review this verification review validates. */

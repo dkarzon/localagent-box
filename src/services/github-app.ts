@@ -102,6 +102,44 @@ export interface PullRequestReviewCommentSummary {
   start_line: number | null;
 }
 
+/** Output block of a check run (title + summary only; annotations out of scope). */
+export interface CheckRunOutput {
+  title?: string;
+  summary?: string;
+}
+
+export interface CreateCheckRunInput {
+  name: string;
+  headSha: string;
+  status: 'queued' | 'in_progress';
+  startedAt?: string;
+  output?: CheckRunOutput;
+}
+
+export type CheckRunConclusion =
+  | 'success'
+  | 'failure'
+  | 'cancelled'
+  | 'action_required'
+  | 'neutral'
+  | 'skipped'
+  | 'timed_out';
+
+export interface UpdateCheckRunInput {
+  status?: 'in_progress' | 'completed';
+  conclusion?: CheckRunConclusion;
+  completedAt?: string;
+  output?: CheckRunOutput;
+}
+
+/** Fields of a created check run the caller needs to PATCH it later. */
+export interface CheckRunResponse {
+  id: number;
+  html_url: string;
+  status: string;
+  conclusion: string | null;
+}
+
 /** GraphQL review-thread node ID plus its current resolved state. */
 export interface ReviewThreadLookupResult {
   threadId: string;
@@ -148,6 +186,21 @@ export interface GithubAppService {
     repo: string,
     headBranch: string,
   ) => Promise<GitHubPullRequestResponse | null>;
+  /** Creates a check run on a commit SHA (Checks API). */
+  createCheckRun: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    input: CreateCheckRunInput,
+  ) => Promise<CheckRunResponse>;
+  /** Updates an existing check run (status/conclusion/output). */
+  updateCheckRun: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    checkRunId: number,
+    input: UpdateCheckRunInput,
+  ) => Promise<CheckRunResponse>;
   createPullRequestReview: (
     config: AppConfig,
     owner: string,
@@ -447,6 +500,78 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     return pulls[0] ?? null;
   }
 
+  function mapCheckRunResponse(result: Record<string, unknown>): CheckRunResponse {
+    return {
+      id: Number(result.id) || 0,
+      html_url: String(result.html_url ?? ''),
+      status: String(result.status ?? ''),
+      conclusion: typeof result.conclusion === 'string' ? result.conclusion : null,
+    };
+  }
+
+  async function createCheckRun(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    input: CreateCheckRunInput,
+  ): Promise<CheckRunResponse> {
+    const payload: Record<string, unknown> = {
+      name: input.name,
+      head_sha: input.headSha,
+      status: input.status,
+    };
+    if (input.startedAt) {
+      payload.started_at = input.startedAt;
+    }
+    if (input.output) {
+      payload.output = input.output;
+    }
+
+    const result = await githubApiRequest<Record<string, unknown>>(
+      config,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/check-runs`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    );
+    return mapCheckRunResponse(result);
+  }
+
+  async function updateCheckRun(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    checkRunId: number,
+    input: UpdateCheckRunInput,
+  ): Promise<CheckRunResponse> {
+    const payload: Record<string, unknown> = {};
+    if (input.status) {
+      payload.status = input.status;
+    }
+    // GitHub rejects conclusion/completed_at unless status is 'completed'.
+    if (input.conclusion) {
+      payload.conclusion = input.conclusion;
+      payload.status = 'completed';
+    }
+    if (input.completedAt) {
+      payload.completed_at = input.completedAt;
+    }
+    if (input.output) {
+      payload.output = input.output;
+    }
+
+    const result = await githubApiRequest<Record<string, unknown>>(
+      config,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/check-runs/${checkRunId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      },
+    );
+    return mapCheckRunResponse(result);
+  }
+
   async function createPullRequestReview(
     config: AppConfig,
     owner: string,
@@ -673,6 +798,8 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     findReviewThreadIdForComment,
     resolvePullRequestReviewThread,
     findPullRequestByHead,
+    createCheckRun,
+    updateCheckRun,
     redactSecrets,
     createAppJwt,
     normalizePrivateKey,
