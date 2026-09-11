@@ -1391,9 +1391,15 @@ export function createReviewAutofixService({
         completedAt: new Date().toISOString(),
         output: checkOutputForComplete({ conclusion: 'success', findings: [] }),
       });
-      repository.update(reviewAgentId, {
-        review: { ...(review || {}), githubCheckConclusion: 'success' },
-      });
+      // Re-read so a concurrent terminal write (e.g. cancel) is not clobbered
+      // by this stale snapshot; only stamp success while the check belongs
+      // to this run.
+      const fresh = repository.findById(reviewAgentId);
+      if (fresh?.review?.githubCheckRunId === checkRunId) {
+        repository.update(reviewAgentId, {
+          review: { ...fresh.review, githubCheckConclusion: 'success' },
+        });
+      }
       logAutofixEvent('check.succeeded', {
         reviewAgentId,
         findingIds: findings.map((entry) => entry.id),

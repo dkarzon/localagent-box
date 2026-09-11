@@ -274,9 +274,15 @@ export function createAgentService(options: {
         output: checkOutputForComplete({ conclusion: 'cancelled', findings: [] }),
       })
       .then(() => {
-        repository.update(agentId, {
-          review: { ...review, githubCheckConclusion: 'cancelled' },
-        });
+        // Re-read so a concurrent completion (which may have persisted a
+        // terminal conclusion) is not clobbered by this stale snapshot, and
+        // only stamp 'cancelled' while the check still belongs to this run.
+        const fresh = repository.findById(agentId);
+        if (fresh?.review?.githubCheckRunId === checkRunId) {
+          repository.update(agentId, {
+            review: { ...fresh.review, githubCheckConclusion: 'cancelled' },
+          });
+        }
         getLogger().info({ agentId, checkRunId }, 'Review check run cancelled');
       })
       .catch((err) => {

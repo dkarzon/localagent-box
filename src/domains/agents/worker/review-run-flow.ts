@@ -306,12 +306,16 @@ export async function completeReviewCheck(
     });
     appendLog(logPath, `Check run ${checkRunId} completed with ${conclusion}`);
     const finishedRecord = readAgentRecord(agentsStore, job.agentId);
-    updateAgentRecord(agentsStore, job.agentId, {
-      review: {
-        ...finishedRecord?.review,
-        githubCheckConclusion: conclusion,
-      } as AgentReviewMetadata,
-    });
+    // Only persist when the check still belongs to this attempt, so a
+    // concurrently created check run (e.g. a retry) is never clobbered.
+    if (finishedRecord?.review?.githubCheckRunId === checkRunId) {
+      updateAgentRecord(agentsStore, job.agentId, {
+        review: {
+          ...finishedRecord.review,
+          githubCheckConclusion: conclusion,
+        } as AgentReviewMetadata,
+      });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(logPath, `Warning: updating check run ${checkRunId} failed — ${message}`);

@@ -1025,7 +1025,9 @@ describe('runReviewJob check-run lifecycle', () => {
 
     const harness = makeFlowHarness(root, null);
     // Crash-rebuilt context: prepareWorkspace never ran, so ctx.repo is unset
-    // and repos.json exists on disk from the original clone.
+    // and repos.json exists on disk from the original clone. The check id was
+    // persisted by startReviewCheck before the crash, so the seeded record
+    // must carry it for the conclusion write to apply.
     fs.writeFileSync(
       path.join(harness.dataDir, 'repos.json'),
       JSON.stringify({
@@ -1046,6 +1048,17 @@ describe('runReviewJob check-run lifecycle', () => {
       }),
       'utf8',
     );
+    const crashedRecord = harness.agentsStore.load();
+    const crashedAgent = crashedRecord.agents.find((entry) => entry.agentId === 'rev1');
+    crashedAgent!.review = {
+      ...crashedAgent!.review!,
+      baseBranch: crashedAgent!.review?.baseBranch ?? null,
+      headBranch: crashedAgent!.review?.headBranch ?? null,
+      githubCheckRunId: 555,
+      githubCheckHeadSha: 'sha123',
+      githubCheckConclusion: null,
+    };
+    harness.agentsStore.save(crashedRecord);
 
     const patches: Array<Record<string, unknown>> = [];
     const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
