@@ -191,49 +191,27 @@ function readRepoFromStore(job: Pick<AgentJob, 'dataDir' | 'repoId'>): Repo | nu
 }
 
 /**
- * Looks up the PR for the review's head branch and creates the
- * `localagent-box / review` check run on the PR head SHA, before OCR.
+ * Creates the `localagent-box / review` check run for the review's PR head
+ * SHA and persists the check metadata onto the agent record. Extracted from
+ * `startReviewCheck` so the post-OCR PR-lookup retry can also create the
+ * check when a transient pre-OCR lookup failure skipped it.
  *
- * Returns the PR number, head SHA, and created check-run id (null when there
- * is no matching PR or creation failed — both are non-fatal).
+ * Returns the created check-run id, or null when creation failed (non-fatal;
+ * prNumber/headSha are still persisted so comment posting can reuse them).
  */
-async function startReviewCheck(
+async function createReviewCheckRun(
   ctx: WorkerContext,
-  headBranch: string,
-): Promise<{
-  prNumber: number | null;
-  headSha: string | null;
-  checkRunId: number | null;
-  lookupFailed: boolean;
-}> {
+  prNumber: number,
+  headSha: string,
+): Promise<number | null> {
   const { config, githubApp, job, logPath, agentsStore } = ctx;
   const repo = ctx.repo;
   if (!repo) {
-    return { prNumber: null, headSha: null, checkRunId: null, lookupFailed: false };
+    return null;
   }
   // The pre-existing review metadata must survive every persist below.
   const agentRecord = readAgentRecord(agentsStore, job.agentId);
   const existingReview = agentRecord?.review ?? null;
-
-  let prNumber: number | null = null;
-  let headSha: string | null = null;
-  try {
-    appendLog(logPath, `Searching for PR with head branch ${headBranch}`);
-    const pr = await githubApp.findPullRequestByHead(config, repo.owner, repo.name, headBranch);
-    if (pr && typeof pr.number === 'number') {
-      prNumber = pr.number;
-      headSha = pr.head?.sha || null;
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    appendLog(logPath, `Warning: PR lookup failed — ${message}`);
-    return { prNumber: null, headSha: null, checkRunId: null, lookupFailed: true };
-  }
-
-  if (!prNumber || !headSha) {
-    appendLog(logPath, `No matching open PR with head SHA for branch ${headBranch}, skipping check`);
-    return { prNumber, headSha, checkRunId: null, lookupFailed: false };
-  }
 
   try {
     appendLog(logPath, `Creating check run "${REVIEW_CHECK_NAME}" on ${headSha.slice(0, 7)}`);
@@ -256,7 +234,7 @@ async function startReviewCheck(
     updateAgentRecord(agentsStore, job.agentId, {
       review: { ...existingReview, ...review } as AgentReviewMetadata,
     });
-    return { prNumber, headSha, checkRunId: check.id, lookupFailed: false };
+    return check.id;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog(logPath, `Warning: creating check run failed — ${message}`);
@@ -264,8 +242,54 @@ async function startReviewCheck(
     updateAgentRecord(agentsStore, job.agentId, {
       review: { ...existingReview, prNumber, headSha } as AgentReviewMetadata,
     });
+    return null;
+  }
+}
+
+/**
+ * Looks up the PR for the review's head branch and creates the
+ * `localagent-box / review` check run on the PR head SHA, before OCR.
+ *
+ * Returns the PR number, head SHA, and created check-run id (null when there
+ * is no matching PR or creation failed — both are non-fatal).
+ */
+async function startReviewCheck(
+  ctx: WorkerContext,
+  headBranch: string,
+): Promise<{
+  prNumber: number | null;
+  headSha: string | null;
+  checkRunId: number | null;
+  lookupFailed: boolean;
+}> {
+  const { githubApp, logPath } = ctx;
+  const repo = ctx.repo;
+  if (!repo) {
+    return { prNumber: null, headSha: null, checkRunId: null, lookupFailed: false };
+  }
+
+  let prNumber: number | null = null;
+  let headSha: string | null = null;
+  try {
+    appendLog(logPath, `Searching for PR with head branch ${headBranch}`);
+    const pr = await githubApp.findPullRequestByHead(ctx.config, repo.owner, repo.name, headBranch);
+    if (pr && typeof pr.number === 'number') {
+      prNumber = pr.number;
+      headSha = pr.head?.sha || null;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog(logPath, `Warning: PR lookup failed — ${message}`);
+    return { prNumber: null, headSha: null, checkRunId: null, lookupFailed: true };
+  }
+
+  if (!prNumber || !headSha) {
+    appendLog(logPath, `No matching open PR with head SHA for branch ${headBranch}, skipping check`);
     return { prNumber, headSha, checkRunId: null, lookupFailed: false };
   }
+
+  const checkRunId = await createReviewCheckRun(ctx, prNumber, headSha);
+  return { prNumber, headSha, checkRunId, lookupFailed: false };
 }
 
 /**
@@ -403,7 +427,9 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   const started = await startReviewCheck(ctx, headBranch);
   let foundPrNumber = started.prNumber;
   let headSha = started.headSha;
-  const checkRunId = started.checkRunId;
+  // Updated when the post-OCR retry recovers the PR lookup and creates the
+  // check run the pre-OCR failure skipped.
+  let checkRunId = started.checkRunId;
   const prLookupFailed = started.lookupFailed;
 
   let ocrResult: OcrReviewEnvelope | null = null;
@@ -516,6 +542,12 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
         foundPrNumber = pr.number;
         if (!headSha) {
           headSha = pr.head?.sha || null;
+        }
+        // The pre-OCR failure skipped check creation; create it now so the
+        // run still reports a check instead of the required check being
+        // permanently absent. Late check beats missing check.
+        if (!checkRunId && headSha) {
+          checkRunId = await createReviewCheckRun(ctx, foundPrNumber, headSha);
         }
       }
     } catch (err) {

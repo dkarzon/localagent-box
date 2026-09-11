@@ -910,6 +910,48 @@ describe('runReviewJob check-run lifecycle', () => {
     assert.equal(agent?.review?.prNumber, 7);
   });
 
+  it('creates the check run in the retry path when the pre-OCR lookup failure skipped it', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, { status: 'ok', comments: [] });
+
+    const harness = makeCheckHarness(root, {
+      pr: { number: 7, head: { sha: 'sha123' } },
+      lookupError: new Error('GitHub down'),
+    });
+
+    let lookupCount = 0;
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.findPullRequestByHead = async () => {
+      lookupCount += 1;
+      if (lookupCount === 1) {
+        throw new Error('GitHub down');
+      }
+      return { number: 7, head: { sha: 'sha123' } };
+    };
+
+    await runReviewJob(harness.ctx);
+
+    // The check run must exist despite the pre-OCR lookup failure: created in
+    // the retry path and completed before PR comments are posted.
+    assert.deepEqual(
+      harness.checkRequests.map((request) => `${request.method} ${request.path}`),
+      ['POST /check-runs', 'PATCH /check-runs/555'],
+    );
+    assert.equal(harness.checkRequests[0]!.body.headSha, 'sha123');
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.status, 'completed');
+    assert.equal(agent?.review?.githubCheckRunId, 555);
+    assert.equal(agent?.review?.githubCheckHeadSha, 'sha123');
+    assert.equal(agent?.review?.githubCheckConclusion, 'success');
+    assert.equal(agent?.review?.prNumber, 7);
+  });
+
   it('retry overwrites the previous attempt check and drops its stale conclusion', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
     cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
