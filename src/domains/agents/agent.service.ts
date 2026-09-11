@@ -384,6 +384,11 @@ export function createAgentService(options: {
         current = repository.findById(agentId);
       }
       if (current?.status === 'cancelled') {
+        // Interrupted review: cancel its in-progress check run (best-effort),
+        // so a required check does not stay in_progress on GitHub.
+        if (current.review?.githubCheckRunId) {
+          cancelReviewCheckRun(agentId, current.review);
+        }
         sendAgentWebhook(agentId, 'agent.cancelled');
         void reviewAutofix.handleFixAgentFinished(agentId);
       }
@@ -415,6 +420,11 @@ export function createAgentService(options: {
         }
       }
     } else if (current?.status === 'failed') {
+      // Interrupted review: cancel its in-progress check run (best-effort),
+      // so a required check does not stay in_progress on GitHub.
+      if (current.review?.githubCheckRunId) {
+        cancelReviewCheckRun(agentId, current.review);
+      }
       sendAgentWebhook(agentId, 'agent.failed');
       void reviewAutofix.handleFixAgentFinished(agentId);
     }

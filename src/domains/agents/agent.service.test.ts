@@ -1839,6 +1839,64 @@ describe('review check-run reconciliation', () => {
     assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
   });
 
+  it('worker SIGTERM exit PATCHes the review check run to cancelled', async () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Review the diff',
+      mode: 'review',
+      headBranch: 'feature',
+    });
+    const agentId = agent.agentId;
+    ctx.repository.update(agentId, {
+      status: 'running',
+      review: {
+        ...agent.review,
+        prNumber: 7,
+        headSha: 'sha123',
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
+      } as AgentReviewMetadata,
+    });
+    assert.equal(ctx.spawned.length, 1);
+
+    ctx.spawned[0].emitExit(null, 'SIGTERM');
+
+    assert.equal(ctx.service.getAgent(agentId).status, 'cancelled');
+    await flushAsync();
+    assert.equal(ctx.repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
+  it('worker nonzero exit PATCHes the review check run to cancelled', async () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Review the diff',
+      mode: 'review',
+      headBranch: 'feature',
+    });
+    const agentId = agent.agentId;
+    ctx.repository.update(agentId, {
+      status: 'running',
+      review: {
+        ...agent.review,
+        prNumber: 7,
+        headSha: 'sha123',
+        githubCheckRunId: 555,
+        githubCheckHeadSha: 'sha123',
+        githubCheckConclusion: null,
+      } as AgentReviewMetadata,
+    });
+    assert.equal(ctx.spawned.length, 1);
+
+    ctx.spawned[0].emitExit(137, null);
+
+    assert.equal(ctx.service.getAgent(agentId).status, 'failed');
+    await flushAsync();
+    assert.equal(ctx.repository.findById(agentId)?.review?.githubCheckConclusion, 'cancelled');
+  });
+
   it('retryAgent preserves the check-run id until the fresh run is created', () => {
     const { service, repository } = createTestContext();
     const agentId = 'reviewretry01';
