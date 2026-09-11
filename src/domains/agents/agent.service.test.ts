@@ -6,7 +6,12 @@ import type { ChildProcess } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import { createJsonStore } from '../../lib/json-store';
 import { buildLoopState } from '../../lib/loop-state';
-import { CodedError, type Agent, type Repo } from '../../types';
+import {
+  CodedError,
+  type Agent,
+  type AgentReviewMetadata,
+  type Repo,
+} from '../../types';
 import type { GithubAppService } from '../../services/github-app';
 import type { GitService } from '../../services/git-service';
 import type { OllamaChatService } from '../../services/ollama-client';
@@ -1771,6 +1776,44 @@ describe('review check-run reconciliation', () => {
     await flushAsync();
     // Unknown repo → no PATCH target; local state must not claim cancelled.
     assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, null);
+  });
+
+  it('cancelAgent skips the check PATCH when the worker already completed the check', async () => {
+    const { service, repository } = createTestContext();
+    const agentId = 'reviewcxl03';
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'review',
+        status: 'running',
+        agentBranch: 'feature',
+        review: reviewWithCheck(),
+      }),
+    );
+
+    // Simulate the worker persisting a terminal conclusion (its own process
+    // writes agents.json) between the snapshot taken in cancelAgent and the
+    // fresh re-read at the top of cancelReviewCheckRun: the first findById
+    // call (the gate re-read) observes the worker's conclusion.
+    const originalFindById = repository.findById.bind(repository);
+    let findByIdCalls = 0;
+    repository.findById = (id: string) => {
+      findByIdCalls += 1;
+      if (findByIdCalls === 1 && id === agentId) {
+        repository.update(agentId, {
+          review: { ...reviewWithCheck(), githubCheckConclusion: 'success' } as AgentReviewMetadata,
+        });
+      }
+      return originalFindById(id);
+    };
+
+    const updated = service.cancelAgent(agentId);
+
+    assert.equal(updated.status, 'cancelled');
+    await flushAsync();
+    // The worker's conclusion must not be clobbered with 'cancelled'.
+    assert.equal(repository.findById(agentId)?.review?.githubCheckConclusion, 'success');
   });
 
   it('restoreOnStartup PATCHes cancelled for interrupted review agents', async () => {

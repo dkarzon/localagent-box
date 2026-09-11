@@ -250,12 +250,13 @@ export function createAgentService(options: {
     if (!checkRunId) {
       return;
     }
-    if (review.githubCheckConclusion) {
-      // Check already reached a terminal state; nothing to cancel.
-      return;
-    }
     const agent = repository.findById(agentId);
     if (!agent) {
+      return;
+    }
+    if (agent.review?.githubCheckConclusion) {
+      // Fresh record already reached a terminal state (e.g. the worker
+      // completed the check between snapshot and cancel); nothing to cancel.
       return;
     }
     let repo: Repo;
