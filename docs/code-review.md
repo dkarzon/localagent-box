@@ -17,20 +17,23 @@ Clone repo → checkout head branch → ocr review (base..head) → save JSON �
 3. **Persist** — `review-result.json` and optional `review-session.json` under `{DATA_DIR}/agents/{agentId}/`.
 4. **GitHub** — if a PR exists for `headBranch`, post a `COMMENT` review with a markdown summary; line comments and file-level comments are attached when OCR returns them.
 
-OCR uses the same Ollama endpoint as coding agents. The model is `reviewModel` from Settings when set, otherwise `opencodeModel`.
+OCR uses the **review provider** from Settings (independent of the OpenCode coding provider). The model is `reviewModel` when set, otherwise `opencodeModel`.
+
+Supported review providers: **Ollama (local)** (`ollamaBaseUrl`) and **Ollama Cloud** (`ollamaCloudApiKey`). OCR cannot run until the chosen provider is configured and reachable.
 
 ## Enabling reviews
 
 ### Global Settings
 
-In the UI (**Settings → Pull requests & review**) or via `PUT /api/v1/config`:
+In the UI (**Settings → OCR**) or via `PUT /api/v1/config`:
 
 | Field | Default | Purpose |
 |-------|---------|---------|
+| `reviewProvider` | — | `ollama` or `ollama-cloud`; empty inherits `opencodeProvider` |
 | `autoReviewPullRequests` | `false` | After a coding agent creates a PR, automatically queue a review agent for that branch pair |
 | `reviewModel` | — | Model for OCR; falls back to `opencodeModel` when empty |
 
-`ollamaBaseUrl` must be configured and reachable — OCR cannot run without it.
+Configure connection credentials on **Settings → Models** (local URL or Cloud API key).
 
 ### Per-repository override
 

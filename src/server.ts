@@ -39,12 +39,24 @@ function bootstrapConfig(
 ) {
   const current = configRepository.load();
 
+  const partial: import('./types').ConfigPartial = {};
+
   if (env.ollamaBaseUrl && !current.ollamaBaseUrl) {
-    return configRepository.save({
-      ollamaBaseUrl: env.ollamaBaseUrl,
-      opencodeModel: env.opencodeModel || current.opencodeModel,
-      opencodeProvider: env.opencodeProvider || current.opencodeProvider,
-    });
+    partial.ollamaBaseUrl = env.ollamaBaseUrl;
+    partial.opencodeModel = env.opencodeModel || current.opencodeModel;
+    partial.opencodeProvider =
+      (env.opencodeProvider as import('./types').LlmProviderId | undefined) ||
+      current.opencodeProvider;
+  }
+  if (env.ollamaCloudApiKey && !current.ollamaCloudApiKey) {
+    partial.ollamaCloudApiKey = env.ollamaCloudApiKey;
+  }
+  if (env.ollamaCloudBaseUrl && !current.ollamaCloudBaseUrl) {
+    partial.ollamaCloudBaseUrl = env.ollamaCloudBaseUrl;
+  }
+
+  if (Object.keys(partial).length > 0) {
+    return configRepository.save(partial);
   }
 
   return current;
@@ -240,7 +252,10 @@ function startServer(): void {
     logger.warn('API_TOKEN not set; using default token (set API_TOKEN in production)');
   }
 
-  ctx.ollamaProbe.probe(ctx.configRepository.load().ollamaBaseUrl).then((ollama: OllamaProbeResult) => {
+  ctx.ollamaProbe.probe({
+    baseUrl: ctx.configRepository.load().ollamaBaseUrl,
+    notConfiguredMessage: 'ollamaBaseUrl is not set',
+  }).then((ollama: OllamaProbeResult) => {
     if (ollama.status === 'not_configured') {
       logger.warn('Ollama URL not configured (set ollamaBaseUrl via API/UI or OLLAMA_BASE_URL env)');
     } else if (!ollama.reachable) {

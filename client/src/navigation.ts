@@ -50,3 +50,27 @@ export const PAGE_LABELS = Object.fromEntries(
 export const PAGE_SUBTITLES = Object.fromEntries(
   navPages.map((p) => [p.id, p.subtitle]),
 ) as Record<NavPage, string>;
+
+export const settingsSections = [
+  { id: 'general', label: 'General', path: '/settings' },
+  { id: 'models', label: 'Models', path: '/settings/models' },
+  { id: 'github', label: 'GitHub', path: '/settings/github' },
+  { id: 'opencode', label: 'OpenCode', path: '/settings/opencode' },
+  { id: 'ocr', label: 'OCR', path: '/settings/ocr' },
+] as const;
+
+export type SettingsSectionId = (typeof settingsSections)[number]['id'];
+
+export function getSettingsSection(path: string): SettingsSectionId {
+  const normalized = path.replace(/\/+$/, '') || '/settings';
+  const match = settingsSections.find(
+    (section) =>
+      section.path !== '/settings' &&
+      (normalized === section.path || normalized.startsWith(`${section.path}/`)),
+  );
+  return match?.id ?? 'general';
+}
+
+export function settingsSectionPath(id: SettingsSectionId): string {
+  return settingsSections.find((section) => section.id === id)?.path ?? '/settings';
+}

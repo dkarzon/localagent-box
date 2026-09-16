@@ -5,8 +5,11 @@ import { collectLoopModels, resolveLoopStepModel } from './loop-model';
 
 const baseConfig: AppConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
+  ollamaCloudApiKey: '',
+  ollamaCloudBaseUrl: '',
   opencodeModel: 'llama3.2',
   opencodeProvider: 'ollama',
+  reviewProvider: '',
   systemPrompt: '',
   githubAppId: '',
   githubAppInstallationId: '',

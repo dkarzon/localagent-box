@@ -4,8 +4,11 @@ import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
 
 export const DEFAULT_CONFIG: AppConfig = {
   ollamaBaseUrl: '',
+  ollamaCloudApiKey: '',
+  ollamaCloudBaseUrl: '',
   opencodeModel: '',
   opencodeProvider: 'ollama',
+  reviewProvider: '',
   systemPrompt: '',
   githubAppId: '',
   githubAppInstallationId: '',
@@ -94,8 +97,12 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
   function toPublicConfig(config: AppConfig): PublicConfig {
     return {
       ollamaBaseUrl: config.ollamaBaseUrl,
+      ollamaCloudApiKey: config.ollamaCloudApiKey ? '***' : '',
+      ollamaCloudBaseUrl: config.ollamaCloudBaseUrl,
+      hasOllamaCloudApiKey: Boolean(config.ollamaCloudApiKey),
       opencodeModel: config.opencodeModel,
-      opencodeProvider: config.opencodeProvider,
+      opencodeProvider: config.opencodeProvider || 'ollama',
+      reviewProvider: config.reviewProvider || '',
       systemPrompt: config.systemPrompt || null,
       githubAppId: config.githubAppId,
       githubAppInstallationId: config.githubAppInstallationId,

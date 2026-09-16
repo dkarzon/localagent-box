@@ -3,8 +3,14 @@ import type { OllamaProbeResult } from '../types';
 
 export const PROBE_TIMEOUT_MS = 5000;
 
+export interface OllamaProbeOptions {
+  baseUrl?: string;
+  apiKey?: string;
+  notConfiguredMessage?: string;
+}
+
 export interface OllamaProbe {
-  probe: (baseUrl: string | undefined) => Promise<OllamaProbeResult>;
+  probe: (options: OllamaProbeOptions | string | undefined) => Promise<OllamaProbeResult>;
 }
 
 interface OllamaTagsResponse {
@@ -15,24 +21,51 @@ interface OllamaTagsResponse {
   }>;
 }
 
+function normalizeProbeOptions(
+  options: OllamaProbeOptions | string | undefined,
+): OllamaProbeOptions {
+  if (typeof options === 'string') {
+    return { baseUrl: options };
+  }
+  return options ?? {};
+}
+
 export function createOllamaProbe(options: { fetchImpl?: typeof fetch } = {}): OllamaProbe {
   const fetchImpl = options.fetchImpl || fetch;
 
-  async function probe(baseUrl: string | undefined): Promise<OllamaProbeResult> {
+  async function probe(
+    input: OllamaProbeOptions | string | undefined,
+  ): Promise<OllamaProbeResult> {
+    const { baseUrl, apiKey, notConfiguredMessage } = normalizeProbeOptions(input);
+
     if (!baseUrl || !baseUrl.trim()) {
       return {
         status: 'not_configured',
         reachable: false,
-        message: 'ollamaBaseUrl is not set',
+        message: notConfiguredMessage || 'base URL is not set',
       };
     }
 
     const probeUrl = `${normalizeProbeBaseUrl(baseUrl)}/api/tags`;
+    const headers: Record<string, string> = {};
+    if (apiKey?.trim()) {
+      headers.Authorization = `Bearer ${apiKey.trim()}`;
+    }
 
     try {
       const response = await fetchImpl(probeUrl, {
+        headers,
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          status: 'error',
+          reachable: false,
+          url: probeUrl,
+          message: 'Invalid or missing API key',
+        };
+      }
 
       if (!response.ok) {
         return {

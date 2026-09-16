@@ -7,6 +7,7 @@ import {
   formatReviewSummaryMarkdown,
   partitionReviewComments,
 } from '../../../integrations/open-code-review/format-review';
+import { resolveReviewProvider } from '../../../lib/llm-provider';
 import {
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
@@ -441,7 +442,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, 'OCR config written to workspace');
     appendLog(
       logPath,
-      `Running OCR review (${job.baseBranch}..${headBranch}) model=${runConfig.reviewModel || runConfig.opencodeModel || 'llama3.2'} fileTimeout=${getOcrFileTimeoutMinutes()}m llmTimeout=${getOcrLlmTimeoutSeconds()}s concurrency=${getOcrReviewConcurrency()}`,
+      `Running OCR review (${job.baseBranch}..${headBranch}) provider=${resolveReviewProvider(runConfig)} model=${runConfig.reviewModel || runConfig.opencodeModel || 'llama3.2'} fileTimeout=${getOcrFileTimeoutMinutes()}m llmTimeout=${getOcrLlmTimeoutSeconds()}s concurrency=${getOcrReviewConcurrency()}`,
     );
     ocrResult = await runOcrReview({
       config: runConfig,

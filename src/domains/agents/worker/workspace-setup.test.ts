@@ -19,8 +19,11 @@ import type { WorkerContext } from './worker-context';
 
 const BASE_CONFIG: AppConfig = {
   ollamaBaseUrl: '',
+  ollamaCloudApiKey: '',
+  ollamaCloudBaseUrl: '',
   opencodeModel: '',
   opencodeProvider: 'ollama',
+  reviewProvider: '',
   systemPrompt: '',
   githubAppId: '',
   githubAppInstallationId: '',

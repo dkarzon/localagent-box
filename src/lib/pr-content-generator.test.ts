@@ -55,6 +55,13 @@ describe('resolvePullRequestModel', () => {
     );
   });
 
+  it('strips ollama-cloud/ prefix from model ids', () => {
+    assert.equal(
+      resolvePullRequestModel(baseAgent({ model: 'ollama-cloud/gemma4:31b' }), config),
+      'gemma4:31b',
+    );
+  });
+
   it('uses the last modelsUsed entry when agent.model is absent', () => {
     assert.equal(
       resolvePullRequestModel(baseAgent({ model: null, modelsUsed: ['gemma:2b', 'coder:7b'] }), config),

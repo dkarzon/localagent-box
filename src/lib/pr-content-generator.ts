@@ -1,3 +1,9 @@
+import {
+  isProviderConfigured,
+  resolveOpenCodeProvider,
+  resolveProviderHost,
+  stripProviderModelPrefix,
+} from './llm-provider';
 import type { Agent, AgentEvent, AgentMessage, AppConfig } from '../types';
 import type { OllamaChatService } from '../services/ollama-client';
 import { enrichMessagesWithAssistantFromEvents } from './assistant-text';
@@ -161,7 +167,7 @@ export function enrichGeneratedPullRequestBody(body: string, agent: Agent, base:
 }
 
 function normalizeOllamaModelId(model: string): string {
-  return model.trim().replace(/^ollama\//i, '');
+  return stripProviderModelPrefix(model);
 }
 
 /** Prefer the model that actually ran the agent over the global Settings default. */
@@ -190,10 +196,11 @@ export async function generatePullRequestContent(
   const log = getLogger();
   const agentId = ctx.agent.agentId;
 
-  if (!config.ollamaBaseUrl?.trim()) {
+  const providerId = resolveOpenCodeProvider(config);
+  if (!isProviderConfigured(config, providerId)) {
     log.debug(
-      { agentId },
-      'Skipping PR LLM generation: ollamaBaseUrl is not configured',
+      { agentId, providerId },
+      'Skipping PR LLM generation: OpenCode provider is not configured',
     );
     return null;
   }
@@ -211,9 +218,10 @@ export async function generatePullRequestContent(
     'You write concise, accurate GitHub pull request titles and markdown descriptions for software changes. Output valid JSON only.';
 
   try {
+    const host = resolveProviderHost(config, providerId);
     log.debug(
-      { agentId, model, ollamaBaseUrl: config.ollamaBaseUrl },
-      'Generating PR title and body with local LLM',
+      { agentId, model, providerId, baseUrl: host.baseUrl },
+      'Generating PR title and body with LLM',
     );
 
     const result = await ollamaChat.generateText(
@@ -253,7 +261,7 @@ export async function generatePullRequestContent(
     };
   } catch (err) {
     log.warn(
-      { err, agentId, model, ollamaBaseUrl: config.ollamaBaseUrl },
+      { err, agentId, model, providerId },
       'PR LLM generation request failed',
     );
     return null;

@@ -9,6 +9,7 @@ import {
   DEFAULT_OCR_LLM_TIMEOUT_SECONDS,
   DEFAULT_OCR_REVIEW_CONCURRENCY,
   buildOcrLlmEnv,
+  buildOcrLlmSettings,
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
   getOcrReviewConcurrency,
@@ -110,6 +111,37 @@ describe('OCR timeouts', () => {
     withEnv({ OCR_REVIEW_CONCURRENCY: '4' }, () => {
       assert.equal(getOcrReviewConcurrency(), 4);
     });
+  });
+});
+
+describe('buildOcrLlmSettings', () => {
+  it('maps cloud review provider to OCR LLM settings', () => {
+    const settings = buildOcrLlmSettings({
+      ollamaBaseUrl: '',
+      ollamaCloudApiKey: 'cloud-key',
+      ollamaCloudBaseUrl: 'https://ollama.com',
+      opencodeProvider: 'ollama-cloud',
+      reviewProvider: 'ollama-cloud',
+      opencodeModel: 'gemma4:31b',
+      reviewModel: '',
+    } as import('../../types').AppConfig);
+    assert.equal(settings.url, 'https://ollama.com/v1/chat/completions');
+    assert.equal(settings.auth_token, 'cloud-key');
+    assert.equal(settings.model, 'gemma4:31b');
+    assert.equal(settings.use_anthropic, false);
+  });
+
+  it('throws when OCR provider is not configured', () => {
+    assert.throws(
+      () =>
+        buildOcrLlmSettings({
+          ollamaBaseUrl: '',
+          ollamaCloudApiKey: '',
+          opencodeProvider: 'ollama',
+          reviewProvider: 'ollama',
+        } as import('../../types').AppConfig),
+      /not configured/i,
+    );
   });
 });
 
