@@ -409,6 +409,7 @@ export const OCR_CONFIG_FIELDS = ['reviewProvider', 'reviewModel'] as const;
 export const CONFIG_FIELDS = [
   ...MODELS_CONFIG_FIELDS,
   ...OPENCODE_CONFIG_FIELDS,
+  ...OCR_CONFIG_FIELDS,
   ...GITHUB_CONFIG_FIELDS,
   ...GENERAL_CONFIG_FIELDS,
 ] as const;

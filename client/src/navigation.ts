@@ -70,7 +70,3 @@ export function getSettingsSection(path: string): SettingsSectionId {
   );
   return match?.id ?? 'general';
 }
-
-export function settingsSectionPath(id: SettingsSectionId): string {
-  return settingsSections.find((section) => section.id === id)?.path ?? '/settings';
-}

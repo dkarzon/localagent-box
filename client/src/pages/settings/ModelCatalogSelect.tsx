@@ -29,10 +29,13 @@ export function ModelCatalogSelect({
   return (
     <Field label={label}>
       <Select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
-        {placeholder ? <option value="">{placeholder}</option> : null}
-        {!options.length ? (
-          <option value="">{unreachableLabel}</option>
-        ) : (
+        {/* Single empty-valued option; surface the empty-catalog state inside it. */}
+        {placeholder || !options.length ? (
+          <option value="">
+            {[placeholder, !options.length ? unreachableLabel : ''].filter(Boolean).join(' ')}
+          </option>
+        ) : null}
+        {!options.length ? null : (
           options.map((entry) => (
             <option key={entry} value={entry}>
               {entry}

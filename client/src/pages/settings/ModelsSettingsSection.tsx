@@ -5,7 +5,12 @@ import { SectionCard } from '../../components/ui/Card';
 import { Button, Field, TextInput } from '../../components/ui/Form';
 import { formatFileSize, formatModelUpdated } from '../../lib/format';
 import { StatusMessage } from '../../components/ui/StatusMessage';
-import { describeProviderStatus, fieldMatchesSearch } from './helpers';
+import {
+  SETTINGS_SEARCH_KEYWORDS,
+  describeProviderStatus,
+  fieldMatchesSearch,
+  makeShowSection,
+} from './helpers';
 
 interface ModelsSettingsSectionProps {
   config: AppConfig;
@@ -80,8 +85,7 @@ export function ModelsSettingsSection({
   searchQuery,
 }: ModelsSettingsSectionProps) {
   const query = searchQuery.trim().toLowerCase();
-  const showSection = (labels: string[]) =>
-    !query || labels.some((label) => label.toLowerCase().includes(query));
+  const showSection = makeShowSection(searchQuery);
 
   const localInfo = describeProviderStatus(ollamaLocal, 'Ollama');
   const cloudInfo = describeProviderStatus(ollamaCloud, 'Ollama Cloud');
@@ -92,7 +96,7 @@ export function ModelsSettingsSection({
 
   return (
     <div className="grid gap-6">
-      {showSection(['ollama', 'local', 'model']) ? (
+      {showSection(SETTINGS_SEARCH_KEYWORDS.models.local) ? (
         <SectionCard
           title="Ollama (local)"
           icon={<span className="size-2 rounded-full bg-success" />}
@@ -127,7 +131,7 @@ export function ModelsSettingsSection({
         </SectionCard>
       ) : null}
 
-      {showSection(['cloud', 'ollama cloud', 'api key']) ? (
+      {showSection(SETTINGS_SEARCH_KEYWORDS.models.cloud) ? (
         <SectionCard
           title="Ollama Cloud"
           icon={<span className="size-2 rounded-full bg-secondary" />}

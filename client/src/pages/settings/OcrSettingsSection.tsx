@@ -3,6 +3,7 @@ import { SectionCard } from '../../components/ui/Card';
 import { CheckboxField } from '../../components/ui/Form';
 import { ModelCatalogSelect } from './ModelCatalogSelect';
 import { ProviderSelect } from './ProviderSelect';
+import { SETTINGS_SEARCH_KEYWORDS, describeModelCatalog, makeShowSection } from './helpers';
 
 interface OcrSettingsSectionProps {
   config: AppConfig;
@@ -27,21 +28,15 @@ export function OcrSettingsSection({
   setAutoReviewPullRequests,
   searchQuery,
 }: OcrSettingsSectionProps) {
-  const query = searchQuery.trim().toLowerCase();
-  const showSection = (labels: string[]) =>
-    !query || labels.some((label) => label.toLowerCase().includes(query));
+  const showSection = makeShowSection(searchQuery);
 
   const effectiveProvider = reviewProvider || config.opencodeProvider || 'ollama';
-  const providerStatus = health?.providers?.[effectiveProvider] ?? null;
-  const availableModels = [...(providerStatus?.models ?? [])]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((model) => model.name);
-  const unreachableLabel =
-    providerStatus?.reachable === false
-      ? `— ${effectiveProvider === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama'} unreachable —`
-      : '— no models available —';
+  const { catalog: availableModels, unreachableLabel } = describeModelCatalog(
+    health?.providers?.[effectiveProvider],
+    effectiveProvider,
+  );
 
-  if (!showSection(['review', 'ocr', 'code review', 'auto-review'])) {
+  if (!showSection(SETTINGS_SEARCH_KEYWORDS.ocr.review)) {
     return null;
   }
 
@@ -50,7 +45,7 @@ export function OcrSettingsSection({
       <div className="grid gap-4 sm:grid-cols-2">
         <ProviderSelect
           label="Review provider"
-          value={reviewProvider || config.opencodeProvider || 'ollama'}
+          value={effectiveProvider}
           config={config}
           onChange={setReviewProvider}
         />

@@ -1,6 +1,7 @@
 import type { AppConfig, ConfigPartial, LoopVerbModels, PublicConfig } from '../types';
 import { loadServerDefaultLoopConfig } from '../domains/agents/worker/loop-config';
 import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
+import { resolveOpenCodeProvider } from '../lib/llm-provider';
 
 export const DEFAULT_CONFIG: AppConfig = {
   ollamaBaseUrl: '',
@@ -101,7 +102,7 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       ollamaCloudBaseUrl: config.ollamaCloudBaseUrl,
       hasOllamaCloudApiKey: Boolean(config.ollamaCloudApiKey),
       opencodeModel: config.opencodeModel,
-      opencodeProvider: config.opencodeProvider || 'ollama',
+      opencodeProvider: resolveOpenCodeProvider(config),
       reviewProvider: config.reviewProvider || '',
       systemPrompt: config.systemPrompt || null,
       githubAppId: config.githubAppId,

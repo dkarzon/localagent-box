@@ -6,6 +6,7 @@ import {
   hasNonEmptyLoopVerbModel,
   hasResolvableLoopModel,
   isAgentActive,
+  LLM_PROVIDER_LABELS,
   LOOP_VERB_LABELS,
   LOOP_VERB_MODELS_DEFAULT,
   LOOP_VERBS,
@@ -230,11 +231,11 @@ export function AgentSessionsPage({
   }, [mode, reviewProvider, opencodeProvider]);
 
   const consumerStatus = useMemo(
-    () => health?.providers?.[consumerProvider] ?? health?.ollama ?? null,
+    () => health?.providers?.[consumerProvider] ?? null,
     [health, consumerProvider],
   );
 
-  const providerLabel = consumerProvider === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama';
+  const providerLabel = LLM_PROVIDER_LABELS[consumerProvider];
 
   const availableModels = useMemo(
     () =>
@@ -370,13 +371,15 @@ export function AgentSessionsPage({
     onQueuePrefillConsumed?.();
   };
 
-  const hostReady = consumerStatus?.reachable === true && availableModels.length > 0;
+  const providerReachable = consumerStatus?.reachable === true;
+  const hostReady = providerReachable && availableModels.length > 0;
 
+  // Review runs fall back to the Settings review/OpenCode model, so an empty catalog is OK.
   const startDisabled =
     !repos.length ||
     !configLoaded ||
     (mode === 'review'
-      ? !reviewHeadBranch.trim() || !hostReady
+      ? !reviewHeadBranch.trim() || !providerReachable
       : !hostReady || (mode === 'loop' ? !loopCanStart : !model.trim()));
 
   const startAgent = async (event: FormEvent) => {
@@ -541,7 +544,12 @@ export function AgentSessionsPage({
   const totalTokens = agentTokenTotal(tokenStats.overall);
   const totalCost = tokenStats.overall.cost ?? 0;
 
-  const systemOnline = consumerStatus?.reachable === true;
+  // Health not loaded (or fetch failed) is "unknown", not an outage.
+  const systemStatus = !consumerStatus
+    ? { dot: 'bg-muted', label: `${providerLabel} status unknown` }
+    : consumerStatus.reachable
+      ? { dot: 'bg-success', label: `${providerLabel} online` }
+      : { dot: 'bg-error', label: `${providerLabel} offline` };
 
   return (
     <div className="p-6 pb-32 md:p-6">
@@ -552,10 +560,8 @@ export function AgentSessionsPage({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-2 body-sm text-on-surface-variant">
-            <span
-              className={`size-2 rounded-full ${systemOnline ? 'bg-success' : 'bg-error'}`}
-            />
-            {systemOnline ? `${providerLabel} online` : `${providerLabel} offline`}
+            <span className={`size-2 rounded-full ${systemStatus.dot}`} />
+            {systemStatus.label}
           </span>
           <FilterTabs
             tabs={[
@@ -906,9 +912,9 @@ export function AgentSessionsPage({
                   >
                     {!availableModels.length ? (
                       <option value="">
-                        {consumerStatus?.reachable === false
-                          ? `— ${providerLabel} unreachable (uses Settings default) —`
-                          : '— no models available (uses Settings default) —'}
+                        {providerReachable
+                          ? '— no models listed (uses Settings default) —'
+                          : `— ${providerLabel} unreachable — check Settings → Models —`}
                       </option>
                     ) : (
                       availableModels.map((entry) => (
@@ -923,8 +929,8 @@ export function AgentSessionsPage({
                     )}
                   </Select>
                   <p className="mt-1 text-xs text-muted">
-                    Override the review model for this run. Uses Settings default when{' '}
-                    {providerLabel} is unavailable.
+                    Override the review model for this run. Leave unset to use the Settings
+                    default. Requires {providerLabel} to be reachable.
                   </p>
                 </Field>
               </>

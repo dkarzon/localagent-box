@@ -5,6 +5,7 @@ import { SectionCard } from '../../components/ui/Card';
 import { Button, CheckboxField, Field, TextInput } from '../../components/ui/Form';
 import { StatusMessage } from '../../components/ui/StatusMessage';
 import type { StatusVariant } from '../../api/types';
+import { SETTINGS_SEARCH_KEYWORDS, makeShowSection } from './helpers';
 
 interface GeneralSettingsSectionProps {
   token: string;
@@ -31,9 +32,8 @@ export function GeneralSettingsSection({
   const [cleanupStatusVariant, setCleanupStatusVariant] = useState<StatusVariant>('');
   const [cleanupBusy, setCleanupBusy] = useState(false);
 
-  const query = searchQuery.trim().toLowerCase();
-  const showSection = (labels: string[]) =>
-    !query || labels.some((label) => label.toLowerCase().includes(query));
+  const showSection = makeShowSection(searchQuery);
+  const keywords = SETTINGS_SEARCH_KEYWORDS.general;
 
   const runWorkspaceCleanup = async () => {
     if (!Number.isFinite(workspaceRetentionDays) || workspaceRetentionDays < 1) {
@@ -85,7 +85,7 @@ export function GeneralSettingsSection({
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      {showSection(['api', 'token', 'bearer']) ? (
+      {showSection(keywords.apiToken) ? (
         <SectionCard title="API Access" icon={<IconKey className="size-4" />}>
           <Field label="Bearer Token" className="mb-2">
             <div className="relative">
@@ -113,7 +113,7 @@ export function GeneralSettingsSection({
         </SectionCard>
       ) : null}
 
-      {showSection(['webhook', 'url', 'hook']) ? (
+      {showSection(keywords.webhook) ? (
         <SectionCard title="Webhooks" icon={<span className="code-md text-secondary">WH</span>}>
           <Field label="Webhook Target URL">
             <TextInput
@@ -130,7 +130,7 @@ export function GeneralSettingsSection({
         </SectionCard>
       ) : null}
 
-      {showSection(['pull request', 'auto-create', 'pr']) ? (
+      {showSection(keywords.pullRequest) ? (
         <SectionCard
           title="Pull requests"
           icon={<span className="code-md text-secondary">PR</span>}
@@ -148,7 +148,7 @@ export function GeneralSettingsSection({
         </SectionCard>
       ) : null}
 
-      {showSection(['workspace', 'cleanup', 'retention', 'delete', 'session']) ? (
+      {showSection(keywords.workspace) ? (
         <SectionCard
           title="Workspace Cleanup"
           icon={<IconFolder className="size-4" />}

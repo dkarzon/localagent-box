@@ -42,13 +42,17 @@ export function resolveProviderHost(
 ): { baseUrl: string; apiKey?: string } {
   switch (id) {
     case 'ollama':
-      return { baseUrl: config.ollamaBaseUrl.trim() };
+      return { baseUrl: config.ollamaBaseUrl?.trim() ?? '' };
     case 'ollama-cloud':
       return {
         baseUrl: config.ollamaCloudBaseUrl?.trim() || DEFAULT_OLLAMA_CLOUD_BASE_URL,
-        apiKey: config.ollamaCloudApiKey.trim(),
+        apiKey: config.ollamaCloudApiKey?.trim(),
       };
   }
+}
+
+export function providerNotConfiguredMessage(id: LlmProviderId): string {
+  return id === 'ollama' ? 'ollamaBaseUrl is not set' : 'ollamaCloudApiKey is not set';
 }
 
 export function stripProviderModelPrefix(model: string): string {

@@ -2,6 +2,7 @@ import { IconGithub } from '../../components/icons';
 import { SectionCard } from '../../components/ui/Card';
 import { Field, TextArea, TextInput } from '../../components/ui/Form';
 import { StatusMessage } from '../../components/ui/StatusMessage';
+import { SETTINGS_SEARCH_KEYWORDS, makeShowSection } from './helpers';
 
 interface GithubSettingsSectionProps {
   githubStatus: string;
@@ -34,11 +35,9 @@ export function GithubSettingsSection({
   setGitUserEmail,
   searchQuery,
 }: GithubSettingsSectionProps) {
-  const query = searchQuery.trim().toLowerCase();
-  const showSection = (labels: string[]) =>
-    !query || labels.some((label) => label.toLowerCase().includes(query));
+  const showSection = makeShowSection(searchQuery);
 
-  if (!showSection(['github', 'git', 'app', 'private key'])) {
+  if (!showSection(SETTINGS_SEARCH_KEYWORDS.github.app)) {
     return null;
   }
 

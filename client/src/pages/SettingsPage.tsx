@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { apiFetch, authHeaders } from '../api/client';
 import {
   mergeLoopVerbModels,
@@ -11,7 +11,8 @@ import {
   type StatusVariant,
 } from '../api/types';
 import { useApiToken } from '../hooks/useApiToken';
-import { getSettingsSection } from '../navigation';
+import { getSettingsSection, settingsSections } from '../navigation';
+import { sectionMatchesSearch } from './settings/helpers';
 import { GeneralSettingsSection } from './settings/GeneralSettingsSection';
 import { GithubSettingsSection } from './settings/GithubSettingsSection';
 import { ModelsSettingsSection } from './settings/ModelsSettingsSection';
@@ -212,16 +213,21 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       }
       setStatus(message);
       setStatusVariant('success');
-      await loadHealth();
-      await loadGithubStatus();
+      await Promise.all([loadHealth(), loadGithubStatus()]);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Failed to save settings');
       setStatusVariant('error');
     }
   };
 
-  const refreshLocalHealth = () => void loadHealth();
-  const refreshCloudHealth = () => void loadHealth();
+  const refreshHealth = () => void loadHealth();
+
+  const hasSearch = Boolean(searchQuery.trim());
+  const otherMatchingSections = hasSearch
+    ? settingsSections.filter(
+        (entry) => entry.id !== section && sectionMatchesSearch(entry.id, searchQuery),
+      )
+    : [];
 
   return (
     <SettingsLayout
@@ -232,6 +238,26 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
       onDiscard={loadConfig}
     >
       <form id={formId} onSubmit={saveConfig}>
+        {hasSearch && !sectionMatchesSearch(section, searchQuery) ? (
+          <p className="body-md text-muted">
+            No settings in this section match “{searchQuery.trim()}”.
+            {otherMatchingSections.length ? (
+              <>
+                {' '}Try{' '}
+                {otherMatchingSections.map((entry, index) => (
+                  <span key={entry.id}>
+                    {index > 0 ? ', ' : ''}
+                    <Link to={entry.path} className="text-secondary hover:underline">
+                      {entry.label}
+                    </Link>
+                  </span>
+                ))}
+                .
+              </>
+            ) : null}
+          </p>
+        ) : null}
+
         {section === 'general' ? (
           <GeneralSettingsSection
             token={token}
@@ -257,8 +283,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
             setOllamaCloudBaseUrl={setOllamaCloudBaseUrl}
             showCloudKey={showCloudKey}
             setShowCloudKey={setShowCloudKey}
-            onRefreshLocal={refreshLocalHealth}
-            onRefreshCloud={refreshCloudHealth}
+            onRefreshLocal={refreshHealth}
+            onRefreshCloud={refreshHealth}
             searchQuery={searchQuery}
           />
         ) : null}

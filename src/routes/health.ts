@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import {
   isProviderConfigured,
+  providerNotConfiguredMessage,
   resolveProviderHost,
 } from '../lib/llm-provider';
 import { sendJson } from '../lib/http';
@@ -12,20 +13,16 @@ async function probeProvider(
   config: ReturnType<ServerContext['configStore']['loadConfig']>,
   id: LlmProviderId,
 ): Promise<OllamaProbeResult> {
+  const notConfiguredMessage = providerNotConfiguredMessage(id);
   if (!isProviderConfigured(config, id)) {
-    const message =
-      id === 'ollama'
-        ? 'ollamaBaseUrl is not set'
-        : 'ollamaCloudApiKey is not set';
-    return ctx.ollamaProbe.probe({ notConfiguredMessage: message });
+    return ctx.ollamaProbe.probe({ notConfiguredMessage });
   }
 
   const host = resolveProviderHost(config, id);
   return ctx.ollamaProbe.probe({
     baseUrl: host.baseUrl,
     apiKey: host.apiKey,
-    notConfiguredMessage:
-      id === 'ollama' ? 'ollamaBaseUrl is not set' : 'ollamaCloudApiKey is not set',
+    notConfiguredMessage,
   });
 }
 

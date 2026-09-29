@@ -283,7 +283,7 @@ export function excludeWorkspaceInfrastructureFromGit(
 }
 
 export function createOpenCodeConfigService(options: {
-  fs?: FsLike;
+  fs?: FsLike & Partial<Pick<typeof fs, 'chmodSync'>>;
   path?: typeof path;
   os?: typeof os;
   configDir?: string;
@@ -312,7 +312,13 @@ export function createOpenCodeConfigService(options: {
       fsImpl.writeFileSync(instructionsPath, `${instructionsContent}\n`, 'utf8');
     }
 
-    fsImpl.writeFileSync(configPath, `${JSON.stringify(opencodeConfig, null, 2)}\n`, 'utf8');
+    // May embed the Ollama Cloud API key — keep it owner-only (mode applies on create; chmod
+    // tightens files written by earlier versions).
+    fsImpl.writeFileSync(configPath, `${JSON.stringify(opencodeConfig, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    fsImpl.chmodSync?.(configPath, 0o600);
     return { path: configPath, config: opencodeConfig };
   }
 

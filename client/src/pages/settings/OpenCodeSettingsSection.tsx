@@ -11,7 +11,12 @@ import { SectionCard } from '../../components/ui/Card';
 import { Button, CheckboxField, Field, TextArea, TextInput } from '../../components/ui/Form';
 import { ModelCatalogSelect } from './ModelCatalogSelect';
 import { ProviderSelect } from './ProviderSelect';
-import { fieldMatchesSearch } from './helpers';
+import {
+  SETTINGS_SEARCH_KEYWORDS,
+  describeModelCatalog,
+  fieldMatchesSearch,
+  makeShowSection,
+} from './helpers';
 
 interface OpenCodeSettingsSectionProps {
   config: AppConfig;
@@ -61,17 +66,13 @@ export function OpenCodeSettingsSection({
   searchQuery,
 }: OpenCodeSettingsSectionProps) {
   const query = searchQuery.trim().toLowerCase();
-  const showSection = (labels: string[]) =>
-    !query || labels.some((label) => label.toLowerCase().includes(query));
+  const showSection = makeShowSection(searchQuery);
+  const keywords = SETTINGS_SEARCH_KEYWORDS.opencode;
 
-  const providerStatus = health?.providers?.[opencodeProvider] ?? null;
-  const availableModels = [...(providerStatus?.models ?? [])]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((model) => model.name);
-  const unreachableLabel =
-    providerStatus?.reachable === false
-      ? `— ${opencodeProvider === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama'} unreachable —`
-      : '— no models available —';
+  const { catalog: availableModels, unreachableLabel } = describeModelCatalog(
+    health?.providers?.[opencodeProvider],
+    opencodeProvider,
+  );
 
   const copyGlobalModelToAllLoopVerbs = () => {
     const globalModel = opencodeModel.trim();
@@ -103,7 +104,7 @@ export function OpenCodeSettingsSection({
 
   return (
     <div className="grid gap-6">
-      {showSection(['opencode', 'model', 'provider', 'system prompt']) ? (
+      {showSection(keywords.defaults) ? (
         <SectionCard title="OpenCode defaults" icon={<span className="code-md text-secondary">OC</span>}>
           <div className="grid gap-4 sm:grid-cols-2">
             <ProviderSelect
@@ -116,6 +117,7 @@ export function OpenCodeSettingsSection({
               label="Default model"
               value={opencodeModel}
               catalog={availableModels}
+              placeholder="Default (llama3.2)"
               unreachableLabel={unreachableLabel}
               onChange={setOpencodeModel}
             />
@@ -132,7 +134,7 @@ export function OpenCodeSettingsSection({
         </SectionCard>
       ) : null}
 
-      {showSection(['opencode', 'permissions', 'auto-approve', 'timeout', 'interactive', 'loop']) ? (
+      {showSection(keywords.permissions) ? (
         <SectionCard
           title="OpenCode permissions & timeouts"
           icon={<span className="code-md text-secondary">OC</span>}
@@ -178,7 +180,7 @@ export function OpenCodeSettingsSection({
         </SectionCard>
       ) : null}
 
-      {showSection(['loop', 'observe', 'plan', 'act', 'reflect', 'initial plan', 'model']) ? (
+      {showSection(keywords.loop) ? (
         <SectionCard title="Loop mode — models per step" icon={<span className="code-md text-secondary">LP</span>}>
           <p className="text-sm text-muted">
             Leave blank to use the global OpenCode model. Loop verbs share the OpenCode provider
