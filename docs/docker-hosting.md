@@ -110,9 +110,11 @@ GitHub App credentials (`githubAppId`, `githubAppInstallationId`, `githubAppPriv
 | `PORT` | `8080` | HTTP listen port |
 | `DATA_DIR` | `/data` | Config, repos, agents, and OpenCode template on disk — **mount a volume here** |
 | `AGENT_WORKSPACE` | `/workspace/agents` (Linux container) | Ephemeral git clones per agent — **mount a volume on `/workspace`** in production |
-| `OLLAMA_BASE_URL` | — | Bootstrap Ollama URL on first start if not already in config |
+| `OLLAMA_BASE_URL` | — | Bootstrap local Ollama URL on first start if not already in config |
+| `OLLAMA_CLOUD_API_KEY` | — | Bootstrap Ollama Cloud API key on first start |
+| `OLLAMA_CLOUD_BASE_URL` | — | Optional Cloud host (default `https://ollama.com`) |
 | `OPENCODE_MODEL` | — | Bootstrap default model (e.g. `llama3.2`) |
-| `OPENCODE_PROVIDER` | — | Bootstrap provider id (default `ollama`) |
+| `OPENCODE_PROVIDER` | — | Bootstrap provider id (`ollama` or `ollama-cloud`) |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent worker processes |
 | `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds (from worker start, not queue wait) |
 | `OCR_BIN` | `ocr` | Open Code Review CLI (preinstalled in the image; see [code-review.md](./code-review.md)) |
@@ -143,7 +145,7 @@ The container cannot reach Ollama at `http://localhost:11434` on your machine. P
 - **Docker Desktop (Windows/macOS):** `http://host.docker.internal:11434`
 - **Linux:** `http://host.docker.internal:11434` with `host-gateway` mapping (see `docker run` / Compose examples above), or your host’s LAN IP
 
-Verify from the UI (Settings → Ollama Status) or:
+Verify from the UI (Settings → Models) or:
 
 ```bash
 curl http://localhost:8080/health

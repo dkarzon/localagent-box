@@ -2,6 +2,12 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { parseNonNegativeInt, parsePositiveInt } from '../../lib/parse';
+import {
+  isProviderConfigured,
+  resolveReviewProvider,
+  resolveProviderHost,
+  stripProviderModelPrefix,
+} from '../../lib/llm-provider';
 import { normalizeOpenCodeBaseUrl } from '../../services/opencode-config';
 import type { AppConfig, SpawnFn } from '../../types';
 import type { OcrReviewEnvelope } from './types';
@@ -48,15 +54,23 @@ export function getOcrReviewConcurrency(): number {
 }
 
 export function buildOcrLlmSettings(config: AppConfig): OcrConfig['llm'] {
-  if (!config.ollamaBaseUrl?.trim()) {
-    throw new Error('Ollama is not configured (ollamaBaseUrl is empty)');
+  const providerId = resolveReviewProvider(config);
+  if (!isProviderConfigured(config, providerId)) {
+    throw new Error(
+      `OCR provider "${providerId}" is not configured — set credentials on Settings → Models`,
+    );
   }
 
-  const effectiveModel = config.reviewModel || config.opencodeModel || 'llama3.2';
-  const baseUrl = normalizeOpenCodeBaseUrl(config.ollamaBaseUrl);
+  const host = resolveProviderHost(config, providerId);
+  const effectiveModel = stripProviderModelPrefix(
+    config.reviewModel || config.opencodeModel || 'llama3.2',
+  );
+  const baseUrl = normalizeOpenCodeBaseUrl(host.baseUrl);
+  const authToken = providerId === 'ollama-cloud' ? host.apiKey || '' : 'ollama';
+
   return {
     url: `${baseUrl}/chat/completions`,
-    auth_token: 'ollama',
+    auth_token: authToken,
     model: effectiveModel,
     use_anthropic: false,
   };

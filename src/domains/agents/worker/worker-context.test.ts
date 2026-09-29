@@ -30,8 +30,11 @@ function makeJob(dataDir: string): AgentJob {
 function writeConfig(dataDir: string, extra: Partial<AppConfig>): void {
   const config: AppConfig = {
     ollamaBaseUrl: '',
+    ollamaCloudApiKey: '',
+    ollamaCloudBaseUrl: '',
     opencodeModel: '',
     opencodeProvider: 'ollama',
+    reviewProvider: '',
     systemPrompt: '',
     // Valid GitHub App credentials so assertConfigured passes.
     githubAppId: '12345',

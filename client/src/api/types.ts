@@ -116,10 +116,27 @@ export interface OllamaStatus {
   models?: OllamaModel[];
 }
 
+export const LLM_PROVIDER_IDS = ['ollama', 'ollama-cloud'] as const;
+export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
+
+export const LLM_PROVIDER_LABELS: Record<LlmProviderId, string> = {
+  ollama: 'Ollama (local)',
+  'ollama-cloud': 'Ollama Cloud',
+};
+
+export interface HealthResponse {
+  ollama?: OllamaStatus;
+  providers?: Partial<Record<LlmProviderId, OllamaStatus>>;
+}
+
 export interface AppConfig {
   ollamaBaseUrl?: string;
+  ollamaCloudApiKey?: string;
+  ollamaCloudBaseUrl?: string;
+  hasOllamaCloudApiKey?: boolean;
   opencodeModel?: string;
-  opencodeProvider?: string;
+  opencodeProvider?: LlmProviderId;
+  reviewProvider?: LlmProviderId | '';
   /** Default system prompt for agents, unless overridden per-repo or per-agent. Empty string is sent as `null` in GET. */
   systemPrompt?: string | null;
   githubAppId?: string;
@@ -365,17 +382,36 @@ export interface Agent {
   queue?: AgentQueueState;
 }
 
-export const CONFIG_FIELDS = [
+export const GENERAL_CONFIG_FIELDS = ['webhookUrl'] as const;
+
+export const MODELS_CONFIG_FIELDS = [
   'ollamaBaseUrl',
-  'opencodeModel',
-  'opencodeProvider',
-  'systemPrompt',
+  'ollamaCloudApiKey',
+  'ollamaCloudBaseUrl',
+] as const;
+
+export const GITHUB_CONFIG_FIELDS = [
   'githubAppId',
   'githubAppInstallationId',
   'githubAppPrivateKey',
   'gitUserName',
   'gitUserEmail',
-  'webhookUrl',
+] as const;
+
+export const OPENCODE_CONFIG_FIELDS = [
+  'opencodeProvider',
+  'opencodeModel',
+  'systemPrompt',
+] as const;
+
+export const OCR_CONFIG_FIELDS = ['reviewProvider', 'reviewModel'] as const;
+
+export const CONFIG_FIELDS = [
+  ...MODELS_CONFIG_FIELDS,
+  ...OPENCODE_CONFIG_FIELDS,
+  ...OCR_CONFIG_FIELDS,
+  ...GITHUB_CONFIG_FIELDS,
+  ...GENERAL_CONFIG_FIELDS,
 ] as const;
 
 export type ConfigField = (typeof CONFIG_FIELDS)[number];

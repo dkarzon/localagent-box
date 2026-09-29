@@ -5,8 +5,11 @@ import { resolveAutoApprovePermissions } from './batch-run-flow';
 
 const baseConfig: AppConfig = {
   ollamaBaseUrl: '',
+  ollamaCloudApiKey: '',
+  ollamaCloudBaseUrl: '',
   opencodeModel: '',
   opencodeProvider: 'ollama',
+  reviewProvider: '',
   systemPrompt: '',
   githubAppId: '',
   githubAppInstallationId: '',

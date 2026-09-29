@@ -6,6 +6,7 @@ import {
   hasNonEmptyLoopVerbModel,
   hasResolvableLoopModel,
   isAgentActive,
+  LLM_PROVIDER_LABELS,
   LOOP_VERB_LABELS,
   LOOP_VERB_MODELS_DEFAULT,
   LOOP_VERBS,
@@ -15,8 +16,9 @@ import {
   type AgentMode,
   type AgentsListResponse,
   type AppConfig,
+  type HealthResponse,
   type LoopVerbModels,
-  type OllamaStatus,
+  type LlmProviderId,
   type QueueOnBranchPrefill,
   type Repo,
   type StatusVariant,
@@ -68,7 +70,7 @@ export function AgentSessionsPage({
 }: AgentSessionsPageProps) {
   const { token } = useApiToken();
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [ollama, setOllama] = useState<OllamaStatus | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loadError, setLoadError] = useState('');
   const [status, setStatus] = useState('');
   const [statusVariant, setStatusVariant] = useState<StatusVariant>('');
@@ -85,6 +87,8 @@ export function AgentSessionsPage({
   const [model, setModel] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
   const [defaultReviewModel, setDefaultReviewModel] = useState('');
+  const [opencodeProvider, setOpencodeProvider] = useState<LlmProviderId>('ollama');
+  const [reviewProvider, setReviewProvider] = useState<LlmProviderId | ''>('');
   const [push, setPush] = useState(true);
   const [pushOnFailure, setPushOnFailure] = useState(false);
   const [mode, setMode] = useState<AgentMode>('batch');
@@ -173,10 +177,10 @@ export function AgentSessionsPage({
 
   const loadHealth = useCallback(async () => {
     try {
-      const health = await apiFetch<{ ollama?: OllamaStatus }>('/health');
-      setOllama(health.ollama ?? null);
+      const next = await apiFetch<HealthResponse>('/health');
+      setHealth(next);
     } catch {
-      setOllama(null);
+      setHealth(null);
     }
   }, []);
 
@@ -186,6 +190,8 @@ export function AgentSessionsPage({
       const config = await apiFetch<AppConfig>('/api/v1/config');
       setDefaultModel(config.opencodeModel || '');
       setDefaultReviewModel(config.reviewModel || '');
+      setOpencodeProvider(config.opencodeProvider || 'ollama');
+      setReviewProvider(config.reviewProvider || '');
       setBatchAutoApproveDefault(config.batchAutoApprovePermissions !== false);
       setLoopAutoApproveDefault(config.loopAutoApprovePermissions !== false);
       setInteractiveAutoApproveDefault(config.interactiveAutoApprovePermissions === true);
@@ -217,9 +223,26 @@ export function AgentSessionsPage({
     interactiveAutoApproveDefault,
   ]);
 
+  const consumerProvider = useMemo<LlmProviderId>(() => {
+    if (mode === 'review') {
+      return reviewProvider || opencodeProvider;
+    }
+    return opencodeProvider;
+  }, [mode, reviewProvider, opencodeProvider]);
+
+  const consumerStatus = useMemo(
+    () => health?.providers?.[consumerProvider] ?? null,
+    [health, consumerProvider],
+  );
+
+  const providerLabel = LLM_PROVIDER_LABELS[consumerProvider];
+
   const availableModels = useMemo(
-    () => [...(ollama?.models ?? [])].sort((a, b) => a.name.localeCompare(b.name)).map((m) => m.name),
-    [ollama?.models],
+    () =>
+      [...(consumerStatus?.models ?? [])]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((m) => m.name),
+    [consumerStatus?.models],
   );
 
   useEffect(() => {
@@ -348,12 +371,16 @@ export function AgentSessionsPage({
     onQueuePrefillConsumed?.();
   };
 
+  const providerReachable = consumerStatus?.reachable === true;
+  const hostReady = providerReachable && availableModels.length > 0;
+
+  // Review runs fall back to the Settings review/OpenCode model, so an empty catalog is OK.
   const startDisabled =
     !repos.length ||
     !configLoaded ||
     (mode === 'review'
-      ? !reviewHeadBranch.trim()
-      : !availableModels.length || (mode === 'loop' ? !loopCanStart : !model.trim()));
+      ? !reviewHeadBranch.trim() || !providerReachable
+      : !hostReady || (mode === 'loop' ? !loopCanStart : !model.trim()));
 
   const startAgent = async (event: FormEvent) => {
     event.preventDefault();
@@ -517,7 +544,12 @@ export function AgentSessionsPage({
   const totalTokens = agentTokenTotal(tokenStats.overall);
   const totalCost = tokenStats.overall.cost ?? 0;
 
-  const systemOnline = ollama?.reachable !== false;
+  // Health not loaded (or fetch failed) is "unknown", not an outage.
+  const systemStatus = !consumerStatus
+    ? { dot: 'bg-muted', label: `${providerLabel} status unknown` }
+    : consumerStatus.reachable
+      ? { dot: 'bg-success', label: `${providerLabel} online` }
+      : { dot: 'bg-error', label: `${providerLabel} offline` };
 
   return (
     <div className="p-6 pb-32 md:p-6">
@@ -528,10 +560,8 @@ export function AgentSessionsPage({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-2 body-sm text-on-surface-variant">
-            <span
-              className={`size-2 rounded-full ${systemOnline ? 'bg-success' : 'bg-error'}`}
-            />
-            {systemOnline ? 'System Online' : 'System Offline'}
+            <span className={`size-2 rounded-full ${systemStatus.dot}`} />
+            {systemStatus.label}
           </span>
           <FilterTabs
             tabs={[
@@ -569,9 +599,9 @@ export function AgentSessionsPage({
         />
         <StatCard
           label="Models Loaded"
-          value={ollama?.modelCount ?? 0}
+          value={consumerStatus?.modelCount ?? 0}
           meta={
-            ollama?.reachable ? (
+            consumerStatus?.reachable ? (
               <span className="flex items-center gap-1.5 text-xs text-success">
                 <span className="size-1.5 rounded-full bg-success" />
                 Connected
@@ -882,9 +912,9 @@ export function AgentSessionsPage({
                   >
                     {!availableModels.length ? (
                       <option value="">
-                        {ollama?.reachable === false
-                          ? '— Ollama unreachable (uses Settings default) —'
-                          : '— no models available (uses Settings default) —'}
+                        {providerReachable
+                          ? '— no models listed (uses Settings default) —'
+                          : `— ${providerLabel} unreachable — check Settings → Models —`}
                       </option>
                     ) : (
                       availableModels.map((entry) => (
@@ -899,8 +929,8 @@ export function AgentSessionsPage({
                     )}
                   </Select>
                   <p className="mt-1 text-xs text-muted">
-                    Override the review model for this run. Leave unset when Ollama is
-                    unavailable to use the Settings review model.
+                    Override the review model for this run. Leave unset to use the Settings
+                    default. Requires {providerLabel} to be reachable.
                   </p>
                 </Field>
               </>
@@ -965,8 +995,8 @@ export function AgentSessionsPage({
                     <option value="">Settings / global default</option>
                     {!availableModels.length ? (
                       <option value="" disabled>
-                        {ollama?.reachable === false
-                          ? '— Ollama unreachable —'
+                        {consumerStatus?.reachable === false
+                          ? `— ${providerLabel} unreachable —`
                           : '— no models available —'}
                       </option>
                     ) : (
@@ -1089,8 +1119,8 @@ export function AgentSessionsPage({
                 >
                   {!availableModels.length ? (
                     <option value="">
-                      {ollama?.reachable === false
-                        ? '— Ollama unreachable —'
+                      {consumerStatus?.reachable === false
+                        ? `— ${providerLabel} unreachable —`
                         : '— no models available —'}
                     </option>
                   ) : (

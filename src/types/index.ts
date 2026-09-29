@@ -15,10 +15,20 @@ import type { GitChangedFile } from './git-file-change';
 export type { GitChangedFile, GitFileChangeKind } from './git-file-change';
 export type AgentGitChangedFile = GitChangedFile;
 
+export const LLM_PROVIDER_IDS = ['ollama', 'ollama-cloud'] as const;
+export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
+
+export const DEFAULT_OLLAMA_CLOUD_BASE_URL = 'https://ollama.com';
+
 export interface AppConfig {
   ollamaBaseUrl: string;
+  ollamaCloudApiKey: string;
+  /** Empty → DEFAULT_OLLAMA_CLOUD_BASE_URL */
+  ollamaCloudBaseUrl: string;
   opencodeModel: string;
-  opencodeProvider: string;
+  opencodeProvider: LlmProviderId;
+  /** Empty → inherit opencodeProvider */
+  reviewProvider: LlmProviderId | '';
   systemPrompt: string;
   githubAppId: string;
   githubAppInstallationId: string;
@@ -65,8 +75,12 @@ export type ConfigPartial = Partial<AppConfig>;
 
 export interface PublicConfig {
   ollamaBaseUrl: string;
+  ollamaCloudApiKey: string;
+  ollamaCloudBaseUrl: string;
+  hasOllamaCloudApiKey: boolean;
   opencodeModel: string;
-  opencodeProvider: string;
+  opencodeProvider: LlmProviderId;
+  reviewProvider: LlmProviderId | '';
   systemPrompt: string | null;
   githubAppId: string;
   githubAppInstallationId: string;

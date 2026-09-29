@@ -4,6 +4,15 @@ export function validationError(message: string): CodedError {
   return new CodedError(message, 'VALIDATION_ERROR');
 }
 
+export function isValidHttpUrl(value: unknown): boolean {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+}
+
 export function validateOwner(owner: unknown): string {
   if (!owner || typeof owner !== 'string') {
     throw validationError('Owner is required and must be a string');

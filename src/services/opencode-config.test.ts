@@ -5,6 +5,7 @@ import {
   buildGemmaReasoningWorkaroundOptions,
   buildModelConfig,
   buildOpenCodeConfig,
+  createOpenCodeConfigService,
   isGemmaThinkingModel,
 } from './opencode-config';
 import type { AppConfig, AgentJob } from '../types';
@@ -122,6 +123,70 @@ describe('buildOpenCodeConfig', () => {
       '*': { '*': 'allow' },
       question: 'deny',
     });
+  });
+});
+
+describe('buildOpenCodeConfig cloud provider', () => {
+  it('builds cloud provider options with apiKey', () => {
+    const config = {
+      ollamaBaseUrl: '',
+      ollamaCloudApiKey: 'cloud-secret',
+      ollamaCloudBaseUrl: 'https://ollama.com',
+      opencodeProvider: 'ollama-cloud',
+      opencodeModel: 'gemma4:31b',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config);
+    assert.equal(file.model, 'ollama-cloud/gemma4:31b');
+    assert.equal(file.provider['ollama-cloud']?.name, 'Ollama Cloud');
+    assert.equal(file.provider['ollama-cloud']?.options.baseURL, 'https://ollama.com/v1');
+    assert.equal(file.provider['ollama-cloud']?.options.apiKey, 'cloud-secret');
+  });
+
+  it('writeOpenCodeConfig succeeds for cloud-only installs', () => {
+    const fs = {
+      existsSync: () => false,
+      readFileSync: () => '',
+      appendFileSync: () => {},
+      mkdirSync: () => {},
+      writeFileSync: () => {},
+    };
+    const service = createOpenCodeConfigService({
+      fs: fs as never,
+      configDir: '/tmp/opencode-test',
+    });
+    const config = {
+      ollamaBaseUrl: '',
+      ollamaCloudApiKey: 'cloud-secret',
+      ollamaCloudBaseUrl: '',
+      opencodeProvider: 'ollama-cloud',
+      opencodeModel: 'gemma4:31b',
+    } as AppConfig;
+    const result = service.writeOpenCodeConfig(config);
+    assert.ok(result);
+    assert.equal(result?.config.model, 'ollama-cloud/gemma4:31b');
+  });
+
+  it('writeOpenCodeConfig no-ops when selected host is missing', () => {
+    const fs = {
+      existsSync: () => false,
+      readFileSync: () => '',
+      appendFileSync: () => {},
+      mkdirSync: () => {},
+      writeFileSync: () => {
+        throw new Error('should not write');
+      },
+    };
+    const service = createOpenCodeConfigService({
+      fs: fs as never,
+      configDir: '/tmp/opencode-test',
+    });
+    const config = {
+      ollamaBaseUrl: '',
+      ollamaCloudApiKey: '',
+      opencodeProvider: 'ollama-cloud',
+      opencodeModel: 'gemma4:31b',
+    } as AppConfig;
+    assert.equal(service.writeOpenCodeConfig(config), null);
   });
 });
 

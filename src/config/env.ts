@@ -17,6 +17,8 @@ export interface ServerEnv {
   maxBodyBytes: number;
   shutdownTimeoutMs: number;
   ollamaBaseUrl: string | undefined;
+  ollamaCloudApiKey: string | undefined;
+  ollamaCloudBaseUrl: string | undefined;
   opencodeModel: string | undefined;
   opencodeProvider: string | undefined;
   opencodeBin: string;
@@ -113,6 +115,10 @@ export function loadServerEnv(): ServerEnv {
     maxBodyBytes: parsePositiveInt(process.env.MAX_BODY_BYTES ?? fileVars.MAX_BODY_BYTES, 5 * 1024 * 1024),
     shutdownTimeoutMs: parsePositiveInt(process.env.SHUTDOWN_TIMEOUT_MS ?? fileVars.SHUTDOWN_TIMEOUT_MS, 30_000),
     ollamaBaseUrl: process.env.OLLAMA_BASE_URL || fileVars.OLLAMA_BASE_URL || undefined,
+    ollamaCloudApiKey:
+      process.env.OLLAMA_CLOUD_API_KEY || fileVars.OLLAMA_CLOUD_API_KEY || undefined,
+    ollamaCloudBaseUrl:
+      process.env.OLLAMA_CLOUD_BASE_URL || fileVars.OLLAMA_CLOUD_BASE_URL || undefined,
     opencodeModel: process.env.OPENCODE_MODEL || fileVars.OPENCODE_MODEL || undefined,
     opencodeProvider: process.env.OPENCODE_PROVIDER || fileVars.OPENCODE_PROVIDER || undefined,
     opencodeBin: process.env.OPENCODE_BIN || fileVars.OPENCODE_BIN || 'opencode',

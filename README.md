@@ -132,7 +132,9 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `PORT` | `8080` | HTTP listen port |
 | `DATA_DIR` | `/data` | Config and agent state directory (use `./data` locally) |
 | `API_TOKEN` | `localagent-box` | Bearer token for mutating API calls |
-| `OLLAMA_BASE_URL` | — | Bootstrap Ollama URL on first start (e.g. `http://localhost:11434`) |
+| `OLLAMA_BASE_URL` | — | Bootstrap local Ollama URL on first start (e.g. `http://localhost:11434`) |
+| `OLLAMA_CLOUD_API_KEY` | — | Bootstrap Ollama Cloud API key on first start |
+| `OLLAMA_CLOUD_BASE_URL` | — | Optional Cloud host (default `https://ollama.com`) |
 | `AGENT_WORKSPACE` | platform-specific | Directory for ephemeral agent clones |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent workers |
 | `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds, measured from when the worker starts running (not queue wait) |
@@ -177,7 +179,7 @@ Read [SECURITY.md](./SECURITY.md) before deploying anywhere beyond a local trial
 | Health check shows Ollama as unreachable | `ollamaBaseUrl` isn't reachable from inside the container — on Docker Desktop use `http://host.docker.internal:11434`, not `localhost` |
 | Agent fails immediately with a GitHub/clone error | GitHub App isn't installed on that repo, or `githubAppId`/`githubAppInstallationId`/`githubAppPrivateKey` are wrong — see [docs/github-app-setup.md](./docs/github-app-setup.md#troubleshooting) |
 | Agent finishes but no PR appears | `push` was `false`, or the OpenCode run didn't produce a commit — batch/loop runs fail if nothing was committed; check `GET /agents/:id/logs` |
-| Review agent fails immediately | Ollama not configured or unreachable — OCR requires `ollamaBaseUrl`; check Settings and [docs/code-review.md](./docs/code-review.md) |
+| Review agent fails immediately | OCR review provider not configured or unreachable — check **Settings → Models** and **Settings → OCR**; see [docs/code-review.md](./docs/code-review.md) |
 | Review completes but nothing on GitHub | No PR exists for `headBranch`, or GitHub App lacks pull request write — check logs for "No matching PR" or GitHub warnings |
 | The `localagent-box / review` check is missing on PRs | The installation hasn't accepted the **Checks: Read and write** permission — update the app's permissions and re-approve the installation (GitHub notifies the owner); reviews still complete without it |
 | The `localagent-box / review` check is stuck `in_progress` | The server was restarted mid-review — startup reconciliation cancels interrupted reviews' checks; if one remains, retry the review (a new check run replaces it) |
@@ -224,8 +226,11 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | Field | Description |
 |-------|-------------|
 | `ollamaBaseUrl` | External self-hosted Ollama URL |
-| `opencodeModel` | Model name on Ollama |
-| `opencodeProvider` | Provider id (default `ollama`) |
+| `ollamaCloudApiKey` | Ollama Cloud API key (secret; redacted in GET) |
+| `ollamaCloudBaseUrl` | Optional Cloud host (default `https://ollama.com`) |
+| `opencodeModel` | Default model on the OpenCode provider |
+| `opencodeProvider` | OpenCode provider id (`ollama` or `ollama-cloud`) |
+| `reviewProvider` | OCR provider id; empty inherits `opencodeProvider` |
 | `systemPrompt` | Default system prompt for agents (empty string stored as `null` in GET) |
 | `githubAppId` | GitHub App ID |
 | `githubAppInstallationId` | Installation ID |
@@ -243,7 +248,7 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `autoReviewPullRequests` | When true, auto-queue a review agent after a coding agent's PR is created (default false). Per-repo `autoReviewPullRequests` overrides this global default. See [docs/code-review.md](./docs/code-review.md). |
 | `reviewModel` | Model used for auto-queued and manual review agents (Open Code Review); falls back to `opencodeModel` when empty |
 
-All fields above are readable via `GET /api/v1/config` and settable via `PUT /api/v1/config`, and every one of them is editable from the **Settings** page in the UI (API Access, Ollama Status, GitHub Integration, Webhooks, OpenCode, Pull requests & review, and OpenCode permissions cards). Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.
+All fields above are readable via `GET /api/v1/config` and settable via `PUT /api/v1/config`. The **Settings** UI is split into bookmarkable sections: **General**, **Models**, **GitHub**, **OpenCode**, and **OCR** — each page saves only its own fields. Batch, loop, and interactive agents all run through `opencode serve` with per-agent isolated config at `{dataDir}/agents/{agentId}/opencode-config/opencode.json`. Per-agent `autoApprovePermissions` on create overrides the mode default from Settings.
 
 #### Loop verb model resolution
 
@@ -285,9 +290,9 @@ curl -X PUT http://localhost:8080/api/v1/config \
   -d '{"ollamaBaseUrl":"http://host.docker.internal:11434","opencodeModel":"llama3.2"}'
 ```
 
-Saving Ollama settings writes OpenCode config to `~/.config/opencode/opencode.json` inside the container. The health endpoint probes `{ollamaBaseUrl}/api/tags`.
+Saving OpenCode settings writes `opencode.json` to `~/.config/opencode/` when the selected OpenCode provider is configured. `GET /health` returns `providers.ollama` and `providers['ollama-cloud']` (top-level `ollama` remains for backward compatibility).
 
-Optional bootstrap env vars: `OLLAMA_BASE_URL`, `OPENCODE_MODEL`, `OPENCODE_PROVIDER`.
+Optional bootstrap env vars: `OLLAMA_BASE_URL`, `OLLAMA_CLOUD_API_KEY`, `OLLAMA_CLOUD_BASE_URL`, `OPENCODE_MODEL`, `OPENCODE_PROVIDER`.
 
 ### GitHub App verify
 

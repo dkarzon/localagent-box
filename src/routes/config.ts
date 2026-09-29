@@ -3,23 +3,37 @@ import { sendJson, readJsonBody, requireAuth } from '../lib/http';
 import { withErrorHandling } from '../lib/error-handler';
 import { maybePopulateBotGitIdentity } from '../lib/github-bot-identity';
 import { getLogger } from '../lib/logger';
+import {
+  LLM_PROVIDER_IDS,
+  isLlmProviderId,
+  isProviderConfigured,
+  providerNotConfiguredMessage,
+  resolveOpenCodeProvider,
+} from '../lib/llm-provider';
+import { isValidHttpUrl } from '../lib/validation';
 import type { ConfigPartial, Route, ServerContext } from '../types';
 import { CodedError } from '../types';
 import { getLoopVerbModelsDefault } from '../services/config-store';
 import { sanitizeLoopVerbModels } from '../lib/loop-verb-models';
 
-function isValidHttpUrl(value: unknown): boolean {
-  try {
-    const url = new URL(String(value));
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (_err) {
-    return false;
-  }
-}
-
 function assertValidHttpUrl(field: string, value: unknown): void {
   if (value && !isValidHttpUrl(value)) {
     throw new CodedError(`${field} must be a valid http(s) URL`, 'VALIDATION_ERROR');
+  }
+}
+
+function assertValidProvider(field: string, value: unknown, allowEmpty = false): void {
+  if (value === undefined) {
+    return;
+  }
+  if (allowEmpty && (value === '' || value === null)) {
+    return;
+  }
+  if (!isLlmProviderId(value)) {
+    throw new CodedError(
+      `${field} must be one of: ${LLM_PROVIDER_IDS.join(', ')}`,
+      'VALIDATION_ERROR',
+    );
   }
 }
 
@@ -36,6 +50,9 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
   const body = await readJsonBody(req);
 
   assertValidHttpUrl('ollamaBaseUrl', body.ollamaBaseUrl);
+  assertValidHttpUrl('ollamaCloudBaseUrl', body.ollamaCloudBaseUrl);
+  assertValidProvider('opencodeProvider', body.opencodeProvider);
+  assertValidProvider('reviewProvider', body.reviewProvider, true);
   if (
     body.webhookUrl &&
     typeof body.webhookUrl === 'string' &&
@@ -53,6 +70,14 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
 
   if (partial.githubAppPrivateKey === '' && current.githubAppPrivateKey) {
     delete partial.githubAppPrivateKey;
+  }
+
+  if (partial.ollamaCloudApiKey === '***') {
+    delete partial.ollamaCloudApiKey;
+  }
+
+  if (partial.ollamaCloudApiKey === '' && current.ollamaCloudApiKey) {
+    delete partial.ollamaCloudApiKey;
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'loopVerbModels')) {
@@ -73,7 +98,7 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
     withBotIdentity === saved ? saved : ctx.configStore.saveConfig(withBotIdentity);
   let opencode = null;
 
-  if (finalConfig.ollamaBaseUrl) {
+  if (isProviderConfigured(finalConfig, resolveOpenCodeProvider(finalConfig))) {
     opencode = ctx.opencodeConfig.writeOpenCodeConfig(finalConfig);
   }
 
@@ -81,7 +106,10 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
     ctx.gitService.applyGitConfig(finalConfig);
   }
 
-  const ollama = await ctx.ollamaProbe.probe(finalConfig.ollamaBaseUrl);
+  const ollama = await ctx.ollamaProbe.probe({
+    baseUrl: finalConfig.ollamaBaseUrl,
+    notConfiguredMessage: providerNotConfiguredMessage('ollama'),
+  });
 
   sendJson(res, 200, {
     ...ctx.configStore.toPublicConfig(finalConfig),

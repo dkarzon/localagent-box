@@ -1,5 +1,11 @@
-import type { AppConfig } from '../types';
+import {
+  isProviderConfigured,
+  resolveOpenCodeProvider,
+  resolveProviderHost,
+  stripProviderModelPrefix,
+} from '../lib/llm-provider';
 import { normalizeProbeBaseUrl } from './opencode-config';
+import type { AppConfig } from '../types';
 
 const CHAT_TIMEOUT_MS = 60_000;
 
@@ -22,12 +28,21 @@ interface OllamaChatResponse {
 }
 
 export function createOllamaChat(): OllamaChatService {
-  async function chatCompletion(messages: Array<{ role?: string; content?: string }>, model: string, baseUrl: string): Promise<string> {
+  async function chatCompletion(
+    messages: Array<{ role?: string; content?: string }>,
+    model: string,
+    baseUrl: string,
+    apiKey?: string,
+  ): Promise<string> {
     const url = `${normalizeProbeBaseUrl(baseUrl)}/api/chat`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey?.trim()) {
+      headers.Authorization = `Bearer ${apiKey.trim()}`;
+    }
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ model, messages, stream: false }),
       signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
     });
@@ -41,30 +56,37 @@ export function createOllamaChat(): OllamaChatService {
   }
 
   function resolveModel(config: AppConfig, override?: string): string {
-    if (override?.trim()) return override.trim();
+    if (override?.trim()) {
+      return stripProviderModelPrefix(override);
+    }
     const m = config.opencodeModel;
     if (m) {
-      return m.replace(/^ollama\//i, '');
+      return stripProviderModelPrefix(m);
     }
     return '';
   }
 
-  async function generateText(config: AppConfig, messages: OllamaMessage[], modelOverride?: string): Promise<OllamaGenerateResult> {
-    const baseUrl = config.ollamaBaseUrl;
-    if (!baseUrl?.trim()) {
-      throw new Error('Ollama is not configured (ollamaBaseUrl is empty)');
+  async function generateText(
+    config: AppConfig,
+    messages: OllamaMessage[],
+    modelOverride?: string,
+  ): Promise<OllamaGenerateResult> {
+    const providerId = resolveOpenCodeProvider(config);
+    if (!isProviderConfigured(config, providerId)) {
+      throw new Error(`OpenCode provider "${providerId}" is not configured`);
     }
 
+    const host = resolveProviderHost(config, providerId);
     let model = modelOverride || resolveModel(config);
     if (!model.trim()) {
       return { text: '' };
     }
 
-    model = model.trim();
+    model = stripProviderModelPrefix(model);
     const payload = messages.map((m) => ({ role: m.role, content: m.content }));
 
-    const chatFn = chatCompletion;
-    return chatFn(payload, model, baseUrl).then((content) => ({ text: content }));
+    const content = await chatCompletion(payload, model, host.baseUrl, host.apiKey);
+    return { text: content };
   }
 
   return { generateText };

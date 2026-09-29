@@ -16,6 +16,8 @@ import { createOllamaChat } from './services/ollama-client';
 import { createGithubAppService } from './services/github-app';
 import { createGitService } from './services/git-service';
 import { maybePopulateBotGitIdentity } from './lib/github-bot-identity';
+import { isLlmProviderId, providerNotConfiguredMessage } from './lib/llm-provider';
+import { isValidHttpUrl } from './lib/validation';
 import { createRepoService } from './domains/repos/repo.service';
 import { createAgentService } from './domains/agents/agent.service';
 import healthRoute from './routes/health';
@@ -39,12 +41,37 @@ function bootstrapConfig(
 ) {
   const current = configRepository.load();
 
+  const partial: import('./types').ConfigPartial = {};
+
   if (env.ollamaBaseUrl && !current.ollamaBaseUrl) {
-    return configRepository.save({
-      ollamaBaseUrl: env.ollamaBaseUrl,
-      opencodeModel: env.opencodeModel || current.opencodeModel,
-      opencodeProvider: env.opencodeProvider || current.opencodeProvider,
-    });
+    partial.ollamaBaseUrl = env.ollamaBaseUrl;
+    partial.opencodeModel = env.opencodeModel || current.opencodeModel;
+    if (env.opencodeProvider && !isLlmProviderId(env.opencodeProvider)) {
+      getLogger().warn(
+        { opencodeProvider: env.opencodeProvider },
+        'Ignoring invalid OPENCODE_PROVIDER env value',
+      );
+    }
+    partial.opencodeProvider = isLlmProviderId(env.opencodeProvider)
+      ? env.opencodeProvider
+      : current.opencodeProvider;
+  }
+  if (env.ollamaCloudApiKey && !current.ollamaCloudApiKey) {
+    partial.ollamaCloudApiKey = env.ollamaCloudApiKey;
+  }
+  if (env.ollamaCloudBaseUrl && !current.ollamaCloudBaseUrl) {
+    if (isValidHttpUrl(env.ollamaCloudBaseUrl)) {
+      partial.ollamaCloudBaseUrl = env.ollamaCloudBaseUrl;
+    } else {
+      getLogger().warn(
+        { ollamaCloudBaseUrl: env.ollamaCloudBaseUrl },
+        'Ignoring invalid OLLAMA_CLOUD_BASE_URL env value (must be an http(s) URL)',
+      );
+    }
+  }
+
+  if (Object.keys(partial).length > 0) {
+    return configRepository.save(partial);
   }
 
   return current;
@@ -87,9 +114,8 @@ function createContext(env: ReturnType<typeof getServerEnv>): ServerContext {
     agentsStore.save({ agents: [] });
   }
 
-  if (config.ollamaBaseUrl) {
-    opencodeConfig.writeOpenCodeConfig(config);
-  }
+  // No-ops when the resolved OpenCode provider is unconfigured (covers cloud-only installs).
+  opencodeConfig.writeOpenCodeConfig(config);
 
   if (config.gitUserName || config.gitUserEmail) {
     gitService.applyGitConfig(config);
@@ -240,7 +266,10 @@ function startServer(): void {
     logger.warn('API_TOKEN not set; using default token (set API_TOKEN in production)');
   }
 
-  ctx.ollamaProbe.probe(ctx.configRepository.load().ollamaBaseUrl).then((ollama: OllamaProbeResult) => {
+  ctx.ollamaProbe.probe({
+    baseUrl: ctx.configRepository.load().ollamaBaseUrl,
+    notConfiguredMessage: providerNotConfiguredMessage('ollama'),
+  }).then((ollama: OllamaProbeResult) => {
     if (ollama.status === 'not_configured') {
       logger.warn('Ollama URL not configured (set ollamaBaseUrl via API/UI or OLLAMA_BASE_URL env)');
     } else if (!ollama.reachable) {

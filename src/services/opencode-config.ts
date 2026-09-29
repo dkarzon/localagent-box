@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import type { AgentJob, AppConfig } from '../types';
+import {
+  isProviderConfigured,
+  resolveOpenCodeProvider,
+  resolveProviderHost,
+} from '../lib/llm-provider';
+import type { AgentJob, AppConfig, LlmProviderId } from '../types';
 import { collectLoopModels } from '../domains/agents/worker/loop-model';
 
 /** Legacy workspace filename — excluded from agent commits if still present. */
@@ -82,7 +87,7 @@ export interface OpenCodeConfigFile {
     {
       npm: string;
       name: string;
-      options: { baseURL: string };
+      options: { baseURL: string; apiKey?: string };
       models: Record<string, OpenCodeModelConfig>;
     }
   >;
@@ -163,13 +168,36 @@ function buildMergedInstructionsContent(config: AppConfig): string | null {
   return merged || null;
 }
 
+function buildProviderEntry(
+  providerId: LlmProviderId,
+  config: AppConfig,
+  registeredModelIds: string[],
+): OpenCodeConfigFile['provider'][string] {
+  const host = resolveProviderHost(config, providerId);
+  const baseURL = normalizeOpenCodeBaseUrl(host.baseUrl);
+  const providerOptions: { baseURL: string; apiKey?: string } = { baseURL };
+  if (host.apiKey) {
+    providerOptions.apiKey = host.apiKey;
+  }
+
+  const name = providerId === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama (local)';
+
+  return {
+    npm: '@ai-sdk/openai-compatible',
+    name,
+    options: providerOptions,
+    models: Object.fromEntries(
+      registeredModelIds.map((id) => [id, buildModelConfig(id)]),
+    ),
+  };
+}
+
 export function buildOpenCodeConfig(
   config: AppConfig,
   options?: OpenCodeConfigBuildOptions,
 ): OpenCodeConfigFile {
-  const providerId = config.opencodeProvider || 'ollama';
+  const providerId = resolveOpenCodeProvider(config);
   const modelId = config.opencodeModel || 'llama3.2';
-  const baseURL = normalizeOpenCodeBaseUrl(config.ollamaBaseUrl);
   const instructionsContent = buildMergedInstructionsContent(config);
   const modelIds = collectLoopModels(config, options?.job);
   const registeredModelIds = Array.from(new Set([modelId, ...modelIds]));
@@ -179,14 +207,7 @@ export function buildOpenCodeConfig(
     model: `${providerId}/${modelId}`,
     ...(instructionsContent ? { instructions: [LOCALAGENT_INSTRUCTIONS_FILE] } : {}),
     provider: {
-      [providerId]: {
-        npm: '@ai-sdk/openai-compatible',
-        name: 'Ollama (local)',
-        options: { baseURL },
-        models: Object.fromEntries(
-          registeredModelIds.map((id) => [id, buildModelConfig(id)]),
-        ),
-      },
+      [providerId]: buildProviderEntry(providerId, config, registeredModelIds),
     },
   };
 
@@ -262,7 +283,7 @@ export function excludeWorkspaceInfrastructureFromGit(
 }
 
 export function createOpenCodeConfigService(options: {
-  fs?: FsLike;
+  fs?: FsLike & Partial<Pick<typeof fs, 'chmodSync'>>;
   path?: typeof path;
   os?: typeof os;
   configDir?: string;
@@ -278,7 +299,7 @@ export function createOpenCodeConfigService(options: {
     config: AppConfig,
     options?: OpenCodeConfigBuildOptions,
   ): { path: string; config: OpenCodeConfigFile } | null {
-    if (!config.ollamaBaseUrl) {
+    if (!isProviderConfigured(config, resolveOpenCodeProvider(config))) {
       return null;
     }
 
@@ -291,7 +312,13 @@ export function createOpenCodeConfigService(options: {
       fsImpl.writeFileSync(instructionsPath, `${instructionsContent}\n`, 'utf8');
     }
 
-    fsImpl.writeFileSync(configPath, `${JSON.stringify(opencodeConfig, null, 2)}\n`, 'utf8');
+    // May embed the Ollama Cloud API key — keep it owner-only (mode applies on create; chmod
+    // tightens files written by earlier versions).
+    fsImpl.writeFileSync(configPath, `${JSON.stringify(opencodeConfig, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    fsImpl.chmodSync?.(configPath, 0o600);
     return { path: configPath, config: opencodeConfig };
   }
 
