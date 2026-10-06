@@ -7,10 +7,14 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
+    "mcp-server": "tsx src/mcp/server.ts",
     "build:ui": "npm run build --prefix client",
     "dev:ui": "npm run dev --prefix client",
     "postinstall": "node -e \"if (require('fs').existsSync('client/package.json')) require('child_process').execSync('npm install', { cwd: 'client', stdio: 'inherit' })\"",
     "test": "tsx --test src/**/*.test.ts"
+  },
+  "bin": {
+    "localagent-box-mcp-server": "dist/mcp/server.js"
   },
   "engines": {
     "node": ">=20.0.0"
