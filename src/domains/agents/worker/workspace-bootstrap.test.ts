@@ -333,9 +333,32 @@ describe('runWorkspaceBootstrap', () => {
       assert.match(log, /Running workspace bootstrap/);
     });
 
-    it('treats a failing setup.sh like any other failed setup and throws', async () => {
+    it('treats a failing setup.sh like any other failed setup — recorded, non-blocking by default', async () => {
       const h = makeHarness();
       writeSetupScript(h.workspaceDir, '#!/usr/bin/env bash\nexit 1\n');
+
+      const state = await runBootstrap(h, {
+        runCommand: fakeRunCommand(h, {
+          command: 'bash .localagent-box/setup.sh',
+          exitCode: 1,
+          outputTail: 'failure in setup.sh',
+          timedOut: false,
+          success: false,
+        }),
+      });
+
+      assert.equal(state.status, 'failed');
+      assert.equal(state.command, 'bash .localagent-box/setup.sh');
+      assert.equal(state.exitCode, 1);
+      assert.match(state.error ?? '', /^Bootstrap failed: `bash \.localagent-box\/setup\.sh` exited 1/);
+      assert.equal(h.agent.bootstrap?.status, 'failed');
+      assert.equal(h.agent.bootstrap?.source, 'script');
+    });
+
+    it('throws on a failing setup.sh when environment.json sets failOnError=true', async () => {
+      const h = makeHarness();
+      writeSetupScript(h.workspaceDir, '#!/usr/bin/env bash\nexit 1\n');
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, setup: { command: 'npm ci', failOnError: true } }));
 
       let caught: unknown;
       try {
@@ -458,9 +481,37 @@ describe('runWorkspaceBootstrap', () => {
     assert.deepEqual(before?.profiles, []);
   });
 
-  it('throws when the setup command fails with the default failOnError', async () => {
+  it('does not throw on failure by default and records the failure state', async () => {
     const h = makeHarness();
     writeConfig(h.workspaceDir, JSON.stringify({ version: 1, setup: { command: 'npm ci' } }));
+    const opts = {
+      runCommand: fakeRunCommand(h, {
+        command: 'npm ci',
+        exitCode: 1,
+        outputTail: 'npm ERR! Missing script: "prepare"',
+        timedOut: false,
+        success: false,
+      }),
+    };
+
+    const state = await runBootstrap(h, opts);
+
+    assert.equal(state.status, 'failed');
+    assert.equal(state.exitCode, 1);
+    assert.equal(state.error, 'Bootstrap failed: `npm ci` exited 1');
+    assert.equal(state.outputTail, 'npm ERR! Missing script: "prepare"');
+    assert.equal(h.agent.bootstrap?.status, 'failed');
+    const log = fs.readFileSync(h.logPath, 'utf8');
+    assert.match(log, /Workspace bootstrap failed with exit code 1/);
+    assert.match(log, /continuing \(the agent will attempt to fix it\)/);
+  });
+
+  it('throws when the setup command fails with explicit failOnError=true', async () => {
+    const h = makeHarness();
+    writeConfig(
+      h.workspaceDir,
+      JSON.stringify({ version: 1, setup: { command: 'npm ci', failOnError: true } }),
+    );
     const opts = {
       runCommand: fakeRunCommand(h, {
         command: 'npm ci',
@@ -483,40 +534,46 @@ describe('runWorkspaceBootstrap', () => {
     assert.equal(h.agent.bootstrap?.status, 'failed');
     const log = fs.readFileSync(h.logPath, 'utf8');
     assert.match(log, /Workspace bootstrap failed with exit code 1/);
+    assert.match(log, /failOnError=true/);
   });
 
-  it('does not throw when the setup command fails with failOnError=false', async () => {
-    const h = makeHarness();
-    writeConfig(
-      h.workspaceDir,
-      JSON.stringify({ version: 1, setup: { command: 'npm ci', failOnError: false } }),
-    );
-
-    const state = await runBootstrap(h, {
-      runCommand: fakeRunCommand(h, {
-        command: 'npm ci',
-        exitCode: 1,
-        outputTail: 'npm ERR! missing',
-        timedOut: false,
-        success: false,
-      }),
-    });
-
-    assert.equal(state.status, 'failed');
-    assert.equal(state.exitCode, 1);
-    assert.equal(state.error, 'Bootstrap failed: `npm ci` exited 1');
-    assert.equal(h.agent.bootstrap?.status, 'failed');
-    const log = fs.readFileSync(h.logPath, 'utf8');
-    assert.match(log, /failOnError=false/);
-  });
-
-  it('treats a timed-out setup as a failure and throws', async () => {
+  it('treats a timed-out setup as a failure, records it, and does not throw by default', async () => {
     const h = makeHarness();
     writeConfig(
       h.workspaceDir,
       JSON.stringify({
         version: 1,
         setup: { command: 'npm ci', timeoutMs: 60_000 },
+      }),
+    );
+
+    const opts = {
+      runCommand: fakeRunCommand(h, {
+        command: 'npm ci',
+        exitCode: 124,
+        outputTail: '',
+        timedOut: true,
+        success: false,
+      }),
+    };
+    const state = await runBootstrap(h, opts);
+
+    assert.equal(state.status, 'failed');
+    assert.equal(state.exitCode, 124);
+    assert.match(state.error ?? '', /Bootstrap timed out/);
+    assert.equal(h.agent.bootstrap?.status, 'failed');
+    assert.equal(h.agent.bootstrap?.exitCode, 124);
+    const log = fs.readFileSync(h.logPath, 'utf8');
+    assert.match(log, /Workspace bootstrap timed out/);
+  });
+
+  it('treats a timed-out setup as a failure and throws with explicit failOnError=true', async () => {
+    const h = makeHarness();
+    writeConfig(
+      h.workspaceDir,
+      JSON.stringify({
+        version: 1,
+        setup: { command: 'npm ci', timeoutMs: 60_000, failOnError: true },
       }),
     );
 
@@ -958,13 +1015,46 @@ describe('runWorkspaceBootstrap', () => {
       assert.equal(h.runCalls[1].timeoutMs, 45_000);
     });
 
-    it('fails the bootstrap (throw) when verify fails, regardless of failOnError=false', async () => {
+    it('feeds a verify failure to the agent instead of throwing by default', async () => {
       const h = makeHarness();
       writeConfig(
         h.workspaceDir,
         JSON.stringify({
           version: 1,
-          setup: { command: 'npm ci', failOnError: false },
+          setup: { command: 'npm ci' },
+          verifyCommand: 'npm test',
+        }),
+      );
+
+      const state = await runBootstrap(h, {
+        runCommand: setupAndVerifyCommand(
+          h,
+          success('npm ci', 'ok'),
+          { command: 'npm test', exitCode: 1, outputTail: 'npm ERR! test failed', timedOut: false, success: false },
+        ),
+      });
+
+      assert.equal(state.status, 'failed');
+      assert.equal(state.error, 'Bootstrap verify failed: `npm test` exited 1');
+      assert.equal(h.agent.bootstrap?.status, 'failed');
+      assert.equal(h.agent.bootstrap?.command, 'npm ci');
+      assert.equal(h.agent.bootstrap?.verifyCommand, 'npm test');
+      assert.equal(h.agent.bootstrap?.exitCode, 0);
+      assert.equal(h.agent.bootstrap?.verifyExitCode, 1);
+      assert.equal(h.agent.bootstrap?.error, 'Bootstrap verify failed: `npm test` exited 1');
+
+      const log = fs.readFileSync(h.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap verify failed/);
+      assert.match(log, /verify failed — continuing/);
+    });
+
+    it('throws on a verify failure when setup.failOnError=true', async () => {
+      const h = makeHarness();
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({
+          version: 1,
+          setup: { command: 'npm ci', failOnError: true },
           verifyCommand: 'npm test',
         }),
       );
@@ -989,21 +1079,10 @@ describe('runWorkspaceBootstrap', () => {
       );
       assert.match((caught as { message: string }).message, /npm ERR! test failed/);
       assert.equal(h.agent.bootstrap?.status, 'failed');
-      assert.equal(h.agent.bootstrap?.command, 'npm ci');
-      assert.equal(h.agent.bootstrap?.verifyCommand, 'npm test');
-      assert.equal(h.agent.bootstrap?.exitCode, 0);
       assert.equal(h.agent.bootstrap?.verifyExitCode, 1);
-      assert.equal(h.agent.bootstrap?.error, 'Bootstrap verify failed: `npm test` exited 1');
-
-      const log = fs.readFileSync(h.logPath, 'utf8');
-      assert.match(log, /Workspace bootstrap verify failed/);
-      assert.ok(
-        !log.includes('failOnError=false'),
-        'verify failure must not honor failOnError=false',
-      );
     });
 
-    it('treats a verify timeout as a failure and throws', async () => {
+    it('treats a verify timeout as a failure and does not throw by default', async () => {
       const h = makeHarness();
       writeConfig(
         h.workspaceDir,
@@ -1014,21 +1093,16 @@ describe('runWorkspaceBootstrap', () => {
         }),
       );
 
-      let caught: unknown;
-      try {
-        await runBootstrap(h, {
-          runCommand: setupAndVerifyCommand(
-            h,
-            success('npm ci', 'ok'),
-            { command: 'npm test', exitCode: 124, outputTail: '', timedOut: true, success: false },
-          ),
-        });
-      } catch (err) {
-        caught = err;
-      }
+      const state = await runBootstrap(h, {
+        runCommand: setupAndVerifyCommand(
+          h,
+          success('npm ci', 'ok'),
+          { command: 'npm test', exitCode: 124, outputTail: '', timedOut: true, success: false },
+        ),
+      });
 
-      assert.ok(caught instanceof Error);
-      assert.match((caught as { message: string }).message, /Bootstrap verify timed out/);
+      assert.equal(state.status, 'failed');
+      assert.match(state.error ?? '', /Bootstrap verify timed out/);
       assert.equal(h.agent.bootstrap?.verifyExitCode, 124);
       const log = fs.readFileSync(h.logPath, 'utf8');
       assert.match(log, /Workspace bootstrap verify failed/);

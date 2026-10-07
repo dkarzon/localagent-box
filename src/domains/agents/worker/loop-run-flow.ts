@@ -88,7 +88,9 @@ interface RunLoopStepParams {
   loopState: AgentLoopState;
   /**
    * P4-T5: host-run bootstrap state from the agent record. Injected into the
-   * first INITIAL_PLAN kickoff prompt when the bootstrap completed.
+   * first INITIAL_PLAN kickoff prompt when the bootstrap completed — and, on
+   * a failed bootstrap, feeds the failure block so the agent can attempt a
+   * fix.
    */
   bootstrap?: AgentBootstrapState | null;
   /** Agent data directory for loop handoff state (plan + loop-state.json). */
@@ -181,8 +183,8 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
 
   const conversationParts: (string | null)[] = [interpolated];
   // P4-T5: the INITIAL_PLAN kickoff (fresh session, step 0) carries the
-  // host-run bootstrap summary (completed only) so the model doesn't spend a
-  // turn rediscovering the environment.
+  // host-run bootstrap summary — completed, or failed with the error tail so
+  // the agent can attempt a fix.
   if (stepIndex === 0) {
     conversationParts.push(formatBootstrapSummaryBlock(params.bootstrap));
   }

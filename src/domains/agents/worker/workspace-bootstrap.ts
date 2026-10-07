@@ -63,9 +63,10 @@ export interface RunWorkspaceBootstrapOptions {
  * Resolution:
  * - `.localagent-box/setup.sh` committed in the repo → run via `bash`
  *   (P4-T1), before any other source is considered. Effective semantics
- *   for a bare script (no `environment.json`): it always fail-hards —
- *   a non-zero exit throws and fails the agent start — no `verifyCommand`
- *   runs, and `setup.runOnModes` and `cacheKey` have no effect. With an
+ *   for a bare script (no `environment.json`): failures are non-blocking —
+ *   they are recorded on the agent record and surfaced to the model's first
+ *   prompt so it can attempt a fix — no `verifyCommand` runs, and
+ *   `setup.runOnModes` and `cacheKey` have no effect. With an
  *   `environment.json` alongside, `setup.failOnError`, `setup.timeoutMs`,
  *   `setup.runOnModes`, `verifyCommand`, and `cacheKey` still apply.
  * - No `.localagent-box/environment.json` → skipped, unless the server config
@@ -83,11 +84,14 @@ export interface RunWorkspaceBootstrapOptions {
  *
  * Post-setup verification (P4-T2): when the config sets `verifyCommand`, it
  * is run after a successful setup with the same timeout as the setup
- * command (or `verifyTimeoutMs`); a failure always fails the bootstrap
- * (there is no `failOnError` opt-out for verify).
+ * command (or `verifyTimeoutMs`); a failure is handled per `failOnError`
+ * (recorded + fed to the agent by default, throw when `true`).
  *
- * Throws when the setup command fails with `failOnError` left at its
- * default (`true`); caller is expected to fail the agent start.
+ * Non-blocking on failure: a failed setup/verify is recorded
+ * (`status: 'failed'`, `error`, `outputTail`) and returned so the run
+ * continues and the error is fed to the agent's prompt for a fix attempt.
+ * Only an explicit `setup.failOnError: true` still throws and fails the
+ * agent start.
  */
 export async function runWorkspaceBootstrap(
   options: RunWorkspaceBootstrapOptions,
@@ -246,10 +250,10 @@ export async function runWorkspaceBootstrap(
     const verifyCommand = envConfig?.verifyCommand;
     if (verifyCommand !== undefined) {
       return await runVerifyCommand(
+        workspaceDir,
         agentsStore,
         agentId,
         logPath,
-        workspaceDir,
         command,
         profiles,
         source,
@@ -258,6 +262,7 @@ export async function runWorkspaceBootstrap(
         cacheHit,
         verifyCommand,
         envConfig?.verifyTimeoutMs ?? timeoutMsToUse,
+        failOnError,
         runCommand,
       );
     }
@@ -300,26 +305,32 @@ export async function runWorkspaceBootstrap(
     cacheHit,
   };
 
-  if (failOnError === false) {
-    appendLog(logPath, 'Workspace bootstrap failed but failOnError=false — continuing');
+  if (failOnError === true) {
+    appendLog(logPath, 'Workspace bootstrap failed with failOnError=true — failing the agent start');
     updateAgentRecord(agentsStore, agentId, { bootstrap: failedState });
-    return failedState;
+    throw new Error(`${error}\n${outputTail}`);
   }
 
+  // Default: non-blocking. The failure is recorded (status 'failed') and the
+  // run continues; the error is fed to the agent's first prompt so it can
+  // attempt to fix the workspace itself.
+  appendLog(logPath, 'Workspace bootstrap failed — continuing (the agent will attempt to fix it)');
   updateAgentRecord(agentsStore, agentId, { bootstrap: failedState });
-  throw new Error(`${error}\n${outputTail}`);
+  return failedState;
 }
 
 /**
- * Run a successful setup's post-setup smoke test (P4-T2). A failure always
- * fails the bootstrap and throws (no `failOnError` opt-out for verify), so
- * a broken environment never reaches the agent.
+ * Run a successful setup's post-setup smoke test (P4-T2). A failure is
+ * recorded (`status: 'failed'`) and returned so the run continues and the
+ * error reaches the agent's prompt for a fix attempt — `setup.failOnError:
+ * true` is honored for verify by the caller in `prepareWorkspace` (the
+ * returned failure state's `verifyCommand` marks it).
  */
 async function runVerifyCommand(
+  workspaceDir: string,
   agentsStore: JsonStore<{ agents: Agent[] }>,
   agentId: string,
   logPath: string,
-  workspaceDir: string,
   setupCommand: string,
   profiles: string[],
   source: AgentBootstrapState['source'],
@@ -328,6 +339,7 @@ async function runVerifyCommand(
   cacheHit: boolean,
   verifyCommand: string,
   timeoutMs: number,
+  failOnError: boolean | undefined,
   runCommand: typeof runWorkspaceCommand,
 ): Promise<AgentBootstrapState> {
   updateAgentRecord(agentsStore, agentId, {
@@ -388,6 +400,13 @@ async function runVerifyCommand(
     error,
     cacheHit,
   };
+
+  if (failOnError === true) {
+    updateAgentRecord(agentsStore, agentId, { bootstrap: failedState });
+    throw new Error(`${error}\n${outputTail}`);
+  }
+
+  appendLog(logPath, 'Workspace bootstrap verify failed — continuing (the agent will attempt to fix it)');
   updateAgentRecord(agentsStore, agentId, { bootstrap: failedState });
-  throw new Error(`${error}\n${outputTail}`);
+  return failedState;
 }

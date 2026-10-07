@@ -184,15 +184,39 @@ function formatBootstrapDuration(durationMs: number | undefined): string | null 
 }
 
 /**
- * P4-T5 — deterministic host-generated summary of a successful workspace
- * bootstrap (setup + verify), injected into the first prompt so the model
- * doesn't spend turns discovering how to check the environment.
- * Returns null unless the bootstrap completed (the block is first-prompt-only,
- * so a null here is simply omitted).
+ * P4-T5 — deterministic host-generated summary of the workspace bootstrap
+ * (setup + verify), injected into the first prompt so the model doesn't spend
+ * turns discovering how to check the environment. Completed runs get the
+ * workspace-ready block; failed runs get a failure block carrying the
+ * command, exit code, and output tail so the agent can attempt to fix the
+ * environment itself. Returns null for skipped/missing bootstrap states
+ * (nothing happened worth reporting; the block is first-prompt-only).
  */
 export function formatBootstrapSummaryBlock(bootstrap: AgentBootstrapState | null | undefined): string | null {
-  if (!bootstrap || bootstrap.status !== 'completed') {
+  if (!bootstrap || bootstrap.status === 'skipped') {
     return null;
+  }
+  if (bootstrap.status === 'failed') {
+    const lines = [`## Workspace bootstrap failed (host)`];
+    lines.push(
+      `The host setup step failed with exit code ${bootstrap.exitCode ?? 'unknown'}; you must attempt to fix the workspace environment as part of the task.`,
+    );
+    lines.push(`- Setup: ${bootstrap.command ?? 'unknown'}`);
+    if (bootstrap.verifyCommand) {
+      lines.push(
+        `- Verify: failed (\`${bootstrap.verifyCommand}\` exited ${bootstrap.verifyExitCode ?? 'unknown'})`,
+      );
+    }
+    if (bootstrap.error) {
+      lines.push(`- Error: ${bootstrap.error}`);
+    }
+    if (bootstrap.outputTail?.trim()) {
+      lines.push('- Output tail:', '```', bootstrap.outputTail.trimEnd(), '```');
+    }
+    lines.push(
+      'Diagnose the failure and repair the environment (e.g. install missing dependencies, fix the broken step), then continue with the task. Do not modify `.localagent-box/` config files.',
+    );
+    return lines.join('\n');
   }
   const duration = formatBootstrapDuration(bootstrap.durationMs);
   const lines = [`## Workspace ready (host)`];
