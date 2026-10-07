@@ -54,7 +54,7 @@ Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review
 
 ## `.localagent-box/setup.sh` — Setup Script
 
-A committed shell script the host runs **instead of** any `environment.json` source before the agent starts. The host runs it from the workspace root as `bash .localagent-box/setup.sh`; anything it exits non-zero fails the agent start the same way `setup.failOnError: true` does (a timeout also fails the agent). The script must be committed in the repo — like `.localagent-box/environment.json`, it is read straight from the fresh clone before agent commits are ignored.
+A committed shell script the host runs **instead of** any `environment.json` source before the agent starts. The host runs it from the workspace root as `bash .localagent-box/setup.sh`; a non-zero exit is recorded as a failed bootstrap and the error is fed to the agent's first prompt so it can attempt a fix — unless `setup.failOnError: true` is set in `environment.json`, in which case the agent start fails (a timeout behaves the same way). The script must be committed in the repo — like `.localagent-box/environment.json`, it is read straight from the fresh clone before agent commits are ignored.
 
 A committed `setup.sh` **always wins** over `setup.command`, `profiles`, and lockfile auto-detect — commit an `environment.json` without touching the script and the script still runs.
 
@@ -103,15 +103,18 @@ When present, declares the host-run setup step.
 
 #### `setup.command` *(string, required)*
 
-The shell command run in the workspace root before the agent starts. Workspaces are fresh-cloned before every agent run; when the [dependency cache](#dependency-cache-`cacheKey`) is enabled the host restores the cached dependencies before running this command. A non-zero exit fails the agent start by default (see `setup.failOnError`).
+The shell command run in the workspace root before the agent starts. Workspaces are fresh-cloned before every agent run; when the [dependency cache](#dependency-cache-`cacheKey`) is enabled the host restores the cached dependencies before running this command. A non-zero exit is recorded as a failed bootstrap and fed to the agent (see `setup.failOnError`).
 
 #### `setup.timeoutMs` *(number, optional)*
 
 Timeout in milliseconds before the shell is killed. Must be a positive integer no greater than `1800000` (30 min). Defaults to `600000` (10 min).
 
-#### `setup.failOnError` *(boolean, optional, default true)*
+#### `setup.failOnError` *(boolean, optional, default false)*
 
-When `true` (default), a non-zero exit code (or timeout) from `setup.command` **fails the whole agent** — OpenCode never starts. Set to `false` to log the failure and continue anyway.
+Controls what happens when the setup step (or `verifyCommand`) fails:
+
+- `false` (default) — **non-blocking**: the failure is recorded on the agent's `bootstrap` record (`status: 'failed'` with the exit code and output tail) and the run continues; the host prepends a failure block to the agent's first prompt carrying the command, exit code, and output tail so the agent can diagnose and attempt to fix the workspace environment itself.
+- `true` — **fail-hard**: a non-zero exit code (or timeout) fails the whole agent — OpenCode never starts.
 
 #### `setup.runOnModes` *(array, optional)*
 
@@ -119,7 +122,7 @@ Agent modes for which the setup runs: any of `batch`, `interactive`, `loop`, `re
 
 ### `verifyCommand` *(string, optional)*
 
-Post-setup smoke test run **after** a successful setup command (and before the agent starts). A non-zero exit **always fails the bootstrap** — there is no `failOnError` opt-out for verify, so a broken environment never reaches the agent even when the agent's own checks would be more forgiving. A success records `verifyCommand` and its exit code on the agent's `bootstrap` record.
+Post-setup smoke test run **after** a successful setup command (and before the agent starts). A non-zero exit is handled exactly like a failed setup command under `setup.failOnError`: by default it is recorded (`verifyCommand` and its exit code land on the agent's `bootstrap` record), the run continues, and the error is fed to the agent's prompt for a fix attempt; with `setup.failOnError: true` the agent start fails.
 
 ### `verifyTimeoutMs` *(number, optional)*
 
@@ -127,7 +130,7 @@ Timeout in milliseconds for `verifyCommand`. Same constraints as `setup.timeoutM
 
 ### Post-setup summary
 
-After the setup command (and, if set, the `verifyCommand`) finishes successfully, the host prepends a short workspace-ready block to the agent's first prompt so the model doesn't waste turns rediscovering how to build or test the repo. The block is only shown when setup **completed** — a skipped or failed bootstrap leaves the prompt untouched — and reports the resolved command, the runtime profiles, the setup duration, and any dependency-cache hit.
+After the setup command (and, if set, the `verifyCommand`) finishes, the host prepends a short bootstrap block to the agent's first prompt so the model doesn't waste turns rediscovering how to build or test the repo. A **successful** bootstrap reports the resolved command, the runtime profiles, the setup duration, and any dependency-cache hit. A **failed** bootstrap (default `setup.failOnError: false`) reports the failing command, the exit code, the error, and the output tail, instructing the agent to diagnose and fix the environment as part of the task. Only a skipped bootstrap (nothing to run) leaves the prompt untouched.
 
 ### `profiles` *(array, optional)*
 

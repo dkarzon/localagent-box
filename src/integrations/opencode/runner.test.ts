@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  formatBootstrapSummaryBlock,
   isAgentRunTimedOut,
   parseTimeoutMs,
   resolveAgentRunStartedAtMs,
@@ -28,6 +29,66 @@ describe('resolveAgentRunStartedAtMs', () => {
     assert.equal(resolveAgentRunStartedAtMs(null, fallback), fallback);
     assert.equal(resolveAgentRunStartedAtMs(undefined, fallback), fallback);
     assert.equal(resolveAgentRunStartedAtMs('not-a-date', fallback), fallback);
+  });
+});
+
+describe('formatBootstrapSummaryBlock', () => {
+  it('returns null for skipped or missing bootstrap states', () => {
+    assert.equal(formatBootstrapSummaryBlock(null), null);
+    assert.equal(formatBootstrapSummaryBlock(undefined), null);
+    assert.equal(formatBootstrapSummaryBlock({ status: 'skipped' }), null);
+  });
+
+  it('renders the workspace-ready block for a completed bootstrap', () => {
+    const block = formatBootstrapSummaryBlock({
+      status: 'completed',
+      command: 'npm ci',
+      profiles: ['nodejs'],
+      source: 'detect',
+      durationMs: 38_000,
+      exitCode: 0,
+      cacheHit: true,
+    });
+    assert.ok(block);
+    assert.match(block, /^## Workspace ready \(host\)$/m);
+    assert.match(block, /- Setup: npm ci \(completed in 38s, cache hit\)/);
+    assert.match(block, /- Profiles: nodejs/);
+  });
+
+  it('renders a failure block with command, error, and output tail for a failed bootstrap', () => {
+    const block = formatBootstrapSummaryBlock({
+      status: 'failed',
+      command: 'npm ci',
+      source: 'explicit',
+      durationMs: 5_000,
+      exitCode: 1,
+      outputTail: 'npm ERR! Missing script: "prepare"',
+      error: 'Bootstrap failed: `npm ci` exited 1',
+    });
+    assert.ok(block);
+    assert.match(block, /^## Workspace bootstrap failed \(host\)$/m);
+    assert.match(block, /failed with exit code 1/);
+    assert.match(block, /- Setup: npm ci/);
+    assert.match(block, /- Error: Bootstrap failed: `npm ci` exited 1/);
+    assert.match(block, /npm ERR! Missing script: "prepare"/);
+    assert.match(block, /attempt to fix the workspace environment/);
+    assert.doesNotMatch(block, /- Verify:/);
+  });
+
+  it('renders the failed verify command in the failure block', () => {
+    const block = formatBootstrapSummaryBlock({
+      status: 'failed',
+      command: 'npm ci',
+      verifyCommand: 'npm test',
+      source: 'explicit',
+      exitCode: 0,
+      verifyExitCode: 2,
+      outputTail: 'tests broke',
+      error: 'Bootstrap verify failed: `npm test` exited 2',
+    });
+    assert.ok(block);
+    assert.match(block, /- Verify: failed \(`npm test` exited 2\)/);
+    assert.match(block, /tests broke/);
   });
 });
 

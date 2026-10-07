@@ -386,7 +386,10 @@ export interface AgentTokenUsage {
 export interface RepoEnvironmentSetupConfig {
   command: string;
   timeoutMs?: number;
-  /** Default true — a non-zero exit fails the agent (applied at runtime) */
+  /**
+   * Default false — a failed setup/verify is recorded and fed to the agent's
+   * prompt for a fix attempt; `true` fails the agent start (applied at runtime)
+   */
   failOnError?: boolean;
   /**
    * Modes for which the setup runs (P4-T3). When set and the agent's mode is
@@ -415,7 +418,8 @@ export interface RepoEnvironmentConfig {
   cacheKey?: string;
   /**
    * Post-setup smoke test run after a successful setup command (P4-T2).
-   * A failure always fails the bootstrap, regardless of `setup.failOnError`.
+   * A failure is handled per `setup.failOnError`: recorded + fed to the
+   * agent by default, or fails the bootstrap when `true`.
    */
   verifyCommand?: string;
   /**

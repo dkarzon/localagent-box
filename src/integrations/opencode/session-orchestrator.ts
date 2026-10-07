@@ -557,9 +557,10 @@ export async function runSessionOrchestrator(
             batchPromptBusySeen = false;
           }
 
-          // P4-T5: successful host bootstrap is summarized for the model so it
-          // doesn't spend turns rediscovering the environment (skipped/failed
-          // bootstrap produces no block).
+          // P4-T5: the host bootstrap outcome is summarized for the model so
+          // it doesn't spend turns rediscovering the environment, and a
+          // failed bootstrap feeds the error tail so the agent can attempt a
+          // fix (skipped bootstrap produces no block).
           const bootstrapSummary = formatBootstrapSummaryBlock(
             readAgentRecord(agentsStore, job.agentId)?.bootstrap,
           );

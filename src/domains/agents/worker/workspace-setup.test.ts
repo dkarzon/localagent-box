@@ -206,10 +206,34 @@ describe('prepareWorkspace — bootstrap wiring', () => {
     }
   });
 
-  it('propagates a failing bootstrap so the worker never reaches OpenCode', async () => {
+  it('records a failing bootstrap on the agent without blocking the run', async () => {
     const h = makeHarness();
     fs.writeFileSync(path.join(h.fixtureDir, 'package.json'), '{}', 'utf8');
     writeEnvironmentJson(h, JSON.stringify({ version: 1, setup: { command: 'exit 1' } }));
+
+    try {
+      await withNoCodegraph(() => prepareWorkspace(h.buildContext()));
+
+      const agent = h.agentsStore.load().agents[0];
+      assert.equal(agent.bootstrap?.status, 'failed');
+      assert.equal(agent.bootstrap?.exitCode, 1);
+      assert.match(agent.bootstrap?.error ?? '', /Bootstrap failed: `exit 1` exited 1/);
+
+      const log = fs.readFileSync(h.job.logPath, 'utf8');
+      assert.match(log, /Running workspace bootstrap/);
+      assert.match(log, /Workspace bootstrap failed with exit code 1/);
+    } finally {
+      fs.rmSync(h.dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('still throws (fails the agent start) when setup.failOnError is true', async () => {
+    const h = makeHarness();
+    fs.writeFileSync(path.join(h.fixtureDir, 'package.json'), '{}', 'utf8');
+    writeEnvironmentJson(
+      h,
+      JSON.stringify({ version: 1, setup: { command: 'exit 1', failOnError: true } }),
+    );
 
     let caught: unknown;
     try {
@@ -217,12 +241,6 @@ describe('prepareWorkspace — bootstrap wiring', () => {
         await withNoCodegraph(async () => {
           await prepareWorkspace(h.buildContext());
         });
-        const agent = h.agentsStore.load().agents[0];
-        assert.equal(agent.bootstrap?.status, 'failed');
-        assert.equal(agent.bootstrap?.exitCode, 1);
-        const log = fs.readFileSync(h.job.logPath, 'utf8');
-        assert.match(log, /Running workspace bootstrap/);
-        assert.match(log, /Workspace bootstrap failed with exit code 1/);
       } catch (err) {
         caught = err;
       }
