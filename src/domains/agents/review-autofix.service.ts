@@ -1136,7 +1136,11 @@ export function createReviewAutofixService({
         ) {
           continue;
         }
-        await reconcileFindingsForFixAgent(fixAgent);
+        try {
+          await reconcileFindingsForFixAgent(fixAgent);
+        } catch (err) {
+          getLogger().error({ err, fixAgentId: fixAgent.agentId }, 'startup findings reconcile failed');
+        }
       }
     }
   }

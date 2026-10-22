@@ -44,6 +44,9 @@ interface TestContext {
   getRepoError: Error | null;
   /** When set, config load throws (corrupt config.json). */
   configLoadError: Error | null;
+  /** When true with configLoadError, only the first load throws. */
+  configLoadFailOnce: boolean;
+  configLoads: number;
 }
 
 function finding(overrides: Partial<ReviewFindingRecord> = {}): ReviewFindingRecord {
@@ -150,6 +153,8 @@ function setup(options: {
     updateCheckError: null,
     getRepoError: null,
     configLoadError: null,
+    configLoadFailOnce: false,
+    configLoads: 0,
   };
 
   const repoManager = {
@@ -164,6 +169,10 @@ function setup(options: {
   const configRepository = {
     load: () => {
       if (ctx.configLoadError) {
+        if (ctx.configLoadFailOnce && ctx.configLoads > 0) {
+          return {};
+        }
+        ctx.configLoads += 1;
         throw ctx.configLoadError;
       }
       return {};
@@ -1817,6 +1826,43 @@ describe('reconcileAutofixPlansOnStartup', () => {
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.batches[0].status, 'completed');
     assert.equal(plan?.batches[1].status, 'failed');
+  });
+
+  it('keeps reconciling later fix agents when one iteration throws', async () => {
+    const ctx = setup({
+      findings: [reconcileFinding(0, 'fixing', 'fix1'), reconcileFinding(1, 'fixing', 'fix2')],
+    });
+    const findings = ctx.repository.readReviewFindings('review1')!;
+    findings[0]!.github.commentId = 42;
+    findings[0]!.github.resolutionStatus = 'pending';
+    findings[1]!.github.commentId = 43;
+    findings[1]!.github.resolutionStatus = 'pending';
+    ctx.repository.writeReviewFindings('review1', findings);
+
+    // fix1 derives as fixed but its thread resolution throws outside the
+    // per-finding try (config load), which must not abort the startup loop.
+    ctx.configLoadError = new Error('corrupt config.json');
+    ctx.configLoadFailOnce = true;
+    ctx.lookupResult = { threadId: 'thread-2', isResolved: false };
+
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0']);
+    ctx.repository.update('fix1', { status: 'completed', pushed: true });
+    seedFixAgent(ctx, 'fix2', 'completed', ['review1:finding:1']);
+    ctx.repository.update('fix2', { status: 'completed', pushed: true });
+
+    await ctx.service.reconcileAutofixPlansOnStartup();
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'fixed');
+    assert.equal(
+      persisted?.[0].github.resolutionStatus,
+      'pending',
+      'the throw escapes the per-finding try but is caught per iteration',
+    );
+    assert.equal(persisted?.[1].fixStatus, 'fixed');
+    assert.equal(persisted?.[1].github.resolutionStatus, 'resolved', 'later agent still reconciled');
+    assert.deepEqual(ctx.calls.lookups, [43]);
+    assert.deepEqual(ctx.calls.resolved, ['thread-2']);
   });
 });
 
