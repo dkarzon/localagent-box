@@ -158,12 +158,15 @@ Controls lockfile inference for repos that have a file but **no** `setup.command
 
 ### Dependency cache — `cacheKey` *(string, optional)*
 
-Speeds up repeat agent runs by persisting installed dependencies (`node_modules/` for the `nodejs` / `nodejs-pnpm` profiles) in a cache volume. The cache is **off by default**; the operator must enable it (`DEP_CACHE_ENABLED=1`, root defaults to `<dataDir>/dep-cache`, override with `DEP_CACHE_ROOT`).
+Speeds up repeat agent runs by persisting each package manager's own download cache (the profile's `cacheDirs` in the runtime profile catalog) in a cache volume, plus the workspace `node_modules` for the profiles whose package manager reuses an existing install (`nodejs-pnpm` / `nodejs-yarn`). The cache is **off by default**; the operator must enable it (`DEP_CACHE_ENABLED=1`, root defaults to `<dataDir>/dep-cache`, override with `DEP_CACHE_ROOT`).
 
-Cache entries live under `{dep-cache-root}/{repo}/{cacheKey}`. When the cache is enabled and a cacheable profile resolves, the host:
+Cache entries live under `{dep-cache-root}/{repo}/{cacheKey}`, with the package-manager cache in `{dep-cache-root}/{repo}/{cacheKey}/pm-cache`. When the cache is enabled and a cacheable profile resolves, the host:
 
-1. Restores the cached `node_modules` into the fresh clone **before** the setup command runs (logged as `Dependency cache hit/miss`).
-2. After a successful setup command, re-snapshots the workspace back into the cache.
+1. Points the package manager's cache at `pm-cache` for the setup command via `npm_config_cache` / `npm_config_store_dir` / `YARN_CACHE_FOLDER` / `PIP_CACHE_DIR` / `GOMODCACHE` / `CARGO_HOME`, so a repeat run installs from cache. `npm ci` still installs from scratch — it deletes `node_modules` first — but does so mostly offline.
+2. For pnpm/yarn, restores the cached `node_modules` into the fresh clone **before** the command runs (logged as `Dependency cache hit/miss`) and re-snapshots it after a successful run. Copies use `verbatimSymlinks`, so relative links (`node_modules/.bin`, pnpm store links) stay valid instead of being rewritten to point at the run that created them.
+3. Reports `hit` only when the cache was already warm or workspace dirs were actually restored — never for a copy the setup command throws away.
+
+Purging a repo's cache (`DELETE /api/v1/repos/{id}/dep-cache`) removes the whole repo directory, including its `pm-cache`.
 
 How `cacheKey` is derived when the cache is enabled:
 
