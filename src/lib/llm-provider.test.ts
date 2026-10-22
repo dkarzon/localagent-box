@@ -4,6 +4,7 @@ import type { AppConfig } from '../types';
 import {
   DEFAULT_OLLAMA_CLOUD_BASE_URL,
   isProviderConfigured,
+  providerApi,
   resolveOpenCodeProvider,
   resolveProviderHost,
   resolveReviewProvider,
@@ -15,6 +16,8 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ollamaBaseUrl: '',
     ollamaCloudApiKey: '',
     ollamaCloudBaseUrl: '',
+    openaiCompatibleBaseUrl: '',
+    openaiCompatibleApiKey: '',
     opencodeModel: '',
     opencodeProvider: 'ollama',
     reviewProvider: '',
@@ -75,5 +78,18 @@ describe('llm-provider', () => {
   it('strips provider prefixes from model ids', () => {
     assert.equal(stripProviderModelPrefix('ollama/llama3.2'), 'llama3.2');
     assert.equal(stripProviderModelPrefix('ollama-cloud/gemma4:31b'), 'gemma4:31b');
+    assert.equal(stripProviderModelPrefix('openai-compatible/Qwen/Qwen3-8B'), 'Qwen/Qwen3-8B');
+  });
+
+  it('configures the openai-compatible provider from its base URL alone', () => {
+    const config = baseConfig({ openaiCompatibleBaseUrl: 'http://127.0.0.1:8080' });
+    assert.equal(isProviderConfigured(config, 'openai-compatible'), true);
+    assert.equal(isProviderConfigured(baseConfig(), 'openai-compatible'), false);
+    assert.deepEqual(resolveProviderHost(config, 'openai-compatible'), {
+      baseUrl: 'http://127.0.0.1:8080',
+      apiKey: undefined,
+    });
+    assert.equal(providerApi('openai-compatible'), 'openai');
+    assert.equal(providerApi('ollama-cloud'), 'ollama');
   });
 });

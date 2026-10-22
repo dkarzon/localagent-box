@@ -7,6 +7,8 @@ const baseConfig: AppConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
   ollamaCloudApiKey: '',
   ollamaCloudBaseUrl: '',
+  openaiCompatibleBaseUrl: '',
+  openaiCompatibleApiKey: '',
   opencodeModel: 'llama3.2',
   opencodeProvider: 'ollama',
   reviewProvider: '',

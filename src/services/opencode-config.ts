@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import {
   isProviderConfigured,
+  providerDisplayName,
   resolveOpenCodeProvider,
   resolveProviderHost,
 } from '../lib/llm-provider';
@@ -57,6 +58,8 @@ export const DEFAULT_TEMPLATE = {
 
 export interface OpenCodeModelConfig {
   name: string;
+  /** Lets OpenCode compact before overflowing; only set when the server reports a context window. */
+  limit?: { context: number; output: number };
   options?: {
     reasoningEffort?: string;
     extraBody?: Record<string, unknown>;
@@ -100,6 +103,8 @@ export interface OpenCodeConfigBuildOptions {
   codegraph?: boolean;
   /** When true, set `tools.question: false` so unattended runs cannot block on user input. */
   disableQuestionTool?: boolean;
+  /** Context windows by model id (see `resolveModelContextLengths`); adds `limit` to matching models. */
+  modelContextLengths?: Record<string, number>;
 }
 
 export const CODEGRAPH_BIN = 'codegraph';
@@ -129,8 +134,23 @@ export function buildGemmaReasoningWorkaroundOptions(): OpenCodeModelConfig['opt
   };
 }
 
-export function buildModelConfig(modelId: string): OpenCodeModelConfig {
+const MIN_OUTPUT_TOKENS = 256;
+const MAX_OUTPUT_TOKENS = 32_768;
+
+/** Reserve a quarter of the window for output, clamped to a sane range (matches strata-coder). */
+export function buildModelLimit(contextLength: number): { context: number; output: number } {
+  const output = Math.min(
+    MAX_OUTPUT_TOKENS,
+    Math.max(MIN_OUTPUT_TOKENS, Math.floor(contextLength / 4)),
+  );
+  return { context: contextLength, output };
+}
+
+export function buildModelConfig(modelId: string, contextLength?: number): OpenCodeModelConfig {
   const entry: OpenCodeModelConfig = { name: modelId };
+  if (contextLength && contextLength > 0) {
+    entry.limit = buildModelLimit(contextLength);
+  }
   if (isGemmaThinkingModel(modelId)) {
     entry.options = buildGemmaReasoningWorkaroundOptions();
   }
@@ -172,6 +192,7 @@ function buildProviderEntry(
   providerId: LlmProviderId,
   config: AppConfig,
   registeredModelIds: string[],
+  modelContextLengths: Record<string, number> = {},
 ): OpenCodeConfigFile['provider'][string] {
   const host = resolveProviderHost(config, providerId);
   const baseURL = normalizeOpenCodeBaseUrl(host.baseUrl);
@@ -180,14 +201,14 @@ function buildProviderEntry(
     providerOptions.apiKey = host.apiKey;
   }
 
-  const name = providerId === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama (local)';
+  const name = providerId === 'ollama' ? 'Ollama (local)' : providerDisplayName(providerId);
 
   return {
     npm: '@ai-sdk/openai-compatible',
     name,
     options: providerOptions,
     models: Object.fromEntries(
-      registeredModelIds.map((id) => [id, buildModelConfig(id)]),
+      registeredModelIds.map((id) => [id, buildModelConfig(id, modelContextLengths[id])]),
     ),
   };
 }
@@ -207,7 +228,12 @@ export function buildOpenCodeConfig(
     model: `${providerId}/${modelId}`,
     ...(instructionsContent ? { instructions: [LOCALAGENT_INSTRUCTIONS_FILE] } : {}),
     provider: {
-      [providerId]: buildProviderEntry(providerId, config, registeredModelIds),
+      [providerId]: buildProviderEntry(
+        providerId,
+        config,
+        registeredModelIds,
+        options?.modelContextLengths,
+      ),
     },
   };
 
@@ -312,7 +338,7 @@ export function createOpenCodeConfigService(options: {
       fsImpl.writeFileSync(instructionsPath, `${instructionsContent}\n`, 'utf8');
     }
 
-    // May embed the Ollama Cloud API key — keep it owner-only (mode applies on create; chmod
+    // May embed a provider API key — keep it owner-only (mode applies on create; chmod
     // tightens files written by earlier versions).
     fsImpl.writeFileSync(configPath, `${JSON.stringify(opencodeConfig, null, 2)}\n`, {
       encoding: 'utf8',

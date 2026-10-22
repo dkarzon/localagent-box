@@ -7,6 +7,8 @@ const baseConfig: AppConfig = {
   ollamaBaseUrl: '',
   ollamaCloudApiKey: '',
   ollamaCloudBaseUrl: '',
+  openaiCompatibleBaseUrl: '',
+  openaiCompatibleApiKey: '',
   opencodeModel: '',
   opencodeProvider: 'ollama',
   reviewProvider: '',

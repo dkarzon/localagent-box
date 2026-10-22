@@ -51,6 +51,7 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
 
   assertValidHttpUrl('ollamaBaseUrl', body.ollamaBaseUrl);
   assertValidHttpUrl('ollamaCloudBaseUrl', body.ollamaCloudBaseUrl);
+  assertValidHttpUrl('openaiCompatibleBaseUrl', body.openaiCompatibleBaseUrl);
   assertValidProvider('opencodeProvider', body.opencodeProvider);
   assertValidProvider('reviewProvider', body.reviewProvider, true);
   if (
@@ -78,6 +79,14 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
 
   if (partial.ollamaCloudApiKey === '' && current.ollamaCloudApiKey) {
     delete partial.ollamaCloudApiKey;
+  }
+
+  if (partial.openaiCompatibleApiKey === '***') {
+    delete partial.openaiCompatibleApiKey;
+  }
+
+  if (partial.openaiCompatibleApiKey === '' && current.openaiCompatibleApiKey) {
+    delete partial.openaiCompatibleApiKey;
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'loopVerbModels')) {

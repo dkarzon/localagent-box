@@ -6,6 +6,7 @@ import {
   excludeWorkspaceInfrastructureFromGit,
   isGemmaThinkingModel,
 } from '../../services/opencode-config';
+import { resolveModelContextLengths } from '../../services/ollama-probe';
 import type { NormalizedTool } from '../../lib/tool-event';
 import {
   extractAssistantTextFromPayload,
@@ -29,7 +30,14 @@ import { loadLoopConfig } from '../../domains/agents/worker/loop-config';
 import { captureGitStatusCheckpoint } from '../../domains/agents/worker/workspace-setup';
 import { loadRepoConfig } from '../../domains/agents/worker/repo-config';
 import type { WorkerContext } from '../../domains/agents/worker/worker-context';
-import type { Agent, AgentJob, AgentStatus, AgentTokenUsage, LoopVerb } from '../../types';
+import type {
+  Agent,
+  AgentJob,
+  AgentStatus,
+  AgentTokenUsage,
+  AppConfig,
+  LoopVerb,
+} from '../../types';
 import { createOpenCodeEventMapper, type AgentRunMode } from './event-mapper';
 import {
   buildModelRef,
@@ -114,6 +122,22 @@ function logCodegraphEnabled(logPath: string): void {
   appendLog(logPath, 'OpenCode MCP: codegraph enabled');
 }
 
+/** An unreachable server just yields no limits — OpenCode then uses its own defaults. */
+async function resolveContextLengthsForRun(
+  runConfig: AppConfig,
+  logPath: string,
+): Promise<Record<string, number>> {
+  const lengths = await resolveModelContextLengths(runConfig);
+  const entries = Object.entries(lengths);
+  if (entries.length > 0) {
+    appendLog(
+      logPath,
+      `OpenCode model limits from server: ${entries.map(([id, n]) => `${id}=${n}`).join(', ')}`,
+    );
+  }
+  return lengths;
+}
+
 export async function runSessionOrchestrator(
   options: SessionOrchestratorOptions,
 ): Promise<SessionOrchestratorResult> {
@@ -138,6 +162,7 @@ export async function runSessionOrchestrator(
     autoApprovePermissions,
     codegraph,
     disableQuestionTool,
+    modelContextLengths: await resolveContextLengthsForRun(runConfig, logPath),
   });
   const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
@@ -764,6 +789,7 @@ export async function startOpenCodeLoopSession(options: {
     job,
     codegraph,
     disableQuestionTool: true,
+    modelContextLengths: await resolveContextLengthsForRun(runConfig, logPath),
   });
   appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended loop)');
   if (codegraph) {

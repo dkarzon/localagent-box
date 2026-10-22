@@ -7,6 +7,9 @@ import {
 
 export { LLM_PROVIDER_IDS, DEFAULT_OLLAMA_CLOUD_BASE_URL };
 
+/** Wire protocol used for probing and direct chat (OpenCode itself always uses `/v1`). */
+export type ProviderApi = 'ollama' | 'openai';
+
 export function isLlmProviderId(value: unknown): value is LlmProviderId {
   return typeof value === 'string' && (LLM_PROVIDER_IDS as readonly string[]).includes(value);
 }
@@ -17,6 +20,8 @@ export function isProviderConfigured(config: AppConfig, id: LlmProviderId): bool
       return Boolean(config.ollamaBaseUrl?.trim());
     case 'ollama-cloud':
       return Boolean(config.ollamaCloudApiKey?.trim());
+    case 'openai-compatible':
+      return Boolean(config.openaiCompatibleBaseUrl?.trim());
     default:
       return false;
   }
@@ -48,15 +53,31 @@ export function resolveProviderHost(
         baseUrl: config.ollamaCloudBaseUrl?.trim() || DEFAULT_OLLAMA_CLOUD_BASE_URL,
         apiKey: config.ollamaCloudApiKey?.trim(),
       };
+    case 'openai-compatible':
+      return {
+        baseUrl: config.openaiCompatibleBaseUrl?.trim() ?? '',
+        apiKey: config.openaiCompatibleApiKey?.trim() || undefined,
+      };
   }
 }
 
+export function providerApi(id: LlmProviderId): ProviderApi {
+  return id === 'openai-compatible' ? 'openai' : 'ollama';
+}
+
 export function providerNotConfiguredMessage(id: LlmProviderId): string {
-  return id === 'ollama' ? 'ollamaBaseUrl is not set' : 'ollamaCloudApiKey is not set';
+  switch (id) {
+    case 'ollama':
+      return 'ollamaBaseUrl is not set';
+    case 'ollama-cloud':
+      return 'ollamaCloudApiKey is not set';
+    case 'openai-compatible':
+      return 'openaiCompatibleBaseUrl is not set';
+  }
 }
 
 export function stripProviderModelPrefix(model: string): string {
-  return model.trim().replace(/^(ollama|ollama-cloud)\//i, '');
+  return model.trim().replace(/^(ollama|ollama-cloud|openai-compatible)\//i, '');
 }
 
 export function providerDisplayName(id: LlmProviderId): string {
@@ -65,5 +86,7 @@ export function providerDisplayName(id: LlmProviderId): string {
       return 'Ollama';
     case 'ollama-cloud':
       return 'Ollama Cloud';
+    case 'openai-compatible':
+      return 'OpenAI-compatible';
   }
 }
