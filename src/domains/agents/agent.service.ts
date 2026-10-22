@@ -116,7 +116,7 @@ export interface AgentService {
   retryFindingResolution: ReviewAutofixService['retryFindingResolution'];
   createManualFix: ReviewAutofixService['createManualFix'];
   resumeAutomaticChain: ReviewAutofixService['resumeAutomaticChain'];
-  restoreOnStartup: () => void;
+  restoreOnStartup: () => Promise<void>;
   shutdown: () => Promise<void>;
   maxConcurrent: number;
   agentTimeoutMs: number;
@@ -1348,7 +1348,7 @@ export function createAgentService(options: {
     return updated;
   }
 
-  function restoreOnStartup(): void {
+  async function restoreOnStartup(): Promise<void> {
     const agents = repository.findAll();
     let changed = false;
 
@@ -1389,7 +1389,15 @@ export function createAgentService(options: {
     // queued agents are retained (and their chains stay running), batches with
     // missing/in-flight agents are failed or resolved and chains paused. Never
     // creates agents, so no duplicate fix agents can appear after a restart.
-    reviewAutofix.reconcileAutofixPlansOnStartup();
+    // Findings derived as fixed also resolve their linked GitHub comment.
+    // Must complete before re-enqueueing: a worker started from the queue
+    // would otherwise look like a stuck batch to the pending reconcile (batch
+    // failed + chain paused, findings failed for a legitimately running agent).
+    try {
+      await reviewAutofix.reconcileAutofixPlansOnStartup();
+    } catch (err) {
+      getLogger().warn({ err }, 'Startup autofix reconcile failed (non-fatal)');
+    }
 
     const queued = agents
       .filter((agent) => agent.status === 'queued')

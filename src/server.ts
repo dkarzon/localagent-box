@@ -122,7 +122,11 @@ function createContext(env: ReturnType<typeof getServerEnv>): ServerContext {
     loopAgentTimeoutFallbackSeconds: env.agentTimeoutSeconds,
   });
 
-  agentManager.restoreOnStartup();
+  // Runs in the background; ordering (reconcile before re-enqueue) is handled
+  // inside. Store/queue failures are logged here rather than left unhandled.
+  agentManager
+    .restoreOnStartup()
+    .catch((err) => getLogger().error({ err }, 'Startup restore failed (non-fatal)'));
 
   if (!fs.existsSync(`${env.dataDir}/repos.json`)) {
     reposStore.save({ repos: [] });
