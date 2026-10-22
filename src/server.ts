@@ -122,7 +122,10 @@ function createContext(env: ReturnType<typeof getServerEnv>): ServerContext {
     loopAgentTimeoutFallbackSeconds: env.agentTimeoutSeconds,
   });
 
-  agentManager.restoreOnStartup();
+  // Never rejects (reconcile errors are caught and logged inside), but must
+  // complete before queued agents are re-enqueued inside, so a worker started
+  // from the queue cannot look like a stuck batch to the pending reconcile.
+  void agentManager.restoreOnStartup();
 
   if (!fs.existsSync(`${env.dataDir}/repos.json`)) {
     reposStore.save({ repos: [] });

@@ -1542,7 +1542,7 @@ describe('createAgentService (shared-branch queue)', () => {
 });
 
 describe('restoreOnStartup', () => {
-  it('re-enqueues queued agents and starts the first eligible one', () => {
+  it('re-enqueues queued agents and starts the first eligible one', async () => {
     const ctx = createTestContext();
     seedAgent(
       ctx.repository,
@@ -1556,13 +1556,36 @@ describe('restoreOnStartup', () => {
       }),
     );
 
-    ctx.service.restoreOnStartup();
+    await ctx.service.restoreOnStartup();
 
     assert.equal(ctx.service.getAgent('queued0000001').status, 'queued');
     assert.equal(hasStartedWorker(ctx, 'queued0000001'), true);
   });
 
-  it('fails in-progress agents but keeps later queued chunks waiting', () => {
+  it('re-enqueues only after startup reconciliation completes', async () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'queued0000003',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:01.000Z',
+        startedAt: null,
+      }),
+    );
+
+    const pending = ctx.service.restoreOnStartup();
+    // Re-enqueueing must wait for the reconcile: a worker started early would
+    // look like a stuck batch (running with no live worker) to the in-flight
+    // reconciliation.
+    assert.equal(hasStartedWorker(ctx, 'queued0000003'), false);
+    await pending;
+    assert.equal(hasStartedWorker(ctx, 'queued0000003'), true);
+  });
+
+  it('fails in-progress agents but keeps later queued chunks waiting', async () => {
     const ctx = createTestContext();
     seedAgent(
       ctx.repository,
@@ -1586,7 +1609,7 @@ describe('restoreOnStartup', () => {
       }),
     );
 
-    ctx.service.restoreOnStartup();
+    await ctx.service.restoreOnStartup();
 
     const failed = ctx.service.getAgent('running000001');
     assert.equal(failed.status, 'failed');
@@ -1595,7 +1618,7 @@ describe('restoreOnStartup', () => {
     assert.equal(hasStartedWorker(ctx, 'queued0000002'), false);
   });
 
-  it('starts queued sessions in createdAt order across branches', () => {
+  it('starts queued sessions in createdAt order across branches', async () => {
     const ctx = createTestContext({ maxConcurrent: 2 });
     seedAgent(
       ctx.repository,
@@ -1620,13 +1643,13 @@ describe('restoreOnStartup', () => {
       }),
     );
 
-    ctx.service.restoreOnStartup();
+    await ctx.service.restoreOnStartup();
 
     assert.equal(hasStartedWorker(ctx, 'queued-b'), true);
     assert.equal(hasStartedWorker(ctx, 'queued-a'), true);
   });
 
-  it('reconciles an interrupted autofix plan: queued fix agent re-enqueued, missing agent paused', () => {
+  it('reconciles an interrupted autofix plan: queued fix agent re-enqueued, missing agent paused', async () => {
     const ctx = createTestContext();
 
     const writePlan = (
@@ -1701,7 +1724,7 @@ describe('restoreOnStartup', () => {
     );
     writePlan('reviewb00001', 'running', [{ index: 0, agentId: 'fixghost001', status: 'queued' }], null);
 
-    ctx.service.restoreOnStartup();
+    await ctx.service.restoreOnStartup();
 
     const planA = ctx.repository.readReviewAutofixPlan('reviewa00001');
     assert.equal(planA?.chainStatus, 'running');
@@ -1830,7 +1853,7 @@ describe('review check-run reconciliation', () => {
       }),
     );
 
-    service.restoreOnStartup();
+    await service.restoreOnStartup();
 
     const failed = service.getAgent(agentId);
     assert.equal(failed.status, 'failed');
