@@ -297,6 +297,52 @@ describe('prepareWorkspace — bootstrap wiring', () => {
       fs.rmSync(h.dataDir, { recursive: true, force: true });
     }
   });
+
+  it('skips bootstrap for review runs when ocrSkipWorkspaceBootstrap is enabled', async () => {
+    const h = makeHarness();
+    fs.writeFileSync(path.join(h.fixtureDir, 'package.json'), '{}', 'utf8');
+    writeEnvironmentJson(h, JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok' } }));
+    h.job.mode = 'review';
+
+    try {
+      const ctx = {
+        ...h.buildContext(),
+        config: { ...BASE_CONFIG, ocrSkipWorkspaceBootstrap: true },
+      };
+      await withNoCodegraph(() => prepareWorkspace(ctx));
+
+      const agent = h.agentsStore.load().agents[0];
+      assert.equal(agent.bootstrap, undefined);
+
+      const log = fs.readFileSync(h.job.logPath, 'utf8');
+      assert.match(log, /Workspace bootstrap skipped: ocrSkipWorkspaceBootstrap is enabled for review runs/);
+      assert.doesNotMatch(log, /Running workspace bootstrap/);
+    } finally {
+      fs.rmSync(h.dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('still runs bootstrap for non-review runs when ocrSkipWorkspaceBootstrap is enabled', async () => {
+    const h = makeHarness();
+    fs.writeFileSync(path.join(h.fixtureDir, 'package.json'), '{}', 'utf8');
+    writeEnvironmentJson(h, JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok' } }));
+
+    try {
+      const ctx = {
+        ...h.buildContext(),
+        config: { ...BASE_CONFIG, ocrSkipWorkspaceBootstrap: true },
+      };
+      await withNoCodegraph(() => prepareWorkspace(ctx));
+
+      const agent = h.agentsStore.load().agents[0];
+      assert.equal(agent.bootstrap?.status, 'completed');
+
+      const log = fs.readFileSync(h.job.logPath, 'utf8');
+      assert.match(log, /Running workspace bootstrap/);
+    } finally {
+      fs.rmSync(h.dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('ensureLocalagentBoxIgnored', () => {

@@ -29,7 +29,7 @@ export const SETTINGS_SEARCH_KEYWORDS = {
     loop: ['loop', 'observe', 'plan', 'act', 'reflect', 'initial plan', 'model'],
   },
   ocr: {
-    review: ['review', 'ocr', 'code review', 'auto-review'],
+    review: ['review', 'ocr', 'code review', 'auto-review', 'bootstrap'],
   },
 } satisfies Record<SettingsSectionId, Record<string, string[]>>;
 

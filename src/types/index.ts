@@ -52,6 +52,8 @@ export interface AppConfig {
   autoReviewPullRequests?: boolean;
   /** Model for code review (falls back to opencodeModel) */
   reviewModel: string;
+  /** Default false — skip the workspace bootstrap for review runs */
+  ocrSkipWorkspaceBootstrap?: boolean;
   /** Interactive agent timeout in seconds (default 3600) */
   interactiveAgentTimeoutSeconds: number;
   /** Loop agent timeout in seconds (default 3600) */
@@ -102,6 +104,7 @@ export interface PublicConfig {
   autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
   reviewModel: string;
+  ocrSkipWorkspaceBootstrap?: boolean;
   interactiveAgentTimeoutSeconds: number;
   loopAgentTimeoutSeconds: number;
   loopVerbModels: LoopVerbModels;

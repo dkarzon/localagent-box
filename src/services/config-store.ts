@@ -25,6 +25,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoCreatePullRequest: true,
   autoReviewPullRequests: false,
   reviewModel: '',
+  ocrSkipWorkspaceBootstrap: false,
   interactiveAgentTimeoutSeconds: 3600,
   loopAgentTimeoutSeconds: 3600,
   loopVerbModels: {
@@ -125,6 +126,7 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       autoCreatePullRequest: config.autoCreatePullRequest !== false,
       autoReviewPullRequests: config.autoReviewPullRequests === true,
       reviewModel: config.reviewModel || '',
+      ocrSkipWorkspaceBootstrap: config.ocrSkipWorkspaceBootstrap === true,
       loopVerbModels: config.loopVerbModels,
       loopDefaultMaxIterations: loadServerDefaultLoopConfig().maxIterations,
     };
