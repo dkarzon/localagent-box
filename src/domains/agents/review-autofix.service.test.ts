@@ -1632,7 +1632,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     } as Agent);
   }
 
-  it('retains a queued fix agent and keeps the chain running for re-enqueue', () => {
+  it('retains a queued fix agent and keeps the chain running for re-enqueue', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'assigned', 'fix1')] });
     writePlan(ctx.repository, {
       batches: [{ index: 0, agentId: 'fix1', status: 'queued' }],
@@ -1641,7 +1641,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     });
     seedFixAgent(ctx, 'fix1', 'queued', ['review1:finding:0'], 0);
 
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
 
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.chainStatus, 'running');
@@ -1652,7 +1652,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     assert.equal(ctx.calls.created.length, 0, 'no agents created during reconciliation');
   });
 
-  it('marks a queued batch failed and pauses when the agent record is missing', () => {
+  it('marks a queued batch failed and pauses when the agent record is missing', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'assigned', 'fix-ghost')] });
     writePlan(ctx.repository, {
       batches: [{ index: 0, agentId: 'fix-ghost', status: 'queued' }],
@@ -1660,7 +1660,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
       nextBatchIndex: null,
     });
 
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
 
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.chainStatus, 'paused');
@@ -1671,7 +1671,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     assert.equal(ctx.calls.created.length, 0);
   });
 
-  it('derives completed for a running batch whose agent completed with a push', () => {
+  it('derives completed for a running batch whose agent completed with a push', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
     writePlan(ctx.repository, {
       batches: [{ index: 0, agentId: 'fix1', status: 'running' }],
@@ -1681,7 +1681,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0'], 0);
     ctx.repository.update('fix1', { status: 'completed', pushed: true });
 
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
 
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.batches[0].status, 'completed');
@@ -1729,7 +1729,42 @@ describe('reconcileAutofixPlansOnStartup', () => {
     assert.deepEqual(ctx.calls.resolved, []);
   });
 
-  it('derives failed for a running batch whose agent completed without a push', () => {
+  it('persists a failed thread resolution during startup reconciliation', async () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
+    const findings = ctx.repository.readReviewFindings('review1')!;
+    findings[0]!.github.commentId = 42;
+    findings[0]!.github.resolutionStatus = 'pending';
+    ctx.repository.writeReviewFindings('review1', findings);
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0']);
+    ctx.repository.update('fix1', { status: 'completed', pushed: true });
+    ctx.lookupResult = null;
+
+    await ctx.service.reconcileAutofixPlansOnStartup();
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'fixed');
+    assert.equal(persisted?.[0].github.resolutionStatus, 'failed');
+    assert.ok(persisted?.[0].github.resolutionError);
+  });
+
+  it('does not retry resolution for findings already fixed before the restart', async () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
+    const findings = ctx.repository.readReviewFindings('review1')!;
+    findings[0]!.github.commentId = 42;
+    findings[0]!.github.resolutionStatus = 'failed';
+    ctx.repository.writeReviewFindings('review1', findings);
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0']);
+    ctx.repository.update('fix1', { status: 'completed', pushed: true });
+    ctx.lookupResult = { threadId: 'thread-1', isResolved: false };
+
+    await ctx.service.reconcileAutofixPlansOnStartup();
+
+    assert.equal(ctx.repository.readReviewFindings('review1')?.[0].github.resolutionStatus, 'failed');
+    assert.deepEqual(ctx.calls.lookups, []);
+    assert.deepEqual(ctx.calls.resolved, []);
+  });
+
+  it('derives failed for a running batch whose agent completed without a push', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
     writePlan(ctx.repository, {
       batches: [{ index: 0, agentId: 'fix1', status: 'running' }],
@@ -1739,7 +1774,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0'], 0);
     ctx.repository.update('fix1', { status: 'completed', pushed: false });
 
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
 
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.batches[0].status, 'failed');
@@ -1748,7 +1783,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     assert.equal(persisted?.[0].fixStatus, 'failed');
   });
 
-  it('pauses a running chain with no active batch and nothing to create', () => {
+  it('pauses a running chain with no active batch and nothing to create', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
     writePlan(ctx.repository, {
       batches: [{ index: 0, agentId: 'fix1', status: 'completed' }],
@@ -1756,13 +1791,13 @@ describe('reconcileAutofixPlansOnStartup', () => {
       nextBatchIndex: null,
     });
 
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
 
     const plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.chainStatus, 'paused');
   });
 
-  it('is a no-op for paused chains, missing plans, and completed chains', () => {
+  it('is a no-op for paused chains, missing plans, and completed chains', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
     writePlan(ctx.repository, {
       batches: [{ index: 0, agentId: 'fix1', status: 'completed' }],
@@ -1771,7 +1806,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
     });
 
     // Paused plan: untouched.
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
     let plan = ctx.repository.readReviewAutofixPlan('review1');
     assert.equal(plan?.chainStatus, 'paused');
     assert.equal(plan?.batches[0].status, 'completed');
@@ -1783,7 +1818,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
       mode: 'review' as const,
       review: { baseBranch: 'main', headBranch: 'feat2', prNumber: null, headSha: null },
     });
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
     assert.equal(ctx.repository.readReviewAutofixPlan('review2'), null);
 
     // Completed plan: untouched.
@@ -1803,13 +1838,13 @@ describe('reconcileAutofixPlansOnStartup', () => {
       nextBatchIndex: null,
       verification: { status: 'completed', agentId: 'verify1' },
     });
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
     plan = ctx.repository.readReviewAutofixPlan('review2');
     assert.equal(plan?.chainStatus, 'completed');
     assert.equal(ctx.calls.created.length, 0);
   });
 
-  it('does not create agents for a plan with all batches terminal', () => {
+  it('does not create agents for a plan with all batches terminal', async () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'fixed', 'fix1')] });
     writePlan(ctx.repository, {
       batches: [
@@ -1820,7 +1855,7 @@ describe('reconcileAutofixPlansOnStartup', () => {
       nextBatchIndex: null,
     });
 
-    ctx.service.reconcileAutofixPlansOnStartup();
+    await ctx.service.reconcileAutofixPlansOnStartup();
 
     assert.equal(ctx.calls.created.length, 0);
     const plan = ctx.repository.readReviewAutofixPlan('review1');

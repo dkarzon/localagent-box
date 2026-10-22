@@ -1044,24 +1044,25 @@ export function createReviewAutofixService({
    * Findings derived as fixed also get their linked GitHub comment resolved
    * when one exists: the worker exit hook that normally resolves threads was
    * lost to the interruption, so the host resolves them here. Findings without
-   * a comment or cached thread stay `not_applicable`.
+   * a comment or cached thread stay `not_applicable`. Returns true when
+   * findings were derived as fixed in this pass.
    */
-  async function reconcileFindingsForFixAgent(fixAgent: Agent): Promise<void> {
+  async function reconcileFindingsForFixAgent(fixAgent: Agent): Promise<boolean> {
     const autofix = fixAgent.autofix;
     if (!autofix) {
-      return;
+      return false;
     }
     const reviewAgentId = autofix.sourceReviewAgentId;
     const findings = repository.readReviewFindings(reviewAgentId);
     if (!findings) {
-      return;
+      return false;
     }
     const succeeded = fixAgent.status === 'completed' && fixAgent.pushed === true;
-    let changed = false;
-    for (const finding of findings) {
-      if (!autofix.findingIds.includes(finding.id) || finding.assignedAgentId !== fixAgent.agentId) {
-        continue;
-      }
+    const assignedFindings = findings.filter((entry) =>
+      autofix.findingIds.includes(entry.id) && entry.assignedAgentId === fixAgent.agentId,
+    );
+    const derived: ReviewFindingRecord[] = [];
+    for (const finding of assignedFindings) {
       if (finding.fixStatus === 'assigned' || finding.fixStatus === 'fixing') {
         if (fixAgent.status === 'queued') {
           // Still queued: restoreOnStartup re-enqueues it; keep assigned.
@@ -1071,42 +1072,43 @@ export function createReviewAutofixService({
         if (succeeded) {
           finding.fixedAt = new Date().toISOString();
         }
-        changed = true;
+        derived.push(finding);
       }
     }
-    if (changed) {
-      repository.writeReviewFindings(reviewAgentId, findings);
-      logAutofixEvent('startup.findings.reconciled', {
-        reviewAgentId,
-        findingIds: autofix.findingIds,
-        fixAgentId: fixAgent.agentId,
-        detail: succeeded ? 'fixed' : 'failed (manually actionable)',
-      });
+    if (derived.length === 0) {
+      return false;
+    }
+    // Persist the derived state before the async GitHub resolution attempts,
+    // so a crash leaves recoverable state.
+    repository.writeReviewFindings(reviewAgentId, findings);
+    logAutofixEvent('startup.findings.reconciled', {
+      reviewAgentId,
+      findingIds: autofix.findingIds,
+      fixAgentId: fixAgent.agentId,
+      detail: succeeded ? 'fixed' : 'failed (manually actionable)',
+    });
+    if (!succeeded) {
+      return false;
     }
 
-    if (succeeded) {
-      // The worker exit hook that normally resolves linked threads never ran
-      // for this agent, so mark the GitHub comment resolved here when the
-      // finding has one (findings without a comment stay not_applicable).
-      let resolved = false;
-      for (const finding of findings) {
-        if (
-          autofix.findingIds.includes(finding.id) &&
-          finding.assignedAgentId === fixAgent.agentId &&
-          finding.fixStatus === 'fixed'
-        ) {
-          const before = finding.github.resolutionStatus;
-          await resolveFindingThreadAfterFix(reviewAgentId, finding);
-          if (finding.github.resolutionStatus === 'resolved' && before !== 'resolved') {
-            resolved = true;
-          }
-        }
-      }
-      if (resolved) {
-        repository.writeReviewFindings(reviewAgentId, findings);
-        await maybeSucceedReviewCheck(reviewAgentId);
+    // The worker exit hook that normally resolves linked threads never ran
+    // for this agent. Only findings derived in this pass are resolved, so
+    // findings fixed before the restart are not retried on every boot.
+    for (const finding of derived) {
+      await resolveFindingThreadAfterFix(reviewAgentId, finding);
+    }
+    // Re-read so writes made during the GitHub calls are not clobbered by
+    // this snapshot; only the derived findings' GitHub state is merged in.
+    // Failures are persisted too (retryable via retryFindingResolution).
+    const fresh = repository.readReviewFindings(reviewAgentId) ?? findings;
+    for (const finding of derived) {
+      const target = fresh.find((entry) => entry.id === finding.id);
+      if (target) {
+        target.github = finding.github;
       }
     }
+    repository.writeReviewFindings(reviewAgentId, fresh);
+    return true;
   }
 
   /**
@@ -1116,7 +1118,8 @@ export function createReviewAutofixService({
    * queued agents; the plan stays `running` for that path.
    */
   async function reconcileAutofixPlansOnStartup(): Promise<void> {
-    for (const reviewAgent of repository.findAll()) {
+    const agents = repository.findAll();
+    for (const reviewAgent of agents) {
       if (getAgentMode(reviewAgent) !== 'review') {
         continue;
       }
@@ -1129,7 +1132,8 @@ export function createReviewAutofixService({
       // the interruption so its findings are not stuck on assigned/fixing.
       // Manual fixes have no plan, so this runs for them even when the plan is
       // missing; findings derived as fixed also resolve their linked comment.
-      for (const fixAgent of repository.findAll()) {
+      let fixedAny = false;
+      for (const fixAgent of agents) {
         if (
           fixAgent.autofix?.sourceReviewAgentId !== reviewAgent.agentId ||
           !ACTIVE_FIX_TERMINAL_OR_STOPPED.has(fixAgent.status)
@@ -1137,9 +1141,21 @@ export function createReviewAutofixService({
           continue;
         }
         try {
-          await reconcileFindingsForFixAgent(fixAgent);
+          if (await reconcileFindingsForFixAgent(fixAgent)) {
+            fixedAny = true;
+          }
         } catch (err) {
           getLogger().error({ err, fixAgentId: fixAgent.agentId }, 'startup findings reconcile failed');
+        }
+      }
+
+      // Once per review, and never for a review interrupted by the restart:
+      // its check run is being cancelled (fire-and-forget) by restoreOnStartup.
+      if (fixedAny && reviewAgent.status === 'completed') {
+        try {
+          await maybeSucceedReviewCheck(reviewAgent.agentId);
+        } catch (err) {
+          getLogger().error({ err, reviewAgentId: reviewAgent.agentId }, 'startup review check update failed');
         }
       }
     }
