@@ -1682,6 +1682,44 @@ describe('reconcileAutofixPlansOnStartup', () => {
     assert.ok(persisted?.[0].fixedAt);
   });
 
+  it('resolves the linked GitHub comment for a manual fix completed with a push before restart', async () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
+    const findings = ctx.repository.readReviewFindings('review1')!;
+    findings[0]!.github.commentId = 42;
+    findings[0]!.github.commentUrl = 'https://example.com/comment/42';
+    findings[0]!.github.resolutionStatus = 'pending';
+    ctx.repository.writeReviewFindings('review1', findings);
+
+    // Manual fix agents have no batch; the finding is reconciled from the
+    // agent record alone.
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0']);
+    ctx.repository.update('fix1', { status: 'completed', pushed: true });
+    ctx.lookupResult = { threadId: 'thread-1', isResolved: false };
+
+    await ctx.service.reconcileAutofixPlansOnStartup();
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'fixed');
+    assert.equal(persisted?.[0].github.resolutionStatus, 'resolved');
+    assert.ok(persisted?.[0].github.resolvedAt);
+    assert.deepEqual(ctx.calls.lookups, [42]);
+    assert.deepEqual(ctx.calls.resolved, ['thread-1']);
+  });
+
+  it('leaves a fixed finding without a linked comment unresolved during startup reconciliation', async () => {
+    const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
+    seedFixAgent(ctx, 'fix1', 'completed', ['review1:finding:0']);
+    ctx.repository.update('fix1', { status: 'completed', pushed: true });
+
+    await ctx.service.reconcileAutofixPlansOnStartup();
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'fixed');
+    assert.equal(persisted?.[0].github.resolutionStatus, 'not_applicable');
+    assert.deepEqual(ctx.calls.lookups, []);
+    assert.deepEqual(ctx.calls.resolved, []);
+  });
+
   it('derives failed for a running batch whose agent completed without a push', () => {
     const ctx = setup({ findings: [reconcileFinding(0, 'fixing', 'fix1')] });
     writePlan(ctx.repository, {

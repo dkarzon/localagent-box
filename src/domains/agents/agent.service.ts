@@ -1389,7 +1389,9 @@ export function createAgentService(options: {
     // queued agents are retained (and their chains stay running), batches with
     // missing/in-flight agents are failed or resolved and chains paused. Never
     // creates agents, so no duplicate fix agents can appear after a restart.
-    reviewAutofix.reconcileAutofixPlansOnStartup();
+    // Findings derived as fixed also resolve their linked GitHub comment; the
+    // GitHub calls run after the synchronous derive completes.
+    void reviewAutofix.reconcileAutofixPlansOnStartup();
 
     const queued = agents
       .filter((agent) => agent.status === 'queued')
