@@ -105,6 +105,7 @@ export interface OllamaModel {
   name: string;
   size?: number;
   modifiedAt?: string;
+  contextLength?: number;
 }
 
 export interface OllamaStatus {
@@ -116,12 +117,13 @@ export interface OllamaStatus {
   models?: OllamaModel[];
 }
 
-export const LLM_PROVIDER_IDS = ['ollama', 'ollama-cloud'] as const;
+export const LLM_PROVIDER_IDS = ['ollama', 'ollama-cloud', 'openai-compatible'] as const;
 export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
 
 export const LLM_PROVIDER_LABELS: Record<LlmProviderId, string> = {
   ollama: 'Ollama (local)',
   'ollama-cloud': 'Ollama Cloud',
+  'openai-compatible': 'OpenAI-compatible',
 };
 
 export interface HealthResponse {
@@ -134,6 +136,9 @@ export interface AppConfig {
   ollamaCloudApiKey?: string;
   ollamaCloudBaseUrl?: string;
   hasOllamaCloudApiKey?: boolean;
+  openaiCompatibleBaseUrl?: string;
+  openaiCompatibleApiKey?: string;
+  hasOpenaiCompatibleApiKey?: boolean;
   opencodeModel?: string;
   opencodeProvider?: LlmProviderId;
   reviewProvider?: LlmProviderId | '';
@@ -388,6 +393,8 @@ export const MODELS_CONFIG_FIELDS = [
   'ollamaBaseUrl',
   'ollamaCloudApiKey',
   'ollamaCloudBaseUrl',
+  'openaiCompatibleBaseUrl',
+  'openaiCompatibleApiKey',
 ] as const;
 
 export const GITHUB_CONFIG_FIELDS = [

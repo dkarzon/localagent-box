@@ -19,6 +19,8 @@ export interface ServerEnv {
   ollamaBaseUrl: string | undefined;
   ollamaCloudApiKey: string | undefined;
   ollamaCloudBaseUrl: string | undefined;
+  openaiCompatibleBaseUrl: string | undefined;
+  openaiCompatibleApiKey: string | undefined;
   opencodeModel: string | undefined;
   opencodeProvider: string | undefined;
   opencodeBin: string;
@@ -119,6 +121,10 @@ export function loadServerEnv(): ServerEnv {
       process.env.OLLAMA_CLOUD_API_KEY || fileVars.OLLAMA_CLOUD_API_KEY || undefined,
     ollamaCloudBaseUrl:
       process.env.OLLAMA_CLOUD_BASE_URL || fileVars.OLLAMA_CLOUD_BASE_URL || undefined,
+    openaiCompatibleBaseUrl:
+      process.env.OPENAI_COMPATIBLE_BASE_URL || fileVars.OPENAI_COMPATIBLE_BASE_URL || undefined,
+    openaiCompatibleApiKey:
+      process.env.OPENAI_COMPATIBLE_API_KEY || fileVars.OPENAI_COMPATIBLE_API_KEY || undefined,
     opencodeModel: process.env.OPENCODE_MODEL || fileVars.OPENCODE_MODEL || undefined,
     opencodeProvider: process.env.OPENCODE_PROVIDER || fileVars.OPENCODE_PROVIDER || undefined,
     opencodeBin: process.env.OPENCODE_BIN || fileVars.OPENCODE_BIN || 'opencode',

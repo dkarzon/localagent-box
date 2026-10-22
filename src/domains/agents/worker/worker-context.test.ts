@@ -32,6 +32,8 @@ function writeConfig(dataDir: string, extra: Partial<AppConfig>): void {
     ollamaBaseUrl: '',
     ollamaCloudApiKey: '',
     ollamaCloudBaseUrl: '',
+    openaiCompatibleBaseUrl: '',
+    openaiCompatibleApiKey: '',
     opencodeModel: '',
     opencodeProvider: 'ollama',
     reviewProvider: '',

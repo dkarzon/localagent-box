@@ -18,6 +18,7 @@ export const SETTINGS_SEARCH_KEYWORDS = {
   models: {
     local: ['ollama', 'local', 'model'],
     cloud: ['cloud', 'ollama cloud', 'api key'],
+    openaiCompatible: ['openai', 'compatible', 'strata', 'lm studio', 'vllm', 'llama.cpp', 'api key'],
   },
   github: {
     app: ['github', 'git', 'app', 'private key'],
@@ -90,6 +91,9 @@ export function isProviderConfigured(
 ): boolean {
   if (providerId === 'ollama') {
     return Boolean(config.ollamaBaseUrl?.trim());
+  }
+  if (providerId === 'openai-compatible') {
+    return Boolean(config.openaiCompatibleBaseUrl?.trim());
   }
   return Boolean(config.hasOllamaCloudApiKey || config.ollamaCloudApiKey?.trim());
 }

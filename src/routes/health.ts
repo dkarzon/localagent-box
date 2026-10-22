@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import {
   isProviderConfigured,
+  providerApi,
   providerNotConfiguredMessage,
   resolveProviderHost,
 } from '../lib/llm-provider';
@@ -23,6 +24,7 @@ async function probeProvider(
     baseUrl: host.baseUrl,
     apiKey: host.apiKey,
     notConfiguredMessage,
+    api: providerApi(id),
   });
 }
 

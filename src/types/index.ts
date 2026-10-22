@@ -15,7 +15,7 @@ import type { GitChangedFile } from './git-file-change';
 export type { GitChangedFile, GitFileChangeKind } from './git-file-change';
 export type AgentGitChangedFile = GitChangedFile;
 
-export const LLM_PROVIDER_IDS = ['ollama', 'ollama-cloud'] as const;
+export const LLM_PROVIDER_IDS = ['ollama', 'ollama-cloud', 'openai-compatible'] as const;
 export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
 
 export const DEFAULT_OLLAMA_CLOUD_BASE_URL = 'https://ollama.com';
@@ -25,6 +25,10 @@ export interface AppConfig {
   ollamaCloudApiKey: string;
   /** Empty → DEFAULT_OLLAMA_CLOUD_BASE_URL */
   ollamaCloudBaseUrl: string;
+  /** Any OpenAI-compatible server (Strata, LM Studio, vLLM, llama.cpp); `/v1` is appended when missing. */
+  openaiCompatibleBaseUrl: string;
+  /** Optional — sent as a Bearer token when set. */
+  openaiCompatibleApiKey: string;
   opencodeModel: string;
   opencodeProvider: LlmProviderId;
   /** Empty → inherit opencodeProvider */
@@ -78,6 +82,9 @@ export interface PublicConfig {
   ollamaCloudApiKey: string;
   ollamaCloudBaseUrl: string;
   hasOllamaCloudApiKey: boolean;
+  openaiCompatibleBaseUrl: string;
+  openaiCompatibleApiKey: string;
+  hasOpenaiCompatibleApiKey: boolean;
   opencodeModel: string;
   opencodeProvider: LlmProviderId;
   reviewProvider: LlmProviderId | '';
@@ -106,6 +113,8 @@ export interface OllamaModel {
   name: string;
   size?: number;
   modifiedAt?: string;
+  /** Context window in tokens, when the server reports one. */
+  contextLength?: number;
 }
 
 export interface OllamaProbeResult {

@@ -113,8 +113,10 @@ GitHub App credentials (`githubAppId`, `githubAppInstallationId`, `githubAppPriv
 | `OLLAMA_BASE_URL` | — | Bootstrap local Ollama URL on first start if not already in config |
 | `OLLAMA_CLOUD_API_KEY` | — | Bootstrap Ollama Cloud API key on first start |
 | `OLLAMA_CLOUD_BASE_URL` | — | Optional Cloud host (default `https://ollama.com`) |
+| `OPENAI_COMPATIBLE_BASE_URL` | — | Bootstrap an OpenAI-compatible server (Strata, LM Studio, vLLM, llama.cpp) on first start |
+| `OPENAI_COMPATIBLE_API_KEY` | — | Optional API key for the OpenAI-compatible server |
 | `OPENCODE_MODEL` | — | Bootstrap default model (e.g. `llama3.2`) |
-| `OPENCODE_PROVIDER` | — | Bootstrap provider id (`ollama` or `ollama-cloud`) |
+| `OPENCODE_PROVIDER` | — | Bootstrap provider id (`ollama`, `ollama-cloud`, or `openai-compatible`) |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent worker processes |
 | `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds (from worker start, not queue wait) |
 | `OCR_BIN` | `ocr` | Open Code Review CLI (preinstalled in the image; see [code-review.md](./code-review.md)) |

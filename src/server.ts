@@ -69,6 +69,23 @@ function bootstrapConfig(
       );
     }
   }
+  if (env.openaiCompatibleBaseUrl && !current.openaiCompatibleBaseUrl) {
+    if (isValidHttpUrl(env.openaiCompatibleBaseUrl)) {
+      partial.openaiCompatibleBaseUrl = env.openaiCompatibleBaseUrl;
+      if (env.opencodeProvider === 'openai-compatible') {
+        partial.opencodeProvider = 'openai-compatible';
+        partial.opencodeModel = env.opencodeModel || current.opencodeModel;
+      }
+    } else {
+      getLogger().warn(
+        { openaiCompatibleBaseUrl: env.openaiCompatibleBaseUrl },
+        'Ignoring invalid OPENAI_COMPATIBLE_BASE_URL env value (must be an http(s) URL)',
+      );
+    }
+  }
+  if (env.openaiCompatibleApiKey && !current.openaiCompatibleApiKey) {
+    partial.openaiCompatibleApiKey = env.openaiCompatibleApiKey;
+  }
 
   if (Object.keys(partial).length > 0) {
     return configRepository.save(partial);

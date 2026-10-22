@@ -40,6 +40,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('');
   const [ollamaCloudApiKey, setOllamaCloudApiKey] = useState('');
   const [ollamaCloudBaseUrl, setOllamaCloudBaseUrl] = useState('');
+  const [openaiCompatibleBaseUrl, setOpenaiCompatibleBaseUrl] = useState('');
+  const [openaiCompatibleApiKey, setOpenaiCompatibleApiKey] = useState('');
   const [githubAppId, setGithubAppId] = useState('');
   const [githubAppInstallationId, setGithubAppInstallationId] = useState('');
   const [githubAppPrivateKey, setGithubAppPrivateKey] = useState('');
@@ -76,6 +78,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
     setOllamaBaseUrl(next.ollamaBaseUrl || '');
     setOllamaCloudApiKey(next.ollamaCloudApiKey || '');
     setOllamaCloudBaseUrl(next.ollamaCloudBaseUrl || '');
+    setOpenaiCompatibleBaseUrl(next.openaiCompatibleBaseUrl || '');
+    setOpenaiCompatibleApiKey(next.openaiCompatibleApiKey || '');
     setGithubAppId(next.githubAppId || '');
     setGithubAppInstallationId(next.githubAppInstallationId || '');
     setGithubAppPrivateKey(next.hasGithubAppPrivateKey ? '***' : '');
@@ -156,6 +160,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
           ollamaBaseUrl: ollamaBaseUrl.trim(),
           ollamaCloudApiKey: ollamaCloudApiKey.trim(),
           ollamaCloudBaseUrl: ollamaCloudBaseUrl.trim(),
+          openaiCompatibleBaseUrl: openaiCompatibleBaseUrl.trim(),
+          openaiCompatibleApiKey: openaiCompatibleApiKey.trim(),
         };
       case 'github':
         return {
@@ -283,6 +289,11 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
             setOllamaCloudBaseUrl={setOllamaCloudBaseUrl}
             showCloudKey={showCloudKey}
             setShowCloudKey={setShowCloudKey}
+            openaiCompatible={health?.providers?.['openai-compatible'] ?? null}
+            openaiCompatibleBaseUrl={openaiCompatibleBaseUrl}
+            setOpenaiCompatibleBaseUrl={setOpenaiCompatibleBaseUrl}
+            openaiCompatibleApiKey={openaiCompatibleApiKey}
+            setOpenaiCompatibleApiKey={setOpenaiCompatibleApiKey}
             onRefreshLocal={refreshHealth}
             onRefreshCloud={refreshHealth}
             searchQuery={searchQuery}

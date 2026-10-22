@@ -24,9 +24,18 @@ interface ModelsSettingsSectionProps {
   setOllamaCloudBaseUrl: (value: string) => void;
   showCloudKey: boolean;
   setShowCloudKey: React.Dispatch<React.SetStateAction<boolean>>;
+  openaiCompatible: OllamaStatus | null;
+  openaiCompatibleBaseUrl: string;
+  setOpenaiCompatibleBaseUrl: (value: string) => void;
+  openaiCompatibleApiKey: string;
+  setOpenaiCompatibleApiKey: (value: string) => void;
   onRefreshLocal: () => void;
   onRefreshCloud: () => void;
   searchQuery: string;
+}
+
+function formatContextLength(tokens: number): string {
+  return tokens >= 1024 ? `${Math.round(tokens / 1024)}K context` : `${tokens} context`;
 }
 
 function ModelList({
@@ -58,6 +67,9 @@ function ModelList({
             {model.size != null ? (
               <p className="text-on-surface-variant">{formatFileSize(model.size)}</p>
             ) : null}
+            {model.contextLength ? (
+              <p className="text-on-surface-variant">{formatContextLength(model.contextLength)}</p>
+            ) : null}
             {model.modifiedAt ? (
               <p className="mt-0.5">{formatModelUpdated(model.modifiedAt)}</p>
             ) : null}
@@ -80,6 +92,11 @@ export function ModelsSettingsSection({
   setOllamaCloudBaseUrl,
   showCloudKey,
   setShowCloudKey,
+  openaiCompatible,
+  openaiCompatibleBaseUrl,
+  setOpenaiCompatibleBaseUrl,
+  openaiCompatibleApiKey,
+  setOpenaiCompatibleApiKey,
   onRefreshLocal,
   onRefreshCloud,
   searchQuery,
@@ -89,10 +106,14 @@ export function ModelsSettingsSection({
 
   const localInfo = describeProviderStatus(ollamaLocal, 'Ollama');
   const cloudInfo = describeProviderStatus(ollamaCloud, 'Ollama Cloud');
+  const openaiInfo = describeProviderStatus(openaiCompatible, 'Server');
 
   const cloudKeyPlaceholder = config.hasOllamaCloudApiKey
     ? 'Stored — paste to replace'
     : 'Ollama Cloud API key';
+  const openaiKeyPlaceholder = config.hasOpenaiCompatibleApiKey
+    ? 'Stored — paste to replace'
+    : 'Leave blank if the server needs no key';
 
   return (
     <div className="grid gap-6">
@@ -183,6 +204,56 @@ export function ModelsSettingsSection({
           </div>
           <div className="mt-4">
             <ModelList models={ollamaCloud?.models} query={query} />
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {showSection(SETTINGS_SEARCH_KEYWORDS.models.openaiCompatible) ? (
+        <SectionCard
+          title="OpenAI-compatible server"
+          icon={<span className="size-2 rounded-full bg-primary" />}
+          action={
+            openaiInfo.connected ? (
+              <span className="flex items-center gap-1.5 text-xs text-success">
+                <span className="size-1.5 rounded-full bg-success" />
+                {openaiInfo.message}
+              </span>
+            ) : (
+              <StatusMessage message={openaiInfo.message} variant={openaiInfo.variant} mono />
+            )
+          }
+        >
+          <p className="mb-4 text-xs text-muted">
+            Strata, LM Studio, vLLM, llama.cpp server, or any endpoint serving{' '}
+            <code>/v1/models</code> and <code>/v1/chat/completions</code> with tool calling.
+          </p>
+          <Field label="Base URL">
+            <TextInput
+              type="url"
+              name="openaiCompatibleBaseUrl"
+              placeholder="http://127.0.0.1:8080/v1"
+              value={openaiCompatibleBaseUrl}
+              onChange={(e) => setOpenaiCompatibleBaseUrl(e.target.value)}
+            />
+          </Field>
+          <Field label="API key (optional)" className="mt-4">
+            <TextInput
+              type="password"
+              name="openaiCompatibleApiKey"
+              placeholder={openaiKeyPlaceholder}
+              autoComplete="off"
+              value={openaiCompatibleApiKey === '***' ? '' : openaiCompatibleApiKey}
+              onChange={(e) => setOpenaiCompatibleApiKey(e.target.value)}
+            />
+          </Field>
+          <div className="mt-4">
+            <Button type="button" variant="ghost" onClick={onRefreshLocal} className="w-full sm:w-auto">
+              <IconRefresh className="size-4" />
+              Refresh server status
+            </Button>
+          </div>
+          <div className="mt-4">
+            <ModelList models={openaiCompatible?.models} query={query} />
           </div>
         </SectionCard>
       ) : null}

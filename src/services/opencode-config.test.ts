@@ -4,6 +4,7 @@ import {
   buildCodegraphMcpServer,
   buildGemmaReasoningWorkaroundOptions,
   buildModelConfig,
+  buildModelLimit,
   buildOpenCodeConfig,
   createOpenCodeConfigService,
   isGemmaThinkingModel,
@@ -27,6 +28,20 @@ describe('buildModelConfig', () => {
 
   it('leaves non-Gemma models unchanged', () => {
     assert.deepEqual(buildModelConfig('llama3.2'), { name: 'llama3.2' });
+  });
+
+  it('adds a limit when the context length is known', () => {
+    assert.deepEqual(buildModelConfig('qwen', 65536), {
+      name: 'qwen',
+      limit: { context: 65536, output: 16384 },
+    });
+  });
+});
+
+describe('buildModelLimit', () => {
+  it('clamps output to between 256 and 32768 tokens', () => {
+    assert.deepEqual(buildModelLimit(262144), { context: 262144, output: 32768 });
+    assert.deepEqual(buildModelLimit(512), { context: 512, output: 256 });
   });
 });
 
@@ -187,6 +202,36 @@ describe('buildOpenCodeConfig cloud provider', () => {
       opencodeModel: 'gemma4:31b',
     } as AppConfig;
     assert.equal(service.writeOpenCodeConfig(config), null);
+  });
+});
+
+describe('buildOpenCodeConfig openai-compatible provider', () => {
+  it('builds the provider entry with limits from reported context lengths', () => {
+    const config = {
+      openaiCompatibleBaseUrl: 'http://127.0.0.1:8080',
+      openaiCompatibleApiKey: '',
+      opencodeProvider: 'openai-compatible',
+      opencodeModel: 'qwen-next',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config, { modelContextLengths: { 'qwen-next': 131072 } });
+    const provider = file.provider['openai-compatible'];
+    assert.equal(file.model, 'openai-compatible/qwen-next');
+    assert.equal(provider?.name, 'OpenAI-compatible');
+    assert.equal(provider?.npm, '@ai-sdk/openai-compatible');
+    assert.deepEqual(provider?.options, { baseURL: 'http://127.0.0.1:8080/v1' });
+    assert.deepEqual(provider?.models['qwen-next']?.limit, { context: 131072, output: 32768 });
+  });
+
+  it('passes the optional api key through', () => {
+    const config = {
+      openaiCompatibleBaseUrl: 'http://localhost:1234/v1',
+      openaiCompatibleApiKey: 'sk-local',
+      opencodeProvider: 'openai-compatible',
+      opencodeModel: 'm',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config);
+    assert.equal(file.provider['openai-compatible']?.options.apiKey, 'sk-local');
+    assert.equal(file.provider['openai-compatible']?.models.m?.limit, undefined);
   });
 });
 

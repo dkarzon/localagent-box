@@ -135,6 +135,8 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `OLLAMA_BASE_URL` | — | Bootstrap local Ollama URL on first start (e.g. `http://localhost:11434`) |
 | `OLLAMA_CLOUD_API_KEY` | — | Bootstrap Ollama Cloud API key on first start |
 | `OLLAMA_CLOUD_BASE_URL` | — | Optional Cloud host (default `https://ollama.com`) |
+| `OPENAI_COMPATIBLE_BASE_URL` | — | Bootstrap an OpenAI-compatible server (Strata, LM Studio, vLLM, llama.cpp) on first start |
+| `OPENAI_COMPATIBLE_API_KEY` | — | Optional API key for the OpenAI-compatible server |
 | `AGENT_WORKSPACE` | platform-specific | Directory for ephemeral agent clones |
 | `MAX_CONCURRENT_AGENTS` | `3` | Concurrent agent workers |
 | `AGENT_TIMEOUT` | `3600` | Batch worker timeout in seconds, measured from when the worker starts running (not queue wait) |
@@ -292,7 +294,7 @@ curl -X PUT http://localhost:8080/api/v1/config \
 
 Saving OpenCode settings writes `opencode.json` to `~/.config/opencode/` when the selected OpenCode provider is configured. `GET /health` returns `providers.ollama` and `providers['ollama-cloud']` (top-level `ollama` remains for backward compatibility).
 
-Optional bootstrap env vars: `OLLAMA_BASE_URL`, `OLLAMA_CLOUD_API_KEY`, `OLLAMA_CLOUD_BASE_URL`, `OPENCODE_MODEL`, `OPENCODE_PROVIDER`.
+Optional bootstrap env vars: `OLLAMA_BASE_URL`, `OLLAMA_CLOUD_API_KEY`, `OLLAMA_CLOUD_BASE_URL`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `OPENCODE_MODEL`, `OPENCODE_PROVIDER`.
 
 ### GitHub App verify
 

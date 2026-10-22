@@ -1,10 +1,12 @@
 import {
   isProviderConfigured,
+  providerApi,
   resolveOpenCodeProvider,
   resolveProviderHost,
   stripProviderModelPrefix,
+  type ProviderApi,
 } from '../lib/llm-provider';
-import { normalizeProbeBaseUrl } from './opencode-config';
+import { normalizeOpenCodeBaseUrl, normalizeProbeBaseUrl } from './opencode-config';
 import type { AppConfig } from '../types';
 
 const CHAT_TIMEOUT_MS = 60_000;
@@ -27,14 +29,22 @@ interface OllamaChatResponse {
   done?: boolean;
 }
 
+interface OpenAiChatResponse {
+  choices?: Array<{ message?: { content?: string | null } }>;
+}
+
 export function createOllamaChat(): OllamaChatService {
   async function chatCompletion(
     messages: Array<{ role?: string; content?: string }>,
     model: string,
     baseUrl: string,
-    apiKey?: string,
+    apiKey: string | undefined,
+    api: ProviderApi,
   ): Promise<string> {
-    const url = `${normalizeProbeBaseUrl(baseUrl)}/api/chat`;
+    const url =
+      api === 'openai'
+        ? `${normalizeOpenCodeBaseUrl(baseUrl)}/chat/completions`
+        : `${normalizeProbeBaseUrl(baseUrl)}/api/chat`;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey?.trim()) {
       headers.Authorization = `Bearer ${apiKey.trim()}`;
@@ -48,9 +58,13 @@ export function createOllamaChat(): OllamaChatService {
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama chat failed with HTTP ${response.status}`);
+      throw new Error(`Chat request failed with HTTP ${response.status}`);
     }
 
+    if (api === 'openai') {
+      const data = (await response.json()) as OpenAiChatResponse;
+      return data.choices?.[0]?.message?.content || '';
+    }
     const data = (await response.json()) as OllamaChatResponse;
     return data.message?.content || '';
   }
@@ -85,7 +99,13 @@ export function createOllamaChat(): OllamaChatService {
     model = stripProviderModelPrefix(model);
     const payload = messages.map((m) => ({ role: m.role, content: m.content }));
 
-    const content = await chatCompletion(payload, model, host.baseUrl, host.apiKey);
+    const content = await chatCompletion(
+      payload,
+      model,
+      host.baseUrl,
+      host.apiKey,
+      providerApi(providerId),
+    );
     return { text: content };
   }
 

@@ -66,7 +66,8 @@ export function buildOcrLlmSettings(config: AppConfig): OcrConfig['llm'] {
     config.reviewModel || config.opencodeModel || 'llama3.2',
   );
   const baseUrl = normalizeOpenCodeBaseUrl(host.baseUrl);
-  const authToken = providerId === 'ollama-cloud' ? host.apiKey || '' : 'ollama';
+  // Local Ollama ignores the token, but OCR requires a non-empty one.
+  const authToken = host.apiKey || (providerId === 'ollama-cloud' ? '' : 'ollama');
 
   return {
     url: `${baseUrl}/chat/completions`,
