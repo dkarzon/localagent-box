@@ -1095,8 +1095,11 @@ export function createReviewAutofixService({
           finding.assignedAgentId === fixAgent.agentId &&
           finding.fixStatus === 'fixed'
         ) {
+          const before = finding.github.resolutionStatus;
           await resolveFindingThreadAfterFix(reviewAgentId, finding);
-          resolved = true;
+          if (finding.github.resolutionStatus === 'resolved' && before !== 'resolved') {
+            resolved = true;
+          }
         }
       }
       if (resolved) {
