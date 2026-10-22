@@ -14,6 +14,8 @@ interface OcrSettingsSectionProps {
   setReviewModel: (value: string) => void;
   autoReviewPullRequests: boolean;
   setAutoReviewPullRequests: (value: boolean) => void;
+  ocrSkipWorkspaceBootstrap: boolean;
+  setOcrSkipWorkspaceBootstrap: (value: boolean) => void;
   searchQuery: string;
 }
 
@@ -26,6 +28,8 @@ export function OcrSettingsSection({
   setReviewModel,
   autoReviewPullRequests,
   setAutoReviewPullRequests,
+  ocrSkipWorkspaceBootstrap,
+  setOcrSkipWorkspaceBootstrap,
   searchQuery,
 }: OcrSettingsSectionProps) {
   const showSection = makeShowSection(searchQuery);
@@ -67,6 +71,17 @@ export function OcrSettingsSection({
         <p className="mt-2 text-sm text-muted">
           When enabled, a review agent is queued automatically after a coding agent creates a pull
           request. Per-repo settings can override this default.
+        </p>
+      </div>
+      <div className="mt-4">
+        <CheckboxField
+          label="Skip workspace bootstrap for review runs"
+          checked={ocrSkipWorkspaceBootstrap}
+          onChange={(e) => setOcrSkipWorkspaceBootstrap(e.target.checked)}
+        />
+        <p className="mt-2 text-sm text-muted">
+          When enabled, review agents skip the workspace setup/bootstrap step (install and setup
+          commands) — the clone is reviewed as-is.
         </p>
       </div>
     </SectionCard>

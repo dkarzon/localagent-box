@@ -53,6 +53,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
   const [reviewProvider, setReviewProvider] = useState<LlmProviderId | ''>('');
   const [reviewModel, setReviewModel] = useState('');
   const [autoReviewPullRequests, setAutoReviewPullRequests] = useState(false);
+  const [ocrSkipWorkspaceBootstrap, setOcrSkipWorkspaceBootstrap] = useState(false);
   const [batchAutoApprovePermissions, setBatchAutoApprovePermissions] = useState(true);
   const [loopAutoApprovePermissions, setLoopAutoApprovePermissions] = useState(true);
   const [interactiveAutoApprovePermissions, setInteractiveAutoApprovePermissions] = useState(false);
@@ -92,6 +93,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
     setReviewProvider(next.reviewProvider || '');
     setReviewModel(next.reviewModel || '');
     setAutoReviewPullRequests(next.autoReviewPullRequests === true);
+    setOcrSkipWorkspaceBootstrap(next.ocrSkipWorkspaceBootstrap === true);
     setBatchAutoApprovePermissions(next.batchAutoApprovePermissions !== false);
     setLoopAutoApprovePermissions(next.loopAutoApprovePermissions !== false);
     setInteractiveAutoApprovePermissions(next.interactiveAutoApprovePermissions === true);
@@ -188,6 +190,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
           reviewProvider,
           reviewModel: reviewModel.trim(),
           autoReviewPullRequests,
+          ocrSkipWorkspaceBootstrap,
         };
       default:
         return {};
@@ -354,6 +357,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
             setReviewModel={setReviewModel}
             autoReviewPullRequests={autoReviewPullRequests}
             setAutoReviewPullRequests={setAutoReviewPullRequests}
+            ocrSkipWorkspaceBootstrap={ocrSkipWorkspaceBootstrap}
+            setOcrSkipWorkspaceBootstrap={setOcrSkipWorkspaceBootstrap}
             searchQuery={searchQuery}
           />
         ) : null}
