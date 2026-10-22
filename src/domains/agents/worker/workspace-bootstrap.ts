@@ -3,7 +3,14 @@ import type { Agent, AgentBootstrapState, AppConfig, AgentMode } from '../../../
 import type { JsonStore } from '../../../lib/json-store';
 import { appendLog, appendLogBlock, updateAgentRecord } from './agent-state-writer';
 import { computeCacheKey, type DepCacheKey } from './dep-cache-key';
-import { getDepCacheDirs, restoreDepCache, snapshotDepCache } from './dep-cache';
+import {
+  getDepCacheDirs,
+  getDepCacheEnv,
+  isDepCacheProfile,
+  preparePmCache,
+  restoreDepCache,
+  snapshotDepCache,
+} from './dep-cache';
 import { environmentConfigRelative, loadEnvironmentConfig } from './environment-config';
 import { detectProfiles, detectSetupScript, resolveSetupCommand } from './environment-detect';
 import { loadRuntimeProfiles } from './runtime-profiles';
@@ -34,9 +41,11 @@ export interface RunWorkspaceBootstrapOptions {
   >;
   /**
    * Persistent dependency cache (P3-T4). When provided and backed by a
-   * cacheable profile, the workspace `node_modules` is restored from the
-   * cache before the setup command runs and re-snapshotted after it succeeds,
-   * so repeat runs skip the full install. Omit to leave caching disabled.
+   * cacheable profile, the package manager's own download cache is redirected
+   * into the cache volume for the setup command, and — for the profiles whose
+   * package manager reuses an existing install (pnpm/yarn) — the workspace
+   * `node_modules` is restored before the command and re-snapshotted after a
+   * successful run. Omit to leave caching disabled.
    */
   depCache?: {
     /** Root directory holding `{repoId}/{cacheKey}` entries. */
@@ -52,6 +61,8 @@ export interface RunWorkspaceBootstrapOptions {
   restoreCache?: typeof restoreDepCache;
   /** Injectable for tests; defaults to `snapshotDepCache`. */
   snapshotCache?: typeof snapshotDepCache;
+  /** Injectable for tests; defaults to `preparePmCache`. */
+  prepareCache?: typeof preparePmCache;
 }
 
 /**
@@ -101,6 +112,7 @@ export async function runWorkspaceBootstrap(
   const loadProfiles = options.loadProfiles ?? loadRuntimeProfiles;
   const restore = options.restoreCache ?? restoreDepCache;
   const snapshot = options.snapshotCache ?? snapshotDepCache;
+  const prepareCache = options.prepareCache ?? preparePmCache;
   const config = options.config;
   const profileCatalog = loadProfiles();
   const enabledProfiles = config?.enabledRuntimeProfiles;
@@ -148,21 +160,29 @@ export async function runWorkspaceBootstrap(
     `Bootstrap: source=${source} profiles=[${profiles.join(', ')}] command=${command}`,
   );
 
-  // Dependency cache (P3-T4): restore cached node_modules into the fresh
-  // clone before setup so repeat runs skip the full install; the workspace is
-  // snapshotted back into the cache after a successful run. No-op when no
-  // cache is configured or no profile caches its workspace dirs (phase 3
-  // caches nodejs / nodejs-pnpm only).
+  // Dependency cache (P3-T4): the profile's package-manager cache is redirected
+  // into the cache volume for the setup command, so repeat runs install from
+  // cache. Profiles whose package manager reuses an existing install (pnpm/yarn)
+  // also get their node_modules restored before the command and snapshotted
+  // after it. No-op when no cache is configured or the profile has neither
+  // catalog cache dirs nor cacheable workspace dirs.
   const depCache = options.depCache;
   const cacheableProfile: string | undefined =
     depCache !== undefined
-      ? (profiles.find((name) => getDepCacheDirs(name).length > 0) ??
+      ? (profiles.find((name) => isDepCacheProfile(name, profileCatalog)) ??
         detectProfiles(workspaceDir, profileCatalog).find(
-          (name) => getDepCacheDirs(name).length > 0,
+          (name) => isDepCacheProfile(name, profileCatalog),
         ))
       : undefined;
   let cacheDir: string | null = null;
   let cacheKey: DepCacheKey | null = null;
+  /**
+   * Environment overrides for the setup command. The package manager's cache is
+   * redirected into the cache volume, so a repeat run installs from cache
+   * instead of re-downloading; `npm ci` still installs from scratch (it deletes
+   * `node_modules` first) but does so offline.
+   */
+  const cacheEnv: Record<string, string> = {};
   if (depCache !== undefined && cacheableProfile !== undefined) {
     try {
       cacheKey = computeCacheKey({
@@ -177,6 +197,14 @@ export async function runWorkspaceBootstrap(
         logPath,
         `Dependency cache key: ${cacheKey.relativePath} (method=${cacheKey.method})`,
       );
+      const pmCacheEnv = getDepCacheEnv(cacheableProfile, cacheDir, profileCatalog);
+      for (const [name, value] of Object.entries(pmCacheEnv)) {
+        cacheEnv[name] = value;
+        appendLog(
+          logPath,
+          `Dependency cache: ${cacheableProfile} package-manager cache via ${name} at ${value}`,
+        );
+      }
     } catch (err) {
       appendLog(
         logPath,
@@ -187,12 +215,21 @@ export async function runWorkspaceBootstrap(
   let cacheHit = false;
   if (cacheDir !== null && cacheableProfile !== undefined) {
     try {
-      cacheHit = await restore(cacheDir, workspaceDir, cacheableProfile);
+      const warmPmCache = Object.keys(cacheEnv).length > 0 ? await prepareCache(cacheDir) : false;
+      const restoredWorkspace =
+        getDepCacheDirs(cacheableProfile).length > 0
+          ? await restore(cacheDir, workspaceDir, cacheableProfile)
+          : false;
+      cacheHit = warmPmCache || restoredWorkspace;
+      const parts = [
+        warmPmCache ? 'package-manager cache already warm' : 'cold package-manager cache',
+        ...(getDepCacheDirs(cacheableProfile).length > 0
+          ? [restoredWorkspace ? 'workspace directories restored' : 'no cached workspace directories']
+          : []),
+      ];
       appendLog(
         logPath,
-        cacheHit
-          ? `Dependency cache hit: ${cacheableProfile} restored at ${cacheDir}`
-          : `Dependency cache miss: no cached data at ${cacheDir}`,
+        `Dependency cache ${cacheHit ? 'hit' : 'miss'}: ${cacheableProfile} — ${parts.join(', ')} at ${cacheDir}`,
       );
     } catch (err) {
       cacheHit = false;
@@ -220,7 +257,11 @@ export async function runWorkspaceBootstrap(
       ? serverTimeoutMs
       : repoTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
   const startedAt = Date.now();
-  const result = await runCommand(workspaceDir, command, { timeoutMs: timeoutMsToUse });
+  const envOverrides = Object.keys(cacheEnv).length > 0 ? cacheEnv : undefined;
+  const result = await runCommand(workspaceDir, command, {
+    timeoutMs: timeoutMsToUse,
+    env: envOverrides,
+  });
   const durationMs = Date.now() - startedAt;
 
   if (result.success) {
@@ -264,6 +305,7 @@ export async function runWorkspaceBootstrap(
         envConfig?.verifyTimeoutMs ?? timeoutMsToUse,
         failOnError,
         runCommand,
+        envOverrides,
       );
     }
 
@@ -341,6 +383,7 @@ async function runVerifyCommand(
   timeoutMs: number,
   failOnError: boolean | undefined,
   runCommand: typeof runWorkspaceCommand,
+  envOverrides?: Record<string, string>,
 ): Promise<AgentBootstrapState> {
   updateAgentRecord(agentsStore, agentId, {
     bootstrap: {
@@ -357,7 +400,10 @@ async function runVerifyCommand(
     `Running post-setup verify: ${verifyCommand} (setup=${setupCommand} took ${setupDurationMs}ms, exit code ${setupResult.exitCode})`,
   );
   const verifyStartedAt = Date.now();
-  const verifyResult = await runCommand(workspaceDir, verifyCommand, { timeoutMs });
+  const verifyResult = await runCommand(workspaceDir, verifyCommand, {
+    timeoutMs,
+    env: envOverrides,
+  });
   const verifyDurationMs = Date.now() - verifyStartedAt;
   appendLog(
     logPath,

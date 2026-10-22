@@ -259,6 +259,14 @@ Mount `/data/dep-cache` (already under persistent `agent-data` volume) and key c
 3. Run setup command (fast if deps already present; `npm ci` still validates)
 4. On success → update cache from workspace
 
+> **Corrected after implementation:** step 3 does not hold for npm — `npm ci` deletes
+> `node_modules` before installing, so a restored copy is only two extra full copies.
+> The bootstrap instead redirects the package manager's own cache (the profile's
+> `cacheDirs`) into the cache volume for the setup command via `npm_config_cache` /
+> `npm_config_store_dir` / `YARN_CACHE_FOLDER` / `PIP_CACHE_DIR` / `GOMODCACHE` /
+> `CARGO_HOME`, and restores `node_modules` only for profiles that reuse an existing
+> install (`nodejs-pnpm` / `nodejs-yarn`), copying symlinks verbatim so they stay valid.
+
 **Cache invalidation:**
 
 - Lockfile hash change → miss

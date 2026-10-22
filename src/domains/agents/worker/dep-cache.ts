@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
+import type { RuntimeProfile } from './runtime-profiles';
 
 /**
  * Manifest describing what was snapshotted into the dependency cache.
@@ -19,18 +20,76 @@ export interface DepCacheManifest {
 }
 
 /**
- * Workspace directories that are cached per profile. Phase 3 scope is
- * `nodejs` and `nodejs-pnpm` only (both install into `node_modules/`);
- * unsupported profiles are no-ops for both restore and snapshot.
+ * Workspace directories that are snapshotted per profile. Only profiles whose
+ * package manager reuses an existing install benefit: `pnpm install` and
+ * `yarn install` skip work when the restored `node_modules` is already up to
+ * date. `npm ci` deletes `node_modules` before installing, so caching it for
+ * the `nodejs` profile would be a copy that buys nothing — the `nodejs` profile
+ * is cached through its package-manager cache instead (see `getDepCacheEnv`).
  */
-const PROFILE_CACHE_DIRS: Record<string, readonly string[]> = {
-  nodejs: ['node_modules'],
+const WORKSPACE_CACHE_DIRS: Record<string, readonly string[]> = {
   'nodejs-pnpm': ['node_modules'],
+  'nodejs-yarn': ['node_modules'],
 };
 
 /** Workspace directories cached for a profile; empty when unsupported. */
 export function getDepCacheDirs(profile: string): readonly string[] {
-  return PROFILE_CACHE_DIRS[profile] ?? [];
+  return WORKSPACE_CACHE_DIRS[profile] ?? [];
+}
+
+/** Directory name holding a cache entry's package-manager cache. */
+export const PM_CACHE_DIR_NAME = 'pm-cache';
+
+/** Package-manager cache directory of a cache entry (`{root}/{repoId}/{cacheKey}`). */
+export function getPmCacheDir(entryDir: string): string {
+  return path.join(entryDir, PM_CACHE_DIR_NAME);
+}
+
+/**
+ * Env var each profile's package manager honours to redirect its download
+ * cache. Only profiles that declare `cacheDirs` in the runtime profile catalog
+ * get one, so the catalog is what decides whether a profile is cacheable.
+ */
+const PROFILE_CACHE_ENV: Record<string, string> = {
+  nodejs: 'npm_config_cache',
+  'nodejs-pnpm': 'npm_config_store_dir',
+  'nodejs-yarn': 'YARN_CACHE_FOLDER',
+  python: 'PIP_CACHE_DIR',
+  go: 'GOMODCACHE',
+  rust: 'CARGO_HOME',
+};
+
+/** Env var that redirects the profile's package-manager cache; null when unsupported. */
+export function getDepCacheEnvVar(
+  profile: string,
+  catalog: Record<string, RuntimeProfile>,
+): string | null {
+  if ((catalog[profile]?.cacheDirs ?? []).length === 0) {
+    return null;
+  }
+  return PROFILE_CACHE_ENV[profile] ?? null;
+}
+
+/**
+ * Env entries to merge into the setup command's environment so the package
+ * manager reads/writes its cache in the persistent dep cache volume. Empty when
+ * the profile has no catalog cache dirs or no known env var.
+ */
+export function getDepCacheEnv(
+  profile: string,
+  entryDir: string,
+  catalog: Record<string, RuntimeProfile>,
+): Record<string, string> {
+  const envVar = getDepCacheEnvVar(profile, catalog);
+  return envVar === null ? {} : { [envVar]: getPmCacheDir(entryDir) };
+}
+
+/** True when the profile is cacheable through either mechanism (workspace dirs or env). */
+export function isDepCacheProfile(
+  profile: string,
+  catalog: Record<string, RuntimeProfile>,
+): boolean {
+  return getDepCacheDirs(profile).length > 0 || getDepCacheEnvVar(profile, catalog) !== null;
 }
 
 /** Injectable async filesystem ops for the copy/replace primitives. */
@@ -40,6 +99,7 @@ export interface DepCacheFs {
   rename: (source: string, target: string) => Promise<void>;
   mkdir: (dir: string, opts?: fs.MakeDirectoryOptions) => Promise<void>;
   stat: (target: string) => Promise<fs.Stats | null>;
+  readdir: (dir: string) => Promise<string[]>;
 }
 
 const defaultDepCacheFs: DepCacheFs = {
@@ -48,6 +108,7 @@ const defaultDepCacheFs: DepCacheFs = {
   rename: (source, destination) => fs.promises.rename(source, destination),
   mkdir: (dir, opts) => fs.promises.mkdir(dir, opts).then(() => undefined),
   stat: (target) => fs.promises.stat(target),
+  readdir: (dir) => fs.promises.readdir(dir),
 };
 
 /**
@@ -107,6 +168,30 @@ async function runStep(
 }
 
 /**
+ * `fs.cp` rewrites every relative symlink into an absolute path pointing at the
+ * source tree by default, which strands the link as soon as the source is
+ * deleted (pnpm's `node_modules` is almost entirely symlinks, and `node_modules/.bin`
+ * entries on a restored tree would point at the run that created the snapshot).
+ * `verbatimSymlinks` keeps the links as they were recorded in the source, and it
+ * also avoids the `EPERM` failures Windows hits when recreating those rewritten
+ * links. (Requires Node 20.15+.)
+ */
+const COPY_OPTIONS: fs.CopyOptions = { recursive: true, verbatimSymlinks: true };
+
+/** True when `dir` exists and holds at least one entry. */
+async function hasEntries(fsImpl: DepCacheFs, dir: string): Promise<boolean> {
+  if (!(await isDirectory(fsImpl, dir))) {
+    return false;
+  }
+  try {
+    return (await fsImpl.readdir(dir)).length > 0;
+  } catch (err) {
+    if (isEntryGone(err)) return false;
+    throw err;
+  }
+}
+
+/**
  * Replaces `target` with a copy of `source` without leaving a partial copy
  * behind: the copy is staged next to the target and swapped in via renames;
  * when the swap fails, the original directory is put back.
@@ -141,7 +226,7 @@ async function replaceDirectory(
   };
   try {
     await runStep(
-      () => fsImpl.cp(source, staging, { recursive: true }),
+      () => fsImpl.cp(source, staging, COPY_OPTIONS),
       `Failed to stage ${path.basename(source)} for restore at ${target}`,
     );
     const originalExists = await fsImpl.stat(target).catch(() => null);
@@ -173,6 +258,25 @@ async function replaceDirectory(
       throw wrapError(err, `Failed to restore ${path.basename(source)} into workspace at ${target}`);
     }
   }
+}
+
+/**
+ * Ensures the cache entry and its package-manager cache directory exist, and
+ * reports whether the cache was already warm. This is the honest "hit" for
+ * profiles whose speedup comes from the package manager reading its own cache
+ * during the setup command, rather than from a restored `node_modules` (which
+ * `npm ci` deletes before installing anyway).
+ */
+export async function preparePmCache(
+  entryDir: string,
+  fsImpl: DepCacheFs = defaultDepCacheFs,
+): Promise<boolean> {
+  const pmCacheDir = getPmCacheDir(entryDir);
+  await runStep(
+    () => fsImpl.mkdir(pmCacheDir, { recursive: true }),
+    `Failed to create package-manager cache directory at ${pmCacheDir}`,
+  );
+  return hasEntries(fsImpl, pmCacheDir);
 }
 
 /**
@@ -212,14 +316,19 @@ export async function restoreDepCache(
 }
 
 /**
- * Snapshots the profile's workspace directories into the cache directory
- * and writes a `manifest.json` describing the entry.
+ * Snapshots the profile's workspace directories into the cache entry and writes
+ * a `manifest.json` describing it.
  *
- * The cache directory is replaced atomically (temp dir + rename), so a
- * failing copy never leaves a partial cache entry behind; the previous
- * entry is preserved untouched until the staged copy is complete.
- * No-op when the profile is unsupported; throws when none of the
- * profile's directories exist in the workspace.
+ * Each directory is staged next to its target and swapped in atomically, so a
+ * failing copy never leaves a partial directory behind and the previous entry is
+ * preserved until the staged copy is complete. The entry itself is never
+ * replaced wholesale: it is also where the package manager's cache lives (the
+ * package manager writes there directly during the setup command), so a
+ * full-entry swap would throw away that cache.
+ *
+ * Throws when the profile caches workspace dirs but none of them exist in the
+ * workspace. Profiles that cache only through the package manager's cache have
+ * nothing to copy, so only the manifest is written.
  */
 export async function snapshotDepCache(
   cacheDir: string,
@@ -229,11 +338,7 @@ export async function snapshotDepCache(
   fsImpl: DepCacheFs = defaultDepCacheFs,
 ): Promise<void> {
   const dirs = getDepCacheDirs(profile);
-  if (dirs.length === 0) {
-    return;
-  }
 
-  const staging = `${cacheDir}.staging-${randomUUID()}`;
   const manifestJson: DepCacheManifest = {
     createdAt: manifest.createdAt ?? new Date().toISOString(),
     command: manifest.command,
@@ -247,8 +352,8 @@ export async function snapshotDepCache(
       `Failed to create dependency cache parent for ${cacheDir}`,
     );
     await runStep(
-      () => fsImpl.mkdir(staging),
-      `Failed to create staging directory for ${cacheDir}`,
+      () => fsImpl.mkdir(cacheDir, { recursive: true }),
+      `Failed to create dependency cache entry at ${cacheDir}`,
     );
     let snapshottedAny = false;
     for (const dir of dirs) {
@@ -257,12 +362,12 @@ export async function snapshotDepCache(
         continue;
       }
       await runStep(
-        () => fsImpl.cp(source, path.join(staging, dir), { recursive: true }),
-        `Failed to copy ${dir} into dependency cache staging at ${staging}`,
+        () => replaceDirectory(fsImpl, source, path.join(cacheDir, dir)),
+        `Failed to snapshot ${dir} into dependency cache entry at ${cacheDir}`,
       );
       snapshottedAny = true;
     }
-    if (!snapshottedAny) {
+    if (dirs.length > 0 && !snapshottedAny) {
       throw new Error(
         `No cacheable ${dirs.join(', ')} directories found in workspace for profile '${profile}'`,
       );
@@ -270,29 +375,30 @@ export async function snapshotDepCache(
     await runStep(
       () =>
         fs.promises.writeFile(
-          path.join(staging, 'manifest.json'),
+          path.join(cacheDir, 'manifest.json'),
           `${JSON.stringify(manifestJson, null, 2)}\n`,
         ),
       `Failed to write manifest.json for ${cacheDir}`,
     );
-    if (await isDirectory(fsImpl, cacheDir)) {
-      await runStep(
-        () => fsImpl.rm(cacheDir, { recursive: true, force: true }),
-        `Failed to remove existing dependency cache entry at ${cacheDir}`,
-      );
-    }
-    await runStep(
-      () => fsImpl.rename(staging, cacheDir),
-      `Failed to replace dependency cache entry at ${cacheDir}`,
-    );
   } catch (err) {
-    if (await isDirectory(fsImpl, staging)) {
-      await fsImpl.rm(staging, { recursive: true, force: true });
+    for (const entry of await listStagingLeftovers(fsImpl, cacheDir)) {
+      await fsImpl.rm(path.join(cacheDir, entry), { recursive: true, force: true });
     }
     if (err instanceof Error) {
       throw err;
     }
     throw wrapError(err, `Failed to snapshot dependency cache at ${cacheDir}`);
+  }
+}
+
+/** Staged/partial swap leftovers under a cache entry (cleaned up on failure). */
+async function listStagingLeftovers(fsImpl: DepCacheFs, entryDir: string): Promise<string[]> {
+  try {
+    return (await fsImpl.readdir(entryDir)).filter(
+      (name) => name.includes('.staging-') || name.includes('.original-'),
+    );
+  } catch {
+    return [];
   }
 }
 
