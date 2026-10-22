@@ -6,6 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import { createJsonStore } from '../../lib/json-store';
 import { buildLoopState } from '../../lib/loop-state';
+import { getLogger } from '../../lib/logger';
 import {
   CodedError,
   type Agent,
@@ -1737,6 +1738,60 @@ describe('restoreOnStartup', () => {
     assert.equal(planB?.chainStatus, 'paused');
     assert.equal(planB?.batches[0].status, 'failed');
     assert.equal(planB?.nextBatchIndex, null);
+  });
+
+  it('catches and logs a throwing reconcile path instead of rejecting at startup', async () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'reviewboom01',
+        mode: 'review',
+        status: 'completed',
+        agentBranch: 'feature/project',
+        review: { baseBranch: 'main', headBranch: 'feature/project', prNumber: null, headSha: null },
+      }),
+    );
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'queued0000010',
+        mode: 'batch',
+        status: 'queued',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:03.000Z',
+        startedAt: null,
+      }),
+    );
+
+    // Throw sites in the reconcile path (e.g. config load / getAgent NOT_FOUND)
+    // must be caught by startup: otherwise the rejection terminates the process.
+    const originalReadPlan = ctx.repository.readReviewAutofixPlan.bind(ctx.repository);
+    ctx.repository.readReviewAutofixPlan = (agentId: string) => {
+      if (agentId === 'reviewboom01') {
+        throw new Error('plan read failed');
+      }
+      return originalReadPlan(agentId);
+    };
+
+    const logger = getLogger();
+    const originalWarn = logger.warn;
+    const logged: Array<{ obj: unknown; msg?: string }> = [];
+    logger.warn = ((obj: unknown, msg?: string) => {
+      logged.push({ obj, msg });
+      return logger;
+    }) as typeof logger.warn;
+
+    try {
+      await ctx.service.restoreOnStartup();
+      const entry = logged.find((item) => item.msg?.includes('Startup autofix reconcile failed'));
+      assert.ok(entry);
+      assert.equal((entry?.obj as { err?: Error })?.err?.message, 'plan read failed');
+      // Startup still proceeds: the queued agent is re-enqueued despite the failure.
+      assert.equal(hasStartedWorker(ctx, 'queued0000010'), true);
+    } finally {
+      logger.warn = originalWarn;
+    }
   });
 });
 
