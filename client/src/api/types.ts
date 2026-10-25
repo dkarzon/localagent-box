@@ -163,6 +163,8 @@ export interface AppConfig {
   autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
   reviewModel?: string;
+  /** When true, review runs skip the workspace bootstrap. Default false. */
+  ocrSkipWorkspaceBootstrap?: boolean;
   ollama?: OllamaStatus;
   opencode?: { path?: string };
 }

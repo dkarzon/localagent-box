@@ -136,20 +136,24 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
 
   ensureLocalagentBoxIgnored(job.workspaceDir);
 
-  await runWorkspaceBootstrap({
-    workspaceDir: job.workspaceDir,
-    logPath,
-    agentId: job.agentId,
-    agentsStore,
-    config,
-    // Mode filter (P4-T3): honor setup.runOnModes for this run.
-    mode: getAgentMode(job),
-    // Dependency cache (P3-T4): persist node_modules across runs when the
-    // operator opts in (DEP_CACHE_ENABLED / depCacheEnabled under dataDir).
-    depCache: getServerEnv().depCacheEnabled
-      ? { root: getServerEnv().depCacheRoot, repoId: job.repoId }
-      : undefined,
-  });
+  if (isReview && config.ocrSkipWorkspaceBootstrap === true) {
+    appendLog(logPath, 'Workspace bootstrap skipped: ocrSkipWorkspaceBootstrap is enabled for review runs');
+  } else {
+    await runWorkspaceBootstrap({
+      workspaceDir: job.workspaceDir,
+      logPath,
+      agentId: job.agentId,
+      agentsStore,
+      config,
+      // Mode filter (P4-T3): honor setup.runOnModes for this run.
+      mode: getAgentMode(job),
+      // Dependency cache (P3-T4): persist node_modules across runs when the
+      // operator opts in (DEP_CACHE_ENABLED / depCacheEnabled under dataDir).
+      depCache: getServerEnv().depCacheEnabled
+        ? { root: getServerEnv().depCacheRoot, repoId: job.repoId }
+        : undefined,
+    });
+  }
 
   if (getServerEnv().enableCodegraph) {
     await initCodegraph(job.workspaceDir, logPath);
