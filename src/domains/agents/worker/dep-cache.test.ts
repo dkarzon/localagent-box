@@ -5,11 +5,17 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
   getDepCacheDirs,
+  getDepCacheEnv,
+  getDepCacheEnvVar,
+  PM_CACHE_DIR_NAME,
+  preparePmCache,
   purgeDepCacheEntries,
   restoreDepCache,
   snapshotDepCache,
+  type DepCacheFs,
   type DepCacheManifest,
 } from './dep-cache';
+import { loadRuntimeProfiles } from './runtime-profiles';
 
 function tmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -33,15 +39,149 @@ const manifest: DepCacheManifest = {
   lockfileHash: 'a'.repeat(64),
 };
 
+const catalog = loadRuntimeProfiles();
+
 describe('getDepCacheDirs', () => {
-  it('caches node_modules for nodejs profiles only', () => {
-    assert.deepEqual(getDepCacheDirs('nodejs'), ['node_modules']);
+  it('caches node_modules only for package managers that reuse an existing install', () => {
     assert.deepEqual(getDepCacheDirs('nodejs-pnpm'), ['node_modules']);
+    assert.deepEqual(getDepCacheDirs('nodejs-yarn'), ['node_modules']);
   });
 
-  it('does not cache anything for unsupported profiles yet', () => {
+  it('caches nothing for profiles whose install deletes node_modules first (npm ci)', () => {
+    assert.deepEqual(getDepCacheDirs('nodejs'), []);
     assert.deepEqual(getDepCacheDirs('python'), []);
     assert.deepEqual(getDepCacheDirs('unknown'), []);
+  });
+});
+
+describe('package-manager cache env (catalog cacheDirs)', () => {
+  it('maps each catalog profile to its package manager cache env var', () => {
+    assert.equal(getDepCacheEnvVar('nodejs', catalog), 'npm_config_cache');
+    assert.equal(getDepCacheEnvVar('nodejs-pnpm', catalog), 'npm_config_store_dir');
+    assert.equal(getDepCacheEnvVar('nodejs-yarn', catalog), 'YARN_CACHE_FOLDER');
+    assert.equal(getDepCacheEnvVar('python', catalog), 'PIP_CACHE_DIR');
+    assert.equal(getDepCacheEnvVar('go', catalog), 'GOMODCACHE');
+    assert.equal(getDepCacheEnvVar('rust', catalog), 'CARGO_HOME');
+  });
+
+  it('redirects the cache into the entry inside the dep cache volume', () => {
+    const entry = '/data/dep-cache/acme-demo/key1';
+    assert.deepEqual(getDepCacheEnv('nodejs', entry, catalog), {
+      npm_config_cache: path.join(entry, PM_CACHE_DIR_NAME),
+    });
+    assert.deepEqual(getDepCacheEnv('nodejs-pnpm', entry, catalog), {
+      npm_config_store_dir: path.join(entry, PM_CACHE_DIR_NAME),
+    });
+  });
+
+  it('gives no env override for profiles without catalog cacheDirs', () => {
+    assert.equal(getDepCacheEnvVar('custom', { custom: { ...catalog.nodejs, cacheDirs: [] } }), null);
+    assert.deepEqual(getDepCacheEnv('custom', '/data/dep-cache/repo/key', catalog), {});
+  });
+});
+
+describe('preparePmCache', () => {
+  it('creates the cache dir and reports a cold cache', async () => {
+    const root = tmpDir('dep-cache-pm-cold-');
+    const entry = path.join(root, 'repo', 'key');
+    try {
+      assert.equal(await preparePmCache(entry), false);
+      assert.equal(fs.existsSync(path.join(entry, PM_CACHE_DIR_NAME)), true);
+    } finally {
+      await rmrf(root);
+    }
+  });
+
+  it('reports a warm cache when the package manager cache already holds entries', async () => {
+    const root = tmpDir('dep-cache-pm-warm-');
+    const entry = path.join(root, 'repo', 'key');
+    fs.mkdirSync(path.join(entry, PM_CACHE_DIR_NAME, '_cacache'), { recursive: true });
+    fs.writeFileSync(path.join(entry, PM_CACHE_DIR_NAME, '_cacache', 'index-v1'), 'x');
+    try {
+      assert.equal(await preparePmCache(entry), true);
+    } finally {
+      await rmrf(root);
+    }
+  });
+
+  it('reports a cold cache for an empty cache directory', async () => {
+    const root = tmpDir('dep-cache-pm-empty-');
+    const entry = path.join(root, 'repo', 'key');
+    try {
+      assert.equal(await preparePmCache(entry), false);
+    } finally {
+      await rmrf(root);
+    }
+  });
+});
+
+describe('fs.cp symlink handling', () => {
+  it('copies with verbatimSymlinks so relative links survive both copy paths', async () => {
+    const captured: Array<fs.CopyOptions | undefined> = [];
+    const recordingFs: DepCacheFs = {
+      cp: (source, destination, opts) => {
+        captured.push(opts);
+        return fs.promises.cp(source, destination, opts);
+      },
+      rm: (target, opts) => fs.promises.rm(target, opts),
+      rename: (source, destination) => fs.promises.rename(source, destination),
+      mkdir: (dir, opts) => fs.promises.mkdir(dir, opts).then(() => undefined),
+      stat: (target) => fs.promises.stat(target),
+      readdir: (dir) => fs.promises.readdir(dir),
+    };
+
+    const root = tmpDir('dep-cache-symlink-opts-');
+    const entry = path.join(root, 'repo', 'key');
+    const workspace = tmpDir('dep-cache-symlink-opts-workspace-');
+    seedWorkspace(workspace, { 'node_modules/pkg/index.js': 'ok' });
+    fs.mkdirSync(path.join(entry, PM_CACHE_DIR_NAME), { recursive: true });
+    try {
+      await preparePmCache(entry, recordingFs);
+      await snapshotDepCache(entry, workspace, 'nodejs-pnpm', manifest, recordingFs);
+      await restoreDepCache(entry, workspace, 'nodejs-pnpm', recordingFs);
+      assert.ok(captured.length >= 2, 'both copy paths must be exercised');
+      for (const opts of captured) {
+        assert.equal(opts?.recursive, true);
+        assert.equal(opts?.verbatimSymlinks, true);
+      }
+    } finally {
+      await Promise.all([rmrf(root), rmrf(workspace)]);
+    }
+  });
+
+  it('round-trips relative symlinks without rewriting them to absolute paths', async () => {
+    const root = tmpDir('dep-cache-symlink-roundtrip-');
+    const entry = path.join(root, 'repo', 'key');
+    const source = tmpDir('dep-cache-symlink-roundtrip-source-');
+    const target = tmpDir('dep-cache-symlink-roundtrip-target-');
+    try {
+      const nodeModules = path.join(source, 'node_modules');
+      fs.mkdirSync(path.join(nodeModules, 'pkg'), { recursive: true });
+      fs.writeFileSync(path.join(nodeModules, 'pkg', 'index.js'), 'ok');
+      fs.mkdirSync(path.join(nodeModules, '.bin'), { recursive: true });
+      fs.symlinkSync('../pkg/index.js', path.join(nodeModules, '.bin', 'pkg-bin'));
+      fs.symlinkSync('./pkg', path.join(nodeModules, 'alias'));
+
+      await snapshotDepCache(entry, source, 'nodejs-pnpm', manifest);
+      assert.equal(await restoreDepCache(entry, target, 'nodejs-pnpm'), true);
+
+      const targetNodeModules = path.join(target, 'node_modules');
+      const binLink = await fs.promises.readlink(path.join(targetNodeModules, '.bin', 'pkg-bin'));
+      const aliasLink = await fs.promises.readlink(path.join(targetNodeModules, 'alias'));
+      assert.equal(binLink, '../pkg/index.js');
+      assert.equal(aliasLink, './pkg');
+      assert.equal(
+        fs.readFileSync(path.join(targetNodeModules, '.bin', 'pkg-bin'), 'utf8'),
+        'ok',
+        'the restored link must still resolve',
+      );
+      assert.ok(
+        !path.isAbsolute(binLink) && !path.isAbsolute(aliasLink),
+        'links must stay relative to their own tree',
+      );
+    } finally {
+      await Promise.all([rmrf(root), rmrf(source), rmrf(target)]);
+    }
   });
 });
 
@@ -51,7 +191,7 @@ describe('restoreDepCache', () => {
     const cacheDir = path.join(cacheRoot, 'repo', 'key');
     const workspace = tmpDir('dep-cache-restore-miss-workspace-');
     try {
-      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), false);
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs-pnpm'), false);
       assert.equal(fs.existsSync(path.join(workspace, 'node_modules')), false);
     } finally {
       await Promise.all([rmrf(cacheRoot), rmrf(workspace)]);
@@ -79,7 +219,7 @@ describe('restoreDepCache', () => {
     fs.writeFileSync(path.join(cacheDir, 'manifest.json'), '{}');
     const workspace = tmpDir('dep-cache-restore-empty-workspace-');
     try {
-      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), false);
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs-pnpm'), false);
     } finally {
       await Promise.all([rmrf(cacheRoot), rmrf(workspace)]);
     }
@@ -126,7 +266,7 @@ describe('restoreDepCache', () => {
     const workspace = tmpDir('dep-cache-restore-stale-workspace-');
     seedWorkspace(workspace, { 'node_modules/stale/pkg.js': 'stale' });
     try {
-      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), true);
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs-pnpm'), true);
       assert.deepEqual(
         fs.readdirSync(path.join(workspace, 'node_modules')).sort(),
         ['fresh'],
@@ -153,7 +293,7 @@ describe('restoreDepCache', () => {
     }) as typeof fs.promises.rename;
     try {
       await assert.rejects(
-        restoreDepCache(cacheDir, workspace, 'nodejs'),
+        restoreDepCache(cacheDir, workspace, 'nodejs-pnpm'),
         /Failed to restore node_modules into workspace/,
       );
       assert.deepEqual(
@@ -196,7 +336,7 @@ describe('restoreDepCache', () => {
           code: 'ENOENT',
         });
       }) as typeof fs.promises.rename;
-      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), true);
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs-pnpm'), true);
       assert.deepEqual(
         fs.readdirSync(target).sort(),
         ['old.js'],
@@ -222,7 +362,7 @@ describe('restoreDepCache', () => {
           code: 'ENOTEMPTY',
         });
       }) as typeof fs.promises.rename;
-      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs'), true);
+      assert.equal(await restoreDepCache(cacheDir, workspace, 'nodejs-pnpm'), true);
       assert.deepEqual(leftovers(workspace), []);
     } finally {
       fs.promises.rename = originalRename;
@@ -241,7 +381,7 @@ describe('snapshotDepCache', () => {
       'node_modules/left-pad/dist/index.js': 'dist',
     });
     try {
-      await snapshotDepCache(cacheDir, workspace, 'nodejs', manifest);
+      await snapshotDepCache(cacheDir, workspace, 'nodejs-pnpm', manifest);
       const manifestPath = path.join(cacheDir, 'manifest.json');
       assert.ok(fs.existsSync(manifestPath));
       const stored = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -284,44 +424,60 @@ describe('snapshotDepCache', () => {
     }
   });
 
-  it('is a no-op for unsupported profiles', async () => {
-    const cacheRoot = tmpDir('dep-cache-snapshot-unsupported-');
+  it('records the manifest for profiles that cache only through the package manager', async () => {
+    const cacheRoot = tmpDir('dep-cache-snapshot-manifest-only-');
     const cacheDir = path.join(cacheRoot, 'repo', 'key');
-    const workspace = tmpDir('dep-cache-snapshot-unsupported-workspace-');
-    seedWorkspace(workspace, { '.venv/lib/site-packages/pkg.py': 'py' });
+    const workspace = tmpDir('dep-cache-snapshot-manifest-only-workspace-');
+    seedWorkspace(workspace, { 'src/main.ts': 'src' });
     try {
-      await snapshotDepCache(cacheDir, workspace, 'python', manifest);
-      assert.equal(fs.existsSync(cacheDir), false);
+      await preparePmCache(cacheDir);
+      await snapshotDepCache(cacheDir, workspace, 'nodejs', manifest);
+      const stored = JSON.parse(fs.readFileSync(path.join(cacheDir, 'manifest.json'), 'utf8'));
+      assert.equal(stored.command, manifest.command);
+      assert.deepEqual(stored.profiles, ['nodejs']);
+      assert.equal(fs.existsSync(path.join(cacheDir, 'node_modules')), false);
+      assert.deepEqual(
+        fs.readdirSync(cacheDir).sort(),
+        ['manifest.json', PM_CACHE_DIR_NAME],
+        'the live package-manager cache must not be replaced wholesale',
+      );
     } finally {
       await Promise.all([rmrf(cacheRoot), rmrf(workspace)]);
     }
   });
 
-  it('throws when the profile has no cacheable directories in the workspace', async () => {
+  it('throws when a workspace-dir profile has nothing to snapshot, keeping its cache dir intact', async () => {
     const cacheRoot = tmpDir('dep-cache-snapshot-missing-');
     const cacheDir = path.join(cacheRoot, 'repo', 'key');
     const workspace = tmpDir('dep-cache-snapshot-missing-workspace-');
+    fs.mkdirSync(path.join(cacheDir, PM_CACHE_DIR_NAME, 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, PM_CACHE_DIR_NAME, 'pkg', 'tarball.tgz'), 'tgz');
     try {
       await assert.rejects(
-        snapshotDepCache(cacheDir, workspace, 'nodejs', manifest),
+        snapshotDepCache(cacheDir, workspace, 'nodejs-pnpm', manifest),
         /No cacheable node_modules directories found/,
       );
-      assert.equal(fs.existsSync(cacheDir), false);
-      for (const entry of fs.readdirSync(path.dirname(cacheDir))) {
-        assert.ok(!entry.startsWith(`${path.basename(cacheDir)}.staging`));
+      assert.equal(
+        fs.readFileSync(path.join(cacheDir, PM_CACHE_DIR_NAME, 'pkg', 'tarball.tgz'), 'utf8'),
+        'tgz',
+      );
+      for (const entry of fs.readdirSync(cacheDir)) {
+        assert.ok(!entry.includes('.staging-') && !entry.includes('.original-'));
       }
     } finally {
       await Promise.all([rmrf(cacheRoot), rmrf(workspace)]);
     }
   });
 
-  it('replaces the cache entry atomically, preserving the old entry on failure', async () => {
+  it('swaps each snapshot dir atomically, preserving the old entry on failure', async () => {
     const cacheRoot = tmpDir('dep-cache-snapshot-replace-');
     const cacheDir = path.join(cacheRoot, 'repo', 'key');
     fs.mkdirSync(path.join(cacheDir, 'node_modules'), { recursive: true });
     fs.writeFileSync(path.join(cacheDir, 'node_modules', 'old.js'), 'old');
     fs.writeFileSync(path.join(cacheDir, 'manifest.json'), '"old"');
     fs.closeSync(fs.openSync(path.join(cacheDir, 'node_modules', 'old.js'), 'r'));
+    fs.mkdirSync(path.join(cacheDir, PM_CACHE_DIR_NAME), { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, PM_CACHE_DIR_NAME, 'warm.tgz'), 'warm');
 
     const workspace = tmpDir('dep-cache-snapshot-replace-workspace-');
     seedWorkspace(workspace, { 'node_modules/new.js': 'new' });
@@ -332,14 +488,22 @@ describe('snapshotDepCache', () => {
     }) as typeof fs.promises.cp;
     try {
       await assert.rejects(
-        snapshotDepCache(cacheDir, workspace, 'nodejs', manifest),
-        /Failed to copy node_modules into dependency cache staging/,
+        snapshotDepCache(cacheDir, workspace, 'nodejs-pnpm', manifest),
+        /Failed to snapshot node_modules into dependency cache entry/,
       );
       assert.equal(
         fs.readFileSync(path.join(cacheDir, 'node_modules', 'old.js'), 'utf8'),
         'old',
         'a failed snapshot must not clobber the existing entry',
       );
+      assert.equal(
+        fs.readFileSync(path.join(cacheDir, PM_CACHE_DIR_NAME, 'warm.tgz'), 'utf8'),
+        'warm',
+        'the live package-manager cache must survive a failed snapshot',
+      );
+      for (const entry of fs.readdirSync(cacheDir)) {
+        assert.ok(!entry.includes('.staging-') && !entry.includes('.original-'));
+      }
     } finally {
       fs.promises.cp = originalCp;
     }

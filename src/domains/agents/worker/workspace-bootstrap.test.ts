@@ -14,7 +14,7 @@ import type { RuntimeProfile } from './runtime-profiles';
 type FakeRunCommand = (
   workspaceDir: string,
   command: string,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; env?: NodeJS.ProcessEnv },
 ) => Promise<WorkspaceCommandResult>;
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
@@ -54,6 +54,7 @@ interface Harness {
     workspaceDir: string;
     command: string;
     timeoutMs?: number;
+    env?: NodeJS.ProcessEnv;
     /** Copy of the bootstrap state on the agent record before this run. */
     agentRecordBefore: AgentBootstrapState | undefined;
   }>;
@@ -127,6 +128,7 @@ function fakeRunCommand(
       workspaceDir,
       command,
       timeoutMs: options?.timeoutMs,
+      env: options?.env,
       agentRecordBefore: h.agent.bootstrap ? { ...h.agent.bootstrap } : undefined,
     });
     return result;
@@ -1232,7 +1234,7 @@ describe('runWorkspaceBootstrap', () => {
         detect: ['package.json'],
         defaultSetup: 'npm ci --ignore-scripts',
         tools: [],
-        cacheDirs: [],
+        cacheDirs: ['~/.npm'],
       },
     };
 
@@ -1248,7 +1250,7 @@ describe('runWorkspaceBootstrap', () => {
         }),
       );
 
-      const restoreDirs: string[] = [];
+      const prepareDirs: string[] = [];
       const snapshotDirs: string[] = [];
       await runBootstrap(h, {
         loadProfiles: () => NODEJS_CATALOG,
@@ -1259,8 +1261,8 @@ describe('runWorkspaceBootstrap', () => {
           timedOut: false,
           success: true,
         }),
-        restoreCache: async (cacheDir) => {
-          restoreDirs.push(cacheDir);
+        prepareCache: async (cacheDir) => {
+          prepareDirs.push(cacheDir);
           return false;
         },
         snapshotCache: async (cacheDir) => {
@@ -1270,11 +1272,8 @@ describe('runWorkspaceBootstrap', () => {
       });
 
       assert.equal(h.runCalls.length, 1);
-      assert.equal(restoreDirs.length, 1);
-      assert.equal(snapshotDirs.length, 1);
-      const expected = path.join('/tmp/dep-cache-root', 'acme-demo', 'myrepo-node22-pnpm9');
-      assert.equal(restoreDirs[0], expected);
-      assert.equal(snapshotDirs[0], expected);
+      assert.deepEqual(prepareDirs, [path.join('/tmp/dep-cache-root', 'acme-demo', 'myrepo-node22-pnpm9')]);
+      assert.deepEqual(snapshotDirs, [path.join('/tmp/dep-cache-root', 'acme-demo', 'myrepo-node22-pnpm9')]);
     });
 
     it('falls back to the hashed key when cacheKey is absent', async () => {
@@ -1285,7 +1284,7 @@ describe('runWorkspaceBootstrap', () => {
         JSON.stringify({ version: 1, setup: { command: 'npm ci --ignore-scripts' } }),
       );
 
-      const restoreDirs: string[] = [];
+      const prepareDirs: string[] = [];
       await runBootstrap(h, {
         loadProfiles: () => NODEJS_CATALOG,
         runCommand: fakeRunCommand(h, {
@@ -1295,19 +1294,179 @@ describe('runWorkspaceBootstrap', () => {
           timedOut: false,
           success: true,
         }),
-        restoreCache: async (cacheDir) => {
-          restoreDirs.push(cacheDir);
+        prepareCache: async (cacheDir) => {
+          prepareDirs.push(cacheDir);
           return false;
         },
         snapshotCache: async () => undefined,
         depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
       });
 
-      assert.equal(restoreDirs.length, 1);
-      const entry = path.basename(restoreDirs[0]);
+      assert.equal(prepareDirs.length, 1);
+      const entry = path.basename(prepareDirs[0]);
       assert.notEqual(entry, 'unknown');
       assert.equal(entry.length, 64);
-      assert.equal(restoreDirs[0].endsWith(path.join('acme-demo', entry)), true);
+      assert.equal(prepareDirs[0].endsWith(path.join('acme-demo', entry)), true);
+    });
+  });
+
+  describe('dependency cache package-manager env and honest hit reporting', () => {
+    const CACHED_CATALOG: Record<string, RuntimeProfile> = {
+      ...FAKE_CATALOG,
+      nodejs: {
+        detect: ['package.json'],
+        defaultSetup: 'npm ci --ignore-scripts',
+        tools: [],
+        cacheDirs: ['~/.npm'],
+      },
+      'nodejs-pnpm': {
+        detect: ['pnpm-lock.yaml'],
+        defaultSetup: 'pnpm install --frozen-lockfile',
+        tools: [],
+        cacheDirs: ['~/.local/share/pnpm/store'],
+      },
+    };
+
+    it('redirects the package manager cache into the cache volume for the setup command', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, cacheKey: 'slot' }));
+
+      await runBootstrap(h, {
+        loadProfiles: () => CACHED_CATALOG,
+        runCommand: fakeRunCommand(h, { ...SUCCESS, command: 'npm ci --ignore-scripts' }),
+        prepareCache: async () => false,
+        snapshotCache: async () => undefined,
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+
+      assert.equal(h.runCalls.length, 1);
+      assert.deepEqual(h.runCalls[0].env, {
+        npm_config_cache: path.join('/tmp/dep-cache-root', 'acme-demo', 'slot', 'pm-cache'),
+      });
+    });
+
+    it('uses the profile env var for pnpm stores and honors verify', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'pnpm-lock.yaml');
+      writeConfig(
+        h.workspaceDir,
+        JSON.stringify({ version: 1, cacheKey: 'slot', verifyCommand: 'pnpm test' }),
+      );
+
+      await runBootstrap(h, {
+        loadProfiles: () => CACHED_CATALOG,
+        runCommand: fakeRunCommand(h, { ...SUCCESS, command: 'pnpm install --frozen-lockfile' }),
+        prepareCache: async () => true,
+        restoreCache: async () => true,
+        snapshotCache: async () => undefined,
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+
+      const expectedEnv = {
+        npm_config_store_dir: path.join('/tmp/dep-cache-root', 'acme-demo', 'slot', 'pm-cache'),
+      };
+      assert.deepEqual(h.runCalls[0].env, expectedEnv);
+      assert.deepEqual(h.runCalls[1].env, expectedEnv, 'verify must use the same cache');
+    });
+
+    it('reports a hit only when the cache is already warm, not after a cold restore', async () => {
+      const cold = makeHarness();
+      touchFile(cold.workspaceDir, 'package.json');
+      writeConfig(cold.workspaceDir, JSON.stringify({ version: 1, cacheKey: 'slot' }));
+      const coldState = await runBootstrap(cold, {
+        loadProfiles: () => CACHED_CATALOG,
+        runCommand: fakeRunCommand(cold, { ...SUCCESS, command: 'npm ci --ignore-scripts' }),
+        prepareCache: async () => false,
+        snapshotCache: async () => undefined,
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+      assert.equal(coldState.cacheHit, false);
+      const coldLog = fs.readFileSync(cold.logPath, 'utf8');
+      assert.match(coldLog, /Dependency cache miss: nodejs — cold package-manager cache/);
+      assert.doesNotMatch(coldLog, /restored at/);
+
+      const warm = makeHarness();
+      touchFile(warm.workspaceDir, 'package.json');
+      writeConfig(warm.workspaceDir, JSON.stringify({ version: 1, cacheKey: 'slot' }));
+      const warmState = await runBootstrap(warm, {
+        loadProfiles: () => CACHED_CATALOG,
+        runCommand: fakeRunCommand(warm, { ...SUCCESS, command: 'npm ci --ignore-scripts' }),
+        prepareCache: async () => true,
+        snapshotCache: async () => undefined,
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+      assert.equal(warmState.cacheHit, true);
+      assert.match(fs.readFileSync(warm.logPath, 'utf8'), /Dependency cache hit: nodejs — package-manager cache already warm/);
+    });
+
+    it('writes through the redirected cache during a real setup run and reports the next run as warm', async () => {
+      if (process.platform === 'win32') {
+        return; // the probe uses `sh -c`; Windows runs setup through cmd.exe
+      }
+      const probeCommand = 'printf ok > "$npm_config_cache/probe"';
+      const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dep-cache-probe-'));
+      try {
+        const first = makeHarness();
+        touchFile(first.workspaceDir, 'package.json');
+        writeConfig(
+          first.workspaceDir,
+          JSON.stringify({ version: 1, cacheKey: 'slot', setup: { command: probeCommand } }),
+        );
+        const firstState = await runBootstrap(first, {
+          loadProfiles: () => CACHED_CATALOG,
+          depCache: { root: cacheRoot, repoId: 'acme-demo' },
+        });
+        assert.equal(firstState.status, 'completed');
+        assert.equal(firstState.cacheHit, false, 'the first run has nothing cached yet');
+
+        const probe = path.join(cacheRoot, 'acme-demo', 'slot', 'pm-cache', 'probe');
+        assert.equal(
+          fs.readFileSync(probe, 'utf8'),
+          'ok',
+          'the setup command must see the redirected package-manager cache',
+        );
+
+        const second = makeHarness();
+        touchFile(second.workspaceDir, 'package.json');
+        writeConfig(
+          second.workspaceDir,
+          JSON.stringify({ version: 1, cacheKey: 'slot', setup: { command: probeCommand } }),
+        );
+        const secondState = await runBootstrap(second, {
+          loadProfiles: () => CACHED_CATALOG,
+          depCache: { root: cacheRoot, repoId: 'acme-demo' },
+        });
+        assert.equal(secondState.status, 'completed');
+        assert.equal(secondState.cacheHit, true, 'the run after a populated cache reports a hit');
+      } finally {
+        fs.rmSync(cacheRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('restores workspace dirs only for profiles that reuse them', async () => {
+      const h = makeHarness();
+      touchFile(h.workspaceDir, 'package.json');
+      writeConfig(h.workspaceDir, JSON.stringify({ version: 1, cacheKey: 'slot' }));
+
+      const restored: string[] = [];
+      await runBootstrap(h, {
+        loadProfiles: () => CACHED_CATALOG,
+        runCommand: fakeRunCommand(h, { ...SUCCESS, command: 'npm ci --ignore-scripts' }),
+        prepareCache: async () => false,
+        restoreCache: async (cacheDir) => {
+          restored.push(cacheDir);
+          return true;
+        },
+        snapshotCache: async () => undefined,
+        depCache: { root: '/tmp/dep-cache-root', repoId: 'acme-demo' },
+      });
+
+      assert.deepEqual(
+        restored,
+        [],
+        'npm ci deletes node_modules before installing, so nothing is restored for it',
+      );
     });
   });
 });
