@@ -16,6 +16,7 @@ import {
 import type { GithubAppService } from '../../services/github-app';
 import type { GitService } from '../../services/git-service';
 import type { OllamaChatService } from '../../services/ollama-client';
+import type { WebhookSender } from '../../lib/webhook';
 import { createConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
 import { createAgentRepository } from './agent.repository';
@@ -105,6 +106,8 @@ function createTestContext(options?: {
   onCreatePullRequest?: () => void;
   ollamaChat?: OllamaChatService;
   capturePullRequest?: (input: { title: string; body: string }) => void;
+  webhookSender?: WebhookSender;
+  repoOverride?: Partial<Repo>;
   maxConcurrent?: number;
 }): TestContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-service-'));
@@ -136,12 +139,14 @@ function createTestContext(options?: {
     path,
   });
 
+  const repoEntry: Repo = { ...testRepo, ...options?.repoOverride };
+
   const repoManager = {
     getRepo: (repoId: string) => {
       if (repoId !== testRepo.repoId) {
         throw new Error(`Unknown repo: ${repoId}`);
       }
-      return testRepo;
+      return repoEntry;
     },
   } as RepoService;
 
@@ -233,6 +238,7 @@ function createTestContext(options?: {
     githubApp,
     gitService,
     ollamaChat: options?.ollamaChat,
+    webhookSender: options?.webhookSender,
     repository,
     spawn: () => {
       const child = mockChildProcess();
@@ -2018,5 +2024,94 @@ describe('review check-run reconciliation', () => {
 
     assert.equal(retried.status, 'queued');
     assert.equal(repository.findById(agentId)?.review, undefined);
+  });
+});
+
+describe('createAgentService (per-repo webhook endpoint)', () => {
+  function makeWebhookCapture(): {
+    webhookSender: WebhookSender;
+    deliveries: Array<{ url: string; data: unknown }>;
+  } {
+    const deliveries: Array<{ url: string; data: unknown }> = [];
+    const webhookSender: WebhookSender = {
+      sendWebhook: async (url, data) => {
+        deliveries.push({ url, data });
+        return undefined;
+      },
+    };
+    return { webhookSender, deliveries };
+  }
+
+  it('falls back to the global webhook url when the repo has no override', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({ webhookSender });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/global-agent');
+    assert.equal((deliveries[0].data as { event: string }).event, 'agent.completed');
+    assert.equal((deliveries[0].data as { agent: Agent }).agent.agentId, agent.agentId);
+  });
+
+  it('delivers to the repo endpoint even when the global url is empty', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({
+      webhookSender,
+      repoOverride: { webhookUrl: 'https://hooks.example.com/repo-agent' },
+    });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/repo-agent');
+  });
+
+  it('prefers the repo override over the configured global url', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({
+      webhookSender,
+      repoOverride: { webhookUrl: 'https://hooks.example.com/repo-agent' },
+    });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/repo-agent');
+  });
+
+  it('skips delivery when neither the repo nor the global setting has a url', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({ webhookSender });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 0);
   });
 });

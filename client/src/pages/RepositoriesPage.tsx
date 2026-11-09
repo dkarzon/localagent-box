@@ -28,6 +28,36 @@ const AUTOFIX_THRESHOLD_LABELS: Record<AutofixSeverityThreshold, string> = {
 
 const AUTOFIX_BATCH_SIZE_OPTIONS = Array.from({ length: 20 }, (_, index) => index + 1);
 
+function RepoWebhookField({ repo, onSave }: { repo: Repo; onSave: (repoId: string, value: string) => Promise<void> }) {
+  const [url, setUrl] = useState(repo.webhookUrl || '');
+
+  return (
+    <div className="sm:col-span-2 lg:col-span-3">
+      <p className="label-md text-muted">Webhook URL</p>
+      <form
+        className="mt-1 flex flex-wrap items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void onSave(repo.repoId, url);
+        }}
+      >
+        <div className="flex-1 min-w-[220px]">
+          <TextInput
+            name="webhookUrl"
+            type="url"
+            placeholder="Leave blank to use the global webhook URL"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </div>
+        <Button type="submit" variant="ghost">
+          Save
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: RepositoriesPageProps) {
   const { token } = useApiToken();
   const [registerStatus, setRegisterStatus] = useState('');
@@ -120,6 +150,21 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
       setRepoAction(
         repoId,
         err instanceof Error ? err.message : 'Failed to update autofix settings',
+        'error',
+      );
+    }
+  };
+
+  const updateWebhook = async (repoId: string, value: string) => {
+    setRepoAction(repoId, 'Updating webhook settings…', '');
+    try {
+      await updateRepoSettings(repoId, { webhookUrl: value.trim() || null }, token);
+      setRepoAction(repoId, 'Webhook settings updated.', 'success');
+      await refreshRepos();
+    } catch (err) {
+      setRepoAction(
+        repoId,
+        err instanceof Error ? err.message : 'Failed to update webhook settings',
         'error',
       );
     }
@@ -354,6 +399,7 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
                         ))}
                       </Select>
                     </div>
+                    <RepoWebhookField repo={repo} onSave={updateWebhook} />
                   </div>
 
                   {verifyFailed && repo.lastVerifyMessage ? (

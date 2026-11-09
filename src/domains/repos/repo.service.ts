@@ -4,6 +4,7 @@ import {
   validateBranchName,
   buildRepoId,
   validationError,
+  isValidHttpUrl,
 } from '../../lib/validation';
 import { CodedError } from '../../types';
 import {
@@ -38,6 +39,7 @@ export interface RepoService {
     updates: {
       autoReviewPullRequests?: boolean | null;
       autofix?: Partial<RepoAutofixSettings>;
+      webhookUrl?: string | null;
     },
   ) => Repo;
   deleteRepo: (repoId: string) => Repo;
@@ -104,6 +106,7 @@ export function createRepoService({
       lastVerifyMessage: null,
       autoReviewPullRequests: null,
       autofix: { ...DEFAULT_REPO_AUTOFIX_SETTINGS },
+      webhookUrl: null,
     };
 
     repository.add(repo);
@@ -215,18 +218,40 @@ export function createRepoService({
     return validated;
   }
 
+  /**
+   * Validates the optional per-repo `webhookUrl` at the service boundary.
+   * `null` or an empty string clears the override (inherit the global setting);
+   * a non-empty value must be an http(s) URL.
+   */
+  function validateWebhookUrlUpdate(value: unknown): string | null {
+    if (value === null) {
+      return null;
+    }
+    const url = typeof value === 'string' ? value.trim() : '';
+    if (!url) {
+      return null;
+    }
+    if (!isValidHttpUrl(url)) {
+      throw validationError('webhookUrl must be a valid http(s) URL or null to inherit the global setting');
+    }
+    return url;
+  }
+
   return {
     listRepos: () => repository.findAll(),
     getRepo,
     registerRepo,
     updateRepo: (repoId, updates) => {
-      const { autofix, ...rest } = updates;
+      const { autofix, webhookUrl, ...rest } = updates;
       // Pass the validated partial through unchanged; the repository merges it with
       // the stored settings, so an absent key never resets the other to defaults.
-      const normalized: Partial<RepoUpdateFields> =
-        autofix !== undefined
-          ? { ...rest, autofix: validateAutofixUpdates(autofix) }
-          : { ...rest };
+      const normalized: Partial<RepoUpdateFields> = { ...rest };
+      if (autofix !== undefined) {
+        normalized.autofix = validateAutofixUpdates(autofix);
+      }
+      if (webhookUrl !== undefined) {
+        normalized.webhookUrl = validateWebhookUrlUpdate(webhookUrl);
+      }
       const repo = repository.update(repoId, normalized);
       if (!repo) {
         throw new CodedError('Repository not found', 'NOT_FOUND');

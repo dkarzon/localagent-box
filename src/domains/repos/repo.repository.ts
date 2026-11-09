@@ -34,6 +34,7 @@ export function normalizeRepoAutofixSettings(value: unknown): RepoAutofixSetting
 export interface RepoUpdateFields {
   autoReviewPullRequests: Repo['autoReviewPullRequests'];
   autofix: Partial<RepoAutofixSettings>;
+  webhookUrl: Repo['webhookUrl'];
 }
 
 export function validateRepoId(repoId: unknown): string {

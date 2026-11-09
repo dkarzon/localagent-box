@@ -125,7 +125,7 @@ export function GeneralSettingsSection({
             />
           </Field>
           <p className="mt-2 text-sm text-muted">
-            Enter the URL where webhook events will be sent.
+            Enter the URL where webhook events will be sent. Per-repo settings can override this default.
           </p>
         </SectionCard>
       ) : null}

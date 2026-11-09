@@ -76,13 +76,23 @@ const handlePurgeDepCache = withErrorHandling(async (req, res, ctx, repoId) => {
 
 const handleUpdateRepo = withErrorHandling(async (req, res, ctx, repoId) => {
   const body = await readJsonBody(req);
-  const updates: { autoReviewPullRequests?: boolean | null; autofix?: Record<string, unknown> } =
-    {};
+  const updates: {
+    autoReviewPullRequests?: boolean | null;
+    autofix?: Record<string, unknown>;
+    webhookUrl?: string | null;
+  } = {};
   if (Object.prototype.hasOwnProperty.call(body, 'autoReviewPullRequests')) {
     if (body.autoReviewPullRequests === null) {
       updates.autoReviewPullRequests = null;
     } else if (typeof body.autoReviewPullRequests === 'boolean') {
       updates.autoReviewPullRequests = body.autoReviewPullRequests;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'webhookUrl')) {
+    if (body.webhookUrl === null) {
+      updates.webhookUrl = null;
+    } else if (typeof body.webhookUrl === 'string') {
+      updates.webhookUrl = body.webhookUrl;
     }
   }
   if (body.autofix !== undefined && body.autofix !== null) {
