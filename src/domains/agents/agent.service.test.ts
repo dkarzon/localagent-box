@@ -108,6 +108,8 @@ function createTestContext(options?: {
   capturePullRequest?: (input: { title: string; body: string }) => void;
   webhookSender?: WebhookSender;
   repoOverride?: Partial<Repo>;
+  /** Mutable flag: when `fail` is true, repo lookups throw (e.g. repo deleted mid-run). */
+  repoLookup?: { fail: boolean };
   maxConcurrent?: number;
 }): TestContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-service-'));
@@ -143,7 +145,7 @@ function createTestContext(options?: {
 
   const repoManager = {
     getRepo: (repoId: string) => {
-      if (repoId !== testRepo.repoId) {
+      if (repoId !== testRepo.repoId || options?.repoLookup?.fail) {
         throw new Error(`Unknown repo: ${repoId}`);
       }
       return repoEntry;
@@ -2098,6 +2100,29 @@ describe('createAgentService (per-repo webhook endpoint)', () => {
 
     assert.equal(deliveries.length, 1);
     assert.equal(deliveries[0].url, 'https://hooks.example.com/repo-agent');
+  });
+
+  it('falls back to the global url when the repo lookup fails', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const repoLookup = { fail: false };
+    const ctx = createTestContext({
+      webhookSender,
+      repoLookup,
+      repoOverride: { webhookUrl: 'https://hooks.example.com/repo-agent' },
+    });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    repoLookup.fail = true;
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/global-agent');
   });
 
   it('skips delivery when neither the repo nor the global setting has a url', () => {

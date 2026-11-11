@@ -147,6 +147,28 @@ describe('repo service updateRepo webhookUrl', () => {
     assert.equal(service.getRepo(id).webhookUrl, undefined);
   });
 
+  it('rejects non-string webhook urls instead of clearing the override', () => {
+    const service = setup();
+    const id = 'acme-demo';
+
+    service.updateRepo(id, { webhookUrl: 'https://hooks.example.com/agent' });
+    assert.throws(
+      () => service.updateRepo(id, { webhookUrl: 123 as unknown as string }),
+      (err: unknown) => err instanceof CodedError && err.code === 'VALIDATION_ERROR',
+    );
+    assert.equal(service.getRepo(id).webhookUrl, 'https://hooks.example.com/agent');
+  });
+
+  it('rejects webhook urls longer than 2048 characters', () => {
+    const service = setup();
+    const id = 'acme-demo';
+
+    assert.throws(
+      () => service.updateRepo(id, { webhookUrl: `https://hooks.example.com/${'a'.repeat(2048)}` }),
+      (err: unknown) => err instanceof CodedError && err.code === 'VALIDATION_ERROR',
+    );
+  });
+
   it('leaves other settings untouched when only the webhook is updated', () => {
     const service = setup();
     const id = 'acme-demo';

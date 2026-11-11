@@ -93,6 +93,8 @@ const handleUpdateRepo = withErrorHandling(async (req, res, ctx, repoId) => {
       updates.webhookUrl = null;
     } else if (typeof body.webhookUrl === 'string') {
       updates.webhookUrl = body.webhookUrl;
+    } else {
+      throw validationError('webhookUrl must be a string or null');
     }
   }
   if (body.autofix !== undefined && body.autofix !== null) {

@@ -30,31 +30,40 @@ const AUTOFIX_BATCH_SIZE_OPTIONS = Array.from({ length: 20 }, (_, index) => inde
 
 function RepoWebhookField({ repo, onSave }: { repo: Repo; onSave: (repoId: string, value: string) => Promise<void> }) {
   const [url, setUrl] = useState(repo.webhookUrl || '');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Re-sync with the stored value after a refresh or an edit made elsewhere.
+  useEffect(() => {
+    setUrl(repo.webhookUrl || '');
+  }, [repo.repoId, repo.webhookUrl]);
 
   return (
-    <div className="sm:col-span-2 lg:col-span-3">
-      <p className="label-md text-muted">Webhook URL</p>
-      <form
-        className="mt-1 flex flex-wrap items-center gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onSave(repo.repoId, url);
-        }}
-      >
-        <div className="flex-1 min-w-[220px]">
-          <TextInput
-            name="webhookUrl"
-            type="url"
-            placeholder="Leave blank to use the global webhook URL"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-        </div>
-        <Button type="submit" variant="ghost">
-          Save
-        </Button>
-      </form>
-    </div>
+    <form
+      className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-end gap-2"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (submitting) return;
+        setSubmitting(true);
+        try {
+          await onSave(repo.repoId, url);
+        } finally {
+          setSubmitting(false);
+        }
+      }}
+    >
+      <Field label="Webhook URL" className="flex-1 min-w-[220px]">
+        <TextInput
+          name="webhookUrl"
+          type="url"
+          placeholder="Leave blank to use the global webhook URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      </Field>
+      <Button type="submit" variant="ghost" disabled={submitting}>
+        {submitting ? 'Saving…' : 'Save'}
+      </Button>
+    </form>
   );
 }
 

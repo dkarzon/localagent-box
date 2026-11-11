@@ -115,7 +115,7 @@ export function GeneralSettingsSection({
 
       {showSection(keywords.webhook) ? (
         <SectionCard title="Webhooks" icon={<span className="code-md text-secondary">WH</span>}>
-          <Field label="Webhook Target URL">
+          <Field label="Default Webhook Target URL">
             <TextInput
               name="webhookUrl"
               type="url"

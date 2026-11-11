@@ -218,6 +218,8 @@ export function createRepoService({
     return validated;
   }
 
+  const MAX_WEBHOOK_URL_LENGTH = 2048;
+
   /**
    * Validates the optional per-repo `webhookUrl` at the service boundary.
    * `null` or an empty string clears the override (inherit the global setting);
@@ -227,9 +229,15 @@ export function createRepoService({
     if (value === null) {
       return null;
     }
-    const url = typeof value === 'string' ? value.trim() : '';
+    if (typeof value !== 'string') {
+      throw validationError('webhookUrl must be a string or null');
+    }
+    const url = value.trim();
     if (!url) {
       return null;
+    }
+    if (url.length > MAX_WEBHOOK_URL_LENGTH) {
+      throw validationError(`webhookUrl must be at most ${MAX_WEBHOOK_URL_LENGTH} characters`);
     }
     if (!isValidHttpUrl(url)) {
       throw validationError('webhookUrl must be a valid http(s) URL or null to inherit the global setting');

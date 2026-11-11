@@ -232,11 +232,19 @@ export function createAgentService(options: {
       }
     } catch (err) {
       getLogger().warn(
-        { err, agentId: agent.agentId },
-        'Failed to load repo for webhook endpoint (non-fatal); falling back to global',
+        { err, agentId: agent.agentId, repoId: agent.repoId },
+        'Failed to resolve repo webhook endpoint (non-fatal); falling back to global',
       );
     }
-    return configRepository.load().webhookUrl?.trim() || '';
+    try {
+      return configRepository.load().webhookUrl?.trim() || '';
+    } catch (err) {
+      getLogger().warn(
+        { err, agentId: agent.agentId },
+        'Failed to load global webhook endpoint (non-fatal); skipping delivery',
+      );
+      return '';
+    }
   }
 
   function sendAgentWebhook(agentId: string, event: string): void {
