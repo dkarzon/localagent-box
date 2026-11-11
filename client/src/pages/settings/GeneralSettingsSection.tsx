@@ -115,7 +115,7 @@ export function GeneralSettingsSection({
 
       {showSection(keywords.webhook) ? (
         <SectionCard title="Webhooks" icon={<span className="code-md text-secondary">WH</span>}>
-          <Field label="Webhook Target URL">
+          <Field label="Default Webhook Target URL">
             <TextInput
               name="webhookUrl"
               type="url"
@@ -125,7 +125,7 @@ export function GeneralSettingsSection({
             />
           </Field>
           <p className="mt-2 text-sm text-muted">
-            Enter the URL where webhook events will be sent.
+            Enter the URL where webhook events will be sent. Per-repo settings can override this default.
           </p>
         </SectionCard>
       ) : null}

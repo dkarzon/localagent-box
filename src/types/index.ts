@@ -234,6 +234,8 @@ export interface Repo {
   lastVerifyMessage: string | null;
   autoReviewPullRequests: boolean | null;
   autofix?: RepoAutofixSettings;
+  /** Per-repo webhook endpoint; null/empty falls back to the global `webhookUrl` */
+  webhookUrl?: string | null;
 }
 
 export interface AgentAutofixMetadata {
