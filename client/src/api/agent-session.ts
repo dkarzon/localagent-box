@@ -86,6 +86,32 @@ export async function createManualFix(
   );
 }
 
+/** Most findings one manual fix agent accepts; mirrors the server's `MAX_BATCH_SIZE`. */
+export const MAX_MANUAL_FIX_SELECTION = 20;
+
+export interface ManualFixBatchResponse {
+  agentId: string;
+  findingIds: string[];
+  agent: Agent;
+  findings: ReviewFindingRecord[];
+  staleReview: boolean;
+}
+
+export async function createManualFixBatch(
+  agentId: string,
+  findingIds: string[],
+  token: string,
+): Promise<ManualFixBatchResponse> {
+  return apiFetch<ManualFixBatchResponse>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/findings/fix`,
+    {
+      method: 'POST',
+      headers: authHeaders(token, true),
+      body: JSON.stringify({ findingIds }),
+    },
+  );
+}
+
 export async function fetchAgentMessages(
   agentId: string,
   since = 0,

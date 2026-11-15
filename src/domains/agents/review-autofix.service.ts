@@ -11,6 +11,7 @@ import type { RepoService } from '../repos/repo.service';
 import type { GithubAppService } from '../../services/github-app';
 import { getLogger } from '../../lib/logger';
 import { buildFixAgentPrompt } from '../../lib/review-autofix-prompt';
+import { MAX_BATCH_SIZE } from '../../lib/review-findings';
 import { allFindingsCleared, checkOutputForComplete } from '../../lib/review-github-check';
 import { getAgentMode } from './agent.types';
 import { appendLog } from './worker/agent-state-writer';
@@ -46,6 +47,16 @@ export interface ManualFixResult {
   staleReview: boolean;
 }
 
+export interface ManualFixBatchResult {
+  agent: Agent;
+  findings: ReviewFindingRecord[];
+  /** True when any selected finding was reviewed against a SHA other than the current head. */
+  staleReview: boolean;
+}
+
+/** Largest manual-fix request; reuses the shared batch-size upper bound. */
+const MAX_MANUAL_FIX_FINDINGS = MAX_BATCH_SIZE;
+
 export interface ReviewAutofixService {
   /**
    * Creates a one-finding batch agent that manually fixes a single review
@@ -53,6 +64,21 @@ export interface ReviewAutofixService {
    * assigned to a queued or running fix agent.
    */
   createManualFix: (reviewAgentId: string, findingId: string) => Promise<ManualFixResult>;
+  /**
+   * Creates exactly one batch fix agent for a selection of manually actionable
+   * findings (1–20 IDs, duplicates collapsed). All-or-nothing validation before
+   * anything is assigned: the agent must be a review, the head branch must
+   * still exist on the remote, structured findings must exist, every ID must
+   * exist (`NOT_FOUND` naming the missing IDs), and every finding must be
+   * actionable (`DUPLICATE` naming the unavailable ones); empty or oversized
+   * selections reject with `VALIDATION_ERROR`. Actionability is re-checked after
+   * the async branch lookup so a concurrent claim cannot be overwritten. After
+   * the agent is created, every selected finding is marked assigned to it.
+   */
+  createManualFixBatch: (
+    reviewAgentId: string,
+    findingIds: string[],
+  ) => Promise<ManualFixBatchResult>;
   /**
    * Creates the first automatic batch agent for a review whose completed run
    * materialized a running autofix plan. Idempotent: a no-op unless the plan
@@ -182,23 +208,34 @@ export function createReviewAutofixService({
    *
    * Validation:
    * 1. Agent exists and is a review.
-   * 2. Finding exists.
-   * 3. No queued/running agent is already assigned to the finding (conflict).
+   * 2. Findings exist and every selected ID exists.
+   * 3. Every selected finding is manually actionable (conflict otherwise).
    * 4. Reviewed head branch still exists on the remote.
    *
    * Behavior:
-   * 1. Build a one-finding prompt.
-   * 2. Create a normal batch agent on the review head branch with
+   * 1. Build one prompt covering the whole selection.
+   * 2. Create a single batch agent on the review head branch with
    *    `useExistingBranch: true` and autofix metadata `kind: 'manual'`.
-   * 3. Mark the finding assigned only after agent creation succeeds.
+   * 3. Mark every selected finding assigned only after agent creation succeeds.
    * 4. Do not reject stale SHA findings; return staleness metadata instead.
    */
-  async function createManualFix(
+  async function createManualFixBatch(
     reviewAgentId: string,
-    findingId: string,
-  ): Promise<ManualFixResult> {
+    findingIds: string[],
+  ): Promise<ManualFixBatchResult> {
     if (typeof createBatchAgent !== 'function') {
       throw new CodedError('Manual fix is not available', 'VALIDATION_ERROR');
+    }
+
+    const selectedIds = [...new Set(findingIds)];
+    if (selectedIds.length === 0) {
+      throw new CodedError('At least one finding must be selected', 'VALIDATION_ERROR');
+    }
+    if (selectedIds.length > MAX_MANUAL_FIX_FINDINGS) {
+      throw new CodedError(
+        `At most ${MAX_MANUAL_FIX_FINDINGS} findings can be fixed by one manual fix agent`,
+        'VALIDATION_ERROR',
+      );
     }
 
     const agent = repository.getAgent(reviewAgentId);
@@ -215,13 +252,22 @@ export function createReviewAutofixService({
     if (!findings) {
       throw new CodedError('Structured findings are not available for this review', 'NOT_FOUND');
     }
-    const finding = findings.find((entry) => entry.id === findingId);
-    if (!finding) {
-      throw new CodedError(`Finding not found: ${findingId}`, 'NOT_FOUND');
+
+    const selectedFindings = selectedIds
+      .map((findingId) => findings.find((entry) => entry.id === findingId))
+      .filter((entry): entry is ReviewFindingRecord => Boolean(entry));
+    if (selectedFindings.length !== selectedIds.length) {
+      const missingIds = selectedIds.filter((findingId) =>
+        !findings.some((entry) => entry.id === findingId),
+      );
+      throw new CodedError(`Finding not found: ${missingIds.join(', ')}`, 'NOT_FOUND');
     }
-    if (!MANUALLY_ACTIONABLE_STATUSES.has(finding.fixStatus)) {
+    const unavailable = selectedFindings.filter(
+      (finding) => !MANUALLY_ACTIONABLE_STATUSES.has(finding.fixStatus),
+    );
+    if (unavailable.length > 0) {
       throw new CodedError(
-        `Finding is ${finding.fixStatus}; manual fix is not available while a fix agent is assigned`,
+        `Finding is not actionable for manual fix: ${unavailable.map((entry) => entry.id).join(', ')}`,
         'DUPLICATE',
       );
     }
@@ -242,26 +288,50 @@ export function createReviewAutofixService({
       );
     }
 
-    // Re-check the finding's claimable status after the async branch
-    // verification — another request may have claimed the finding while this
-    // one awaited GitHub. The initial check above only covers the start of the
-    // call, so the finding can be taken (its status flipped to
-    // `assigned`/`fixing`) in the gap; claiming it here would let a second
-    // manual agent run with no recorded owner for the first one.
+    // Re-check every selected finding's claimable status after the async branch
+    // verification — another request may have claimed a finding while this one
+    // awaited GitHub. The initial check above only covers the start of the call,
+    // so a finding can be taken (its status flipped to `assigned`/`fixing`) in
+    // the gap; claiming it here would let a second manual agent run with no
+    // recorded owner for the first one. Nothing is assigned before this passes,
+    // so a failure leaves every finding untouched.
     const recheckedFindings = repository.readReviewFindings(reviewAgentId);
-    const currentFinding = recheckedFindings?.find((entry) => entry.id === finding.id);
-    if (
-      !currentFinding ||
-      !MANUALLY_ACTIONABLE_STATUSES.has(currentFinding.fixStatus)
-    ) {
-      throw new CodedError('Finding was claimed by another fix request', 'DUPLICATE');
+    if (!recheckedFindings) {
+      throw new CodedError('Structured findings are not available for this review', 'NOT_FOUND');
+    }
+    const currentFindings = selectedIds.map((findingId) => ({
+      findingId,
+      entry: recheckedFindings.find((candidate) => candidate.id === findingId),
+    }));
+    const vanishedIds = currentFindings
+      .filter(({ entry }) => !entry)
+      .map(({ findingId }) => findingId);
+    if (vanishedIds.length > 0) {
+      throw new CodedError(`Finding not found: ${vanishedIds.join(', ')}`, 'NOT_FOUND');
+    }
+    const selected = currentFindings.map(({ entry }) => entry!);
+    const claimedIds = selected
+      .filter((entry) => !MANUALLY_ACTIONABLE_STATUSES.has(entry.fixStatus))
+      .map((entry) => entry.id);
+    if (claimedIds.length > 0) {
+      throw new CodedError(
+        `Finding was claimed by another fix request: ${claimedIds.join(', ')}`,
+        'DUPLICATE',
+      );
     }
 
-    const reviewedSha = finding.reviewedSha;
+    const headSha = agent.review?.headSha;
     const staleReview =
-      Boolean(reviewedSha) && typeof agent.review?.headSha === 'string' && agent.review.headSha !== reviewedSha;
+      typeof headSha === 'string' &&
+      selected.some((entry) => Boolean(entry.reviewedSha) && entry.reviewedSha !== headSha);
 
-    const prompt = buildFixAgentPrompt([finding], { headBranch, reviewedSha });
+    // Only name a headline SHA when the whole selection was reviewed against it;
+    // each finding still carries its own `reviewedSha` in the prompt payload.
+    const firstReviewedSha = selected[0]!.reviewedSha;
+    const sharedReviewedSha = selected.every((entry) => entry.reviewedSha === firstReviewedSha)
+      ? firstReviewedSha
+      : null;
+    const prompt = buildFixAgentPrompt(selected, { headBranch, reviewedSha: sharedReviewedSha });
 
     let fixAgent: Agent;
     try {
@@ -276,11 +346,11 @@ export function createReviewAutofixService({
         autofix: {
           kind: 'manual',
           sourceReviewAgentId: reviewAgentId,
-          findingIds: [finding.id],
+          findingIds: selected.map((entry) => entry.id),
         },
       } as Record<string, unknown>);
     } catch (err) {
-      // Agent creation failed — the finding stays actionable; nothing was assigned.
+      // Agent creation failed — the findings stay actionable; nothing was assigned.
       if (err instanceof CodedError) {
         throw err;
       }
@@ -288,11 +358,21 @@ export function createReviewAutofixService({
       throw new CodedError(`Could not create the fix agent: ${message}`, 'VALIDATION_ERROR');
     }
 
-    finding.fixStatus = 'assigned';
-    finding.assignedAgentId = fixAgent.agentId;
-    repository.writeReviewFindings(reviewAgentId, findings);
+    for (const finding of selected) {
+      finding.fixStatus = 'assigned';
+      finding.assignedAgentId = fixAgent.agentId;
+    }
+    repository.writeReviewFindings(reviewAgentId, recheckedFindings);
 
-    return { agent: fixAgent, finding, staleReview };
+    return { agent: fixAgent, findings: selected, staleReview };
+  }
+
+  async function createManualFix(
+    reviewAgentId: string,
+    findingId: string,
+  ): Promise<ManualFixResult> {
+    const result = await createManualFixBatch(reviewAgentId, [findingId]);
+    return { agent: result.agent, finding: result.findings[0]!, staleReview: result.staleReview };
   }
 
   /**
@@ -1468,6 +1548,7 @@ export function createReviewAutofixService({
 
   return {
     createManualFix,
+    createManualFixBatch,
     startAutomaticChain,
     resumeAutomaticChain,
     retryFindingResolution,

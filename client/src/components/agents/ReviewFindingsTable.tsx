@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ReviewAutofixPlan,
   ReviewFindingRecord,
   ReviewFindingFixStatus,
 } from '../../api/types';
+import { MAX_MANUAL_FIX_SELECTION } from '../../api/agent-session';
 
 type TableSort = 'severity' | 'ordinal';
 
@@ -29,6 +30,11 @@ const fixStatusBadgeVariant: Record<ReviewFindingFixStatus, string> = {
   fixed: 'verified',
   failed: 'error',
 };
+
+/** Fix statuses a row can be selected for a manual fix batch. */
+function isSelectable(finding: ReviewFindingRecord): boolean {
+  return finding.fixStatus === 'available' || finding.fixStatus === 'failed';
+}
 
 function locationLabel(finding: ReviewFindingRecord): string {
   if (!finding.path) return '—';
@@ -85,6 +91,10 @@ interface ReviewFindingsTableProps {
   onManualFix?: ((findingId: string) => void) | null;
   /** Finding ID currently being sent to the manual-fix endpoint. */
   manualFixBusyId?: string | null;
+  /** Present when the caller supports sending a selection to one fix agent. */
+  onManualFixSelected?: ((findingIds: string[]) => Promise<boolean>) | null;
+  /** True while the batch-selection fix request is in flight. */
+  manualFixSelectedBusy?: boolean;
 }
 
 const chainStatusLabel: Record<ReviewAutofixPlan['chainStatus'], string> = {
@@ -102,6 +112,8 @@ export function ReviewFindingsTable({
   resumeBusy = false,
   onManualFix,
   manualFixBusyId = null,
+  onManualFixSelected,
+  manualFixSelectedBusy = false,
 }: ReviewFindingsTableProps) {
   const [sort, setSort] = useState<TableSort>('severity');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -125,7 +137,74 @@ export function ReviewFindingsTable({
     [findings, filters, sort],
   );
 
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const headerCheckboxRef = useRef<HTMLInputElement>(null);
+
+  const selectionEnabled = Boolean(onManualFixSelected);
+
+  // Keep the selection to rows the user can see and still act on: polling can
+  // move a finding to assigned/fixing/fixed, and filters can hide rows. Hidden
+  // selections would otherwise be submitted without the user seeing them.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = new Set<string>();
+      for (const finding of visible) {
+        if (prev.has(finding.id) && isSelectable(finding)) next.add(finding.id);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [visible]);
+
+  const visibleActionable = useMemo(
+    () => visible.filter((finding) => isSelectable(finding)),
+    [visible],
+  );
+  // Selection is pruned to visible actionable rows, so its size is the visible count.
+  const selectedCount = selectedIds.size;
+  const selectionAtLimit = selectedCount >= MAX_MANUAL_FIX_SELECTION;
+  const selectableTarget = Math.min(visibleActionable.length, MAX_MANUAL_FIX_SELECTION);
+  const headerChecked = selectableTarget > 0 && selectedCount >= selectableTarget;
+
+  useEffect(() => {
+    const checkbox = headerCheckboxRef.current;
+    if (!checkbox) return;
+    checkbox.indeterminate = selectedCount > 0 && !headerChecked;
+  }, [selectedCount, headerChecked]);
+
+  function toggleSelection(findingId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(findingId)) next.delete(findingId);
+      else if (next.size < MAX_MANUAL_FIX_SELECTION) next.add(findingId);
+      return next;
+    });
+  }
+
+  /** Selects visible actionable rows in table order, up to the batch limit. */
+  function setSelectionForVisible(checked: boolean) {
+    if (!checked) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const finding of visibleActionable) {
+        if (next.size >= MAX_MANUAL_FIX_SELECTION) break;
+        next.add(finding.id);
+      }
+      return next;
+    });
+  }
+
+  async function fixSelected() {
+    if (!onManualFixSelected || selectedIds.size === 0) return;
+    const ok = await onManualFixSelected([...selectedIds]);
+    if (ok) setSelectedIds(new Set());
+  }
+
   if (findings.length === 0) return null;
+
+  const columnCount = selectionEnabled ? 8 : 7;
 
   const hasPendingBatches = Boolean(
     plan && plan.chainStatus === 'paused' && plan.batches.some((b) => b.status === 'pending'),
@@ -161,6 +240,19 @@ export function ReviewFindingsTable({
               onClick={onResume}
             >
               {resumeBusy ? 'Resuming…' : 'Resume Remaining Batches'}
+            </button>
+          ) : null}
+          {onManualFixSelected && selectedIds.size > 0 ? (
+            <button
+              type="button"
+              className="inline-flex items-center rounded border border-primary bg-transparent px-3 py-1 text-xs text-primary transition-colors hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={manualFixSelectedBusy}
+              title={`Queue one fix agent for the selected findings (up to ${MAX_MANUAL_FIX_SELECTION})`}
+              onClick={() => {
+                void fixSelected();
+              }}
+            >
+              {manualFixSelectedBusy ? 'Queueing…' : `Fix selected (${selectedIds.size})`}
             </button>
           ) : null}
           <select
@@ -217,6 +309,18 @@ export function ReviewFindingsTable({
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead>
             <tr className="border-b border-surface-container-highest text-xs uppercase tracking-wide text-on-surface-variant">
+              {selectionEnabled ? (
+                <th className="px-4 py-2 font-medium">
+                  <input
+                    ref={headerCheckboxRef}
+                    type="checkbox"
+                    aria-label={`Select visible findings (up to ${MAX_MANUAL_FIX_SELECTION})`}
+                    checked={headerChecked}
+                    disabled={visibleActionable.length === 0}
+                    onChange={(e) => setSelectionForVisible(e.target.checked)}
+                  />
+                </th>
+              ) : null}
               <th className="px-4 py-2 font-medium">Severity</th>
               <th className="px-4 py-2 font-medium">Category</th>
               <th className="px-4 py-2 font-medium">Finding</th>
@@ -232,14 +336,18 @@ export function ReviewFindingsTable({
                 key={finding.id}
                 finding={finding}
                 expanded={expandedId === finding.id}
+                selected={selectedIds.has(finding.id)}
+                selectionBlocked={selectionAtLimit && !selectedIds.has(finding.id)}
+                columnCount={columnCount}
                 onToggle={() => setExpandedId((id) => (id === finding.id ? null : finding.id))}
+                onToggleSelect={selectionEnabled ? () => toggleSelection(finding.id) : null}
                 onManualFix={onManualFix}
                 manualFixBusy={manualFixBusyId === finding.id}
               />
             ))}
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-on-surface-variant">
+                <td colSpan={columnCount} className="px-4 py-6 text-center text-on-surface-variant">
                   No findings match the current filters.
                 </td>
               </tr>
@@ -254,13 +362,23 @@ export function ReviewFindingsTable({
 function FindingRow({
   finding,
   expanded,
+  selected,
+  selectionBlocked,
+  columnCount,
   onToggle,
+  onToggleSelect,
   onManualFix,
   manualFixBusy = false,
 }: {
   finding: ReviewFindingRecord;
   expanded: boolean;
+  selected: boolean;
+  /** True when the selection is at the batch limit and this row is not in it. */
+  selectionBlocked: boolean;
+  columnCount: number;
   onToggle: () => void;
+  /** Absent when the caller does not support batch fixes; hides the checkbox column. */
+  onToggleSelect: (() => void) | null;
   onManualFix?: ((findingId: string) => void) | null;
   manualFixBusy?: boolean;
 }) {
@@ -268,6 +386,7 @@ function FindingRow({
   const statusVariant = fixStatusBadgeVariant[finding.fixStatus] ?? 'neutral';
   const commentUrl = finding.github.commentUrl;
   const manualFixPending = finding.fixStatus === 'assigned' || finding.fixStatus === 'fixing';
+  const selectable = isSelectable(finding);
 
   return (
     <>
@@ -275,6 +394,24 @@ function FindingRow({
         className="cursor-pointer border-b border-surface-container-highest hover:bg-surface-container/40"
         onClick={onToggle}
       >
+        {onToggleSelect ? (
+          <td className="px-4 py-2">
+            <input
+              type="checkbox"
+              aria-label={`Select finding ${finding.id}`}
+              checked={selected}
+              disabled={!selectable || selectionBlocked}
+              title={
+                selectionBlocked
+                  ? `At most ${MAX_MANUAL_FIX_SELECTION} findings can go to one fix agent`
+                  : undefined
+              }
+              // Keep the click from expanding the row; selection changes go through onChange.
+              onClick={(e) => e.stopPropagation()}
+              onChange={onToggleSelect}
+            />
+          </td>
+        ) : null}
         <td className="px-4 py-2">
           <span
             className={`inline-flex rounded px-2 py-0.5 text-xs ${
@@ -354,7 +491,7 @@ function FindingRow({
       </tr>
       {expanded ? (
         <tr className="border-b border-surface-container-highest bg-surface-container/20">
-          <td colSpan={7} className="px-4 py-4">
+          <td colSpan={columnCount} className="px-4 py-4">
             <div className="grid gap-3 text-sm">
               <div className="whitespace-pre-wrap text-on-surface">{finding.content}</div>
               {finding.existingCode ? (
