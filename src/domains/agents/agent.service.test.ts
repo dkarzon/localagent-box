@@ -193,6 +193,7 @@ function createTestContext(options?: {
     }),
     createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
     createPullRequestReviewComment: async () => ({ id: '2', html_url: 'https://example.com/review/comment/2' }),
+    upsertStickyIssueComment: async () => ({ id: 3, html_url: 'https://example.com/comment/3', created: true }),
     listPullRequestReviewComments: async () => [],
     findReviewThreadIdForComment: async () => null,
     resolvePullRequestReviewThread: async (_config, threadId) => ({

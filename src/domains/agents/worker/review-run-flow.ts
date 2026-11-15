@@ -47,6 +47,13 @@ import type { WorkerContext } from './worker-context';
 
 const execFileAsync = promisify(execFile);
 
+/** Hidden marker identifying the sticky review summary comment on a PR. */
+export const REVIEW_SUMMARY_COMMENT_MARKER = '<!-- localagent-box:review-summary -->';
+
+/** Body of the PR review that carries this run's inline findings. */
+const REVIEW_LINE_COMMENTS_BODY =
+  'Inline findings from the localagent-box code review. See the **Code Review** summary comment on this PR for the run summary.';
+
 export function resolveReviewRunConfig(config: AppConfig, job: AgentJob): AppConfig {
   if (job.model) {
     return { ...config, reviewModel: job.model };
@@ -574,7 +581,6 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     if (foundPrNumber && repo) {
       appendLog(logPath, `Posting review to GitHub for PR #${foundPrNumber}`);
       const { lineComments, fileComments } = partitionReviewComments(successfulOcrResult);
-      const reviewBody = formatReviewSummaryMarkdown(successfulOcrResult);
 
       if (lineComments.length > 0) {
         appendLog(
@@ -594,45 +600,52 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
         ...(comment.start_side ? { start_side: comment.start_side } : {}),
       }));
 
-      let reviewResponse: { id: string; html_url: string };
+      // Line comments go out as a PR review; the run summary lives in one
+      // sticky conversation comment that every run updates in place.
       let postFileCommentsSeparately = true;
       let reviewCommentsListed = false;
-      try {
-        reviewResponse = await githubApp.createPullRequestReview(
-          config,
-          repo.owner,
-          repo.name,
-          foundPrNumber,
-          {
-            body: reviewBody,
-            event: 'COMMENT',
-            comments: lineCommentPayload,
-          },
-        );
-      } catch (lineCommentErr) {
-        if (lineComments.length === 0) {
-          throw lineCommentErr;
+      if (lineComments.length > 0) {
+        try {
+          const reviewResponse = await githubApp.createPullRequestReview(
+            config,
+            repo.owner,
+            repo.name,
+            foundPrNumber,
+            {
+              body: REVIEW_LINE_COMMENTS_BODY,
+              event: 'COMMENT',
+              comments: lineCommentPayload,
+            },
+          );
+          githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
+          appendLog(logPath, `GitHub PR #${foundPrNumber} line comments posted`);
+        } catch (lineCommentErr) {
+          const lineCommentMessage =
+            lineCommentErr instanceof Error ? lineCommentErr.message : String(lineCommentErr);
+          appendLog(
+            logPath,
+            `Warning: line comments failed — ${lineCommentMessage}, including all findings in the summary comment`,
+          );
+          postFileCommentsSeparately = false;
         }
-        const lineCommentMessage =
-          lineCommentErr instanceof Error ? lineCommentErr.message : String(lineCommentErr);
-        appendLog(
-          logPath,
-          `Warning: line comments failed — ${lineCommentMessage}, retrying with summary-only review`,
-        );
-        postFileCommentsSeparately = false;
-        reviewResponse = await githubApp.createPullRequestReview(
-          config,
-          repo.owner,
-          repo.name,
-          foundPrNumber,
-          {
-            body: formatReviewMarkdown(successfulOcrResult),
-            event: 'COMMENT',
-          },
-        );
       }
-      githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
-      appendLog(logPath, `GitHub PR #${foundPrNumber} review posted`);
+
+      const summaryComment = await githubApp.upsertStickyIssueComment(
+        config,
+        repo.owner,
+        repo.name,
+        foundPrNumber,
+        {
+          marker: REVIEW_SUMMARY_COMMENT_MARKER,
+          body: postFileCommentsSeparately
+            ? formatReviewSummaryMarkdown(successfulOcrResult)
+            : formatReviewMarkdown(successfulOcrResult),
+        },
+      );
+      appendLog(
+        logPath,
+        `GitHub PR #${foundPrNumber} summary comment ${summaryComment.created ? 'created' : 'updated'}`,
+      );
 
       // Map line comments created inside the submitted review back onto
       // findings. Submission order is authoritative but each match is

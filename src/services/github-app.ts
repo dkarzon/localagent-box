@@ -102,6 +102,23 @@ export interface PullRequestReviewCommentSummary {
   start_line: number | null;
 }
 
+export interface UpsertStickyIssueCommentInput {
+  /**
+   * Hidden HTML comment (e.g. `<!-- app:summary -->`) that identifies the
+   * sticky comment. It is prepended to the body and used to find the existing
+   * comment on later runs.
+   */
+  marker: string;
+  body: string;
+}
+
+export interface StickyIssueCommentResult {
+  id: number;
+  html_url: string;
+  /** True when a new comment was created; false when an existing one was updated. */
+  created: boolean;
+}
+
 /** Output block of a check run (title + summary only; annotations out of scope). */
 export interface CheckRunOutput {
   title?: string;
@@ -215,6 +232,18 @@ export interface GithubAppService {
     prNumber: number,
     input: CreatePullRequestReviewCommentInput,
   ) => Promise<{ id: string; html_url: string }>;
+  /**
+   * Creates or updates a single bot-authored PR/issue conversation comment
+   * identified by a hidden marker, so repeated runs edit one comment instead
+   * of adding a new one each time.
+   */
+  upsertStickyIssueComment: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    input: UpsertStickyIssueCommentInput,
+  ) => Promise<StickyIssueCommentResult>;
   /** List comments belonging to an already submitted review. */
   listPullRequestReviewComments: (
     config: AppConfig,
@@ -665,6 +694,69 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     };
   }
 
+  async function findStickyIssueComment(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    marker: string,
+  ): Promise<number | null> {
+    const perPage = 100;
+    // Bounded scan: 50 pages = 5,000 comments, far beyond any real PR.
+    for (let page = 1; page <= 50; page += 1) {
+      const comments = await githubApiRequest<Array<Record<string, unknown>>>(
+        config,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}/comments?per_page=${perPage}&page=${page}`,
+      );
+      const match = comments.find((comment) => {
+        const user = comment.user as { type?: unknown } | null | undefined;
+        return (
+          typeof comment.id === 'number' &&
+          typeof comment.body === 'string' &&
+          comment.body.includes(marker) &&
+          user?.type === 'Bot'
+        );
+      });
+      if (match) {
+        return match.id as number;
+      }
+      if (comments.length < perPage) {
+        break;
+      }
+    }
+    return null;
+  }
+
+  async function upsertStickyIssueComment(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    input: UpsertStickyIssueCommentInput,
+  ): Promise<StickyIssueCommentResult> {
+    const body = `${input.marker}\n${input.body}`;
+    const repoPath = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const existingId = await findStickyIssueComment(config, owner, repo, issueNumber, input.marker);
+
+    const result = existingId
+      ? await githubApiRequest<Record<string, unknown>>(
+          config,
+          `${repoPath}/issues/comments/${existingId}`,
+          { method: 'PATCH', body: JSON.stringify({ body }) },
+        )
+      : await githubApiRequest<Record<string, unknown>>(
+          config,
+          `${repoPath}/issues/${issueNumber}/comments`,
+          { method: 'POST', body: JSON.stringify({ body }) },
+        );
+
+    return {
+      id: Number(result.id) || existingId || 0,
+      html_url: String(result.html_url ?? ''),
+      created: !existingId,
+    };
+  }
+
   async function listPullRequestReviewComments(
     config: AppConfig,
     owner: string,
@@ -794,6 +886,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     getPullRequest,
     createPullRequestReview,
     createPullRequestReviewComment,
+    upsertStickyIssueComment,
     listPullRequestReviewComments,
     findReviewThreadIdForComment,
     resolvePullRequestReviewThread,

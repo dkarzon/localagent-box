@@ -193,6 +193,69 @@ describe('createGithubAppService', () => {
     });
   });
 
+  function makeStickyCommentFetch(existing: Array<Record<string, unknown>>) {
+    const requests: Array<{ path: string; method: string; body: unknown }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url).replace('https://api.github.com', '');
+      if (path.includes('/access_tokens')) {
+        return {
+          ok: true,
+          json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+        } as Response;
+      }
+      const method = init?.method || 'GET';
+      requests.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
+
+      if (method === 'GET' && path.startsWith('/repos/o/r/issues/7/comments?')) {
+        return { ok: true, json: async () => existing } as Response;
+      }
+      if (method === 'POST' && path === '/repos/o/r/issues/7/comments') {
+        return { ok: true, json: async () => ({ id: 77, html_url: 'https://x/77' }) } as Response;
+      }
+      if (method === 'PATCH' && path.startsWith('/repos/o/r/issues/comments/')) {
+        const id = Number(path.split('/').pop());
+        return { ok: true, json: async () => ({ id, html_url: `https://x/${id}` }) } as Response;
+      }
+      return { ok: false, json: async () => ({ message: `unexpected ${method} ${path}` }) } as Response;
+    }) as typeof fetch;
+    return { requests, fetchImpl };
+  }
+
+  it('creates the sticky issue comment when none exists', async () => {
+    const { requests, fetchImpl } = makeStickyCommentFetch([
+      { id: 1, body: 'Human comment', user: { type: 'User' } },
+    ]);
+    const githubApp = createGithubAppService({ fetchImpl });
+
+    const result = await githubApp.upsertStickyIssueComment(config, 'o', 'r', 7, {
+      marker: '<!-- marker -->',
+      body: '## Summary',
+    });
+
+    assert.deepEqual(result, { id: 77, html_url: 'https://x/77', created: true });
+    const post = requests.find((request) => request.method === 'POST');
+    assert.deepEqual(post?.body, { body: '<!-- marker -->\n## Summary' });
+  });
+
+  it('updates the existing bot-authored sticky comment instead of posting a new one', async () => {
+    const { requests, fetchImpl } = makeStickyCommentFetch([
+      { id: 5, body: '> quoted <!-- marker -->', user: { type: 'User' } },
+      { id: 6, body: '<!-- marker -->\nold summary', user: { type: 'Bot' } },
+    ]);
+    const githubApp = createGithubAppService({ fetchImpl });
+
+    const result = await githubApp.upsertStickyIssueComment(config, 'o', 'r', 7, {
+      marker: '<!-- marker -->',
+      body: 'new summary',
+    });
+
+    assert.deepEqual(result, { id: 6, html_url: 'https://x/6', created: false });
+    assert.equal(requests.some((request) => request.method === 'POST'), false);
+    const patch = requests.find((request) => request.method === 'PATCH');
+    assert.equal(patch?.path, '/repos/o/r/issues/comments/6');
+    assert.deepEqual(patch?.body, { body: '<!-- marker -->\nnew summary' });
+  });
+
   it('lists comments belonging to a submitted review', async () => {
     const githubApp = createGithubAppService({
       fetchImpl: async (url) => {
