@@ -28,6 +28,45 @@ const AUTOFIX_THRESHOLD_LABELS: Record<AutofixSeverityThreshold, string> = {
 
 const AUTOFIX_BATCH_SIZE_OPTIONS = Array.from({ length: 20 }, (_, index) => index + 1);
 
+function RepoWebhookField({ repo, onSave }: { repo: Repo; onSave: (repoId: string, value: string) => Promise<void> }) {
+  const [url, setUrl] = useState(repo.webhookUrl || '');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Re-sync with the stored value after a refresh or an edit made elsewhere.
+  useEffect(() => {
+    setUrl(repo.webhookUrl || '');
+  }, [repo.repoId, repo.webhookUrl]);
+
+  return (
+    <form
+      className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-end gap-2"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (submitting) return;
+        setSubmitting(true);
+        try {
+          await onSave(repo.repoId, url);
+        } finally {
+          setSubmitting(false);
+        }
+      }}
+    >
+      <Field label="Webhook URL" className="flex-1 min-w-[220px]">
+        <TextInput
+          name="webhookUrl"
+          type="url"
+          placeholder="Leave blank to use the global webhook URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      </Field>
+      <Button type="submit" variant="ghost" disabled={submitting}>
+        {submitting ? 'Saving…' : 'Save'}
+      </Button>
+    </form>
+  );
+}
+
 export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: RepositoriesPageProps) {
   const { token } = useApiToken();
   const [registerStatus, setRegisterStatus] = useState('');
@@ -120,6 +159,21 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
       setRepoAction(
         repoId,
         err instanceof Error ? err.message : 'Failed to update autofix settings',
+        'error',
+      );
+    }
+  };
+
+  const updateWebhook = async (repoId: string, value: string) => {
+    setRepoAction(repoId, 'Updating webhook settings…', '');
+    try {
+      await updateRepoSettings(repoId, { webhookUrl: value.trim() || null }, token);
+      setRepoAction(repoId, 'Webhook settings updated.', 'success');
+      await refreshRepos();
+    } catch (err) {
+      setRepoAction(
+        repoId,
+        err instanceof Error ? err.message : 'Failed to update webhook settings',
         'error',
       );
     }
@@ -354,6 +408,7 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
                         ))}
                       </Select>
                     </div>
+                    <RepoWebhookField repo={repo} onSave={updateWebhook} />
                   </div>
 
                   {verifyFailed && repo.lastVerifyMessage ? (

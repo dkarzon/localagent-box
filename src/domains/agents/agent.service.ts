@@ -220,14 +220,41 @@ export function createAgentService(options: {
     createReviewAgent: (body) => createAgent(body as unknown as CreateAgentRequest),
   });
 
+  /**
+   * Resolve the effective webhook endpoint for an agent: per-repo override first,
+   * then the global `webhookUrl` setting. Empty = no delivery.
+   */
+  function resolveWebhookUrl(agent: Agent): string {
+    try {
+      const repoUrl = repoManager.getRepo(agent.repoId).webhookUrl?.trim();
+      if (repoUrl) {
+        return repoUrl;
+      }
+    } catch (err) {
+      getLogger().warn(
+        { err, agentId: agent.agentId, repoId: agent.repoId },
+        'Failed to resolve repo webhook endpoint (non-fatal); falling back to global',
+      );
+    }
+    try {
+      return configRepository.load().webhookUrl?.trim() || '';
+    } catch (err) {
+      getLogger().warn(
+        { err, agentId: agent.agentId },
+        'Failed to load global webhook endpoint (non-fatal); skipping delivery',
+      );
+      return '';
+    }
+  }
+
   function sendAgentWebhook(agentId: string, event: string): void {
-    const webhookUrl = configRepository.load().webhookUrl?.trim();
-    if (!webhookUrl) {
+    const agent = repository.findById(agentId);
+    if (!agent || !TERMINAL_STATUSES.has(agent.status)) {
       return;
     }
 
-    const agent = repository.findById(agentId);
-    if (!agent || !TERMINAL_STATUSES.has(agent.status)) {
+    const webhookUrl = resolveWebhookUrl(agent);
+    if (!webhookUrl) {
       return;
     }
 

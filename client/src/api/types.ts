@@ -261,6 +261,7 @@ export interface Repo {
   lastVerifyMessage?: string;
   autoReviewPullRequests?: boolean | null;
   autofix?: RepoAutofixSettings;
+  webhookUrl?: string | null;
 }
 
 export interface AgentReviewMetadata {

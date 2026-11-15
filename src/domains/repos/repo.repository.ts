@@ -1,4 +1,4 @@
-import { validationError } from '../../lib/validation';
+import { isValidHttpUrl, validationError } from '../../lib/validation';
 import {
   AUTOFIX_SEVERITY_THRESHOLDS,
   DEFAULT_REPO_AUTOFIX_SETTINGS,
@@ -34,6 +34,7 @@ export function normalizeRepoAutofixSettings(value: unknown): RepoAutofixSetting
 export interface RepoUpdateFields {
   autoReviewPullRequests: Repo['autoReviewPullRequests'];
   autofix: Partial<RepoAutofixSettings>;
+  webhookUrl: Repo['webhookUrl'];
 }
 
 export function validateRepoId(repoId: unknown): string {
@@ -66,6 +67,11 @@ export function createRepoRepository(reposStore: JsonStore<{ repos: Repo[] }>): 
     const repos = reposStore.load().repos || [];
     for (const repo of repos) {
       repo.autofix = normalizeRepoAutofixSettings(repo.autofix);
+      // Hand-edited/legacy data: anything other than a valid http(s) URL inherits the global setting.
+      if (repo.webhookUrl !== undefined && repo.webhookUrl !== null) {
+        const url = typeof repo.webhookUrl === 'string' ? repo.webhookUrl.trim() : '';
+        repo.webhookUrl = url && isValidHttpUrl(url) ? url : null;
+      }
     }
     return repos;
   }
