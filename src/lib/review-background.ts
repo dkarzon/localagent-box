@@ -22,14 +22,16 @@ export function buildReviewBackground(
   parentContext?: string | null,
   parentTask?: string | null,
 ): string {
-  // Retry guard: a previous attempt persists its built background (which already
-  // begins with DEFAULT_REVIEW_RULES) into review.background; rebuilds must not
-  // stack the rules block again.
-  const rawCallerBackground = agent.review?.background;
-  const callerBackground =
-    rawCallerBackground && rawCallerBackground.startsWith(DEFAULT_REVIEW_RULES)
-      ? rawCallerBackground.slice(DEFAULT_REVIEW_RULES.length).trim()
-      : rawCallerBackground;
+  // Retry guard: a previous attempt persists the fully built background (rules +
+  // repo instructions + wrapped caller context) into review.background. Caller
+  // context and overrides are unchanged on retry, so reuse that value verbatim;
+  // rebuilding would duplicate the repo instructions, stack section labels, and
+  // keep a stale copy of any override that changed since.
+  const persistedBackground = agent.review?.background;
+  if (persistedBackground?.startsWith(DEFAULT_REVIEW_RULES)) {
+    return persistedBackground;
+  }
+  const callerBackground = persistedBackground;
 
   let bg = `${DEFAULT_REVIEW_RULES}\n\n`;
 

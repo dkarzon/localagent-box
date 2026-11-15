@@ -64,6 +64,45 @@ describe('dedupeOcrComments', () => {
     assert.equal(dedupeOcrComments(comments).length, 2);
   });
 
+  it('keeps comments that propose different suggestions on the same span', () => {
+    const first: OcrComment = {
+      path: 'src/api.ts',
+      content: 'Missing cap.',
+      start_line: 10,
+      end_line: 12,
+      suggestion_code: 'if (items.length > 20) trim();',
+    };
+    const other: OcrComment = {
+      path: 'src/api.ts',
+      content: 'Missing cap.',
+      start_line: 10,
+      end_line: 12,
+      suggestion_code: 'if (items.length > MAX) return;',
+    };
+
+    assert.equal(dedupeOcrComments([first, other]).length, 2);
+  });
+
+  it('drops duplicates whose suggestion differs only by surrounding whitespace', () => {
+    const first: OcrComment = {
+      path: 'src/api.ts',
+      content: 'Missing cap.',
+      start_line: 10,
+      suggestion_code: 'trim(items);',
+    };
+    const dup: OcrComment = {
+      path: 'src/api.ts',
+      content: 'Missing cap.',
+      start_line: 10,
+      end_line: 10,
+      suggestion_code: '  trim(items);  ',
+    };
+
+    const kept = dedupeOcrComments([first, dup]);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0], first);
+  });
+
   it('does not throw on malformed comments with non-string fields', () => {
     const malformed = {
       path: 'src/a.ts',

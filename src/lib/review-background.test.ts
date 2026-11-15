@@ -68,15 +68,25 @@ describe('buildReviewBackground', () => {
     assert.ok(parentIndex > callerIndex);
   });
 
-  it('does not stack the rules block when rebuilding a persisted background on retry', () => {
+  it('reuses the persisted built background verbatim on retry instead of rebuilding it', () => {
     const firstPass = buildReviewBackground(baseAgent, { reviewBackground: 'Check auth flows' }, null);
     const retried = buildReviewBackground(
       { ...baseAgent, review: { ...baseAgent.review!, background: firstPass } },
-      null,
+      { reviewBackground: 'Check auth flows' },
       null,
     );
+    assert.equal(retried, firstPass);
     assert.equal(retried.split(DEFAULT_REVIEW_RULES).length, 2);
-    assert.match(retried, /Current Request Context: Repository Review Instructions: Check auth flows/);
+    assert.ok(!retried.includes('Current Request Context: Repository Review Instructions'));
+
+    // A changed override must not re-embed a fresh section over the stale one.
+    const changedOverride = buildReviewBackground(
+      { ...baseAgent, review: { ...baseAgent.review!, background: firstPass } },
+      { reviewBackground: 'Check tenant isolation' },
+      null,
+    );
+    assert.equal(changedOverride, firstPass);
+    assert.ok(!changedOverride.includes('Check tenant isolation'));
   });
 
   it('includes parent transcript when provided', () => {
