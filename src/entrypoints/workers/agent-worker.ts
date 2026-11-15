@@ -2,6 +2,7 @@ import fs from 'fs';
 import { createJsonStore } from '../../lib/json-store';
 import { getLogger } from '../../lib/logger';
 import { registerProcessHandlers } from '../../lib/process-handlers';
+import { runChildCleanups } from '../../lib/child-cleanup';
 import { buildInteractiveState, INTERACTIVE_ACTIVE_STATUSES } from '../../lib/interactive-state';
 import { buildLoopState, LOOP_ACTIVE_STATUSES } from '../../lib/loop-state';
 import { BATCH_ACTIVE_STATUSES } from '../../domains/agents/agent.types';
@@ -29,12 +30,34 @@ export async function runJob(job: AgentJob): Promise<void> {
   }
 }
 
+/**
+ * Kill owned child processes (OpenCode serve, bootstrap process groups) when
+ * the worker is told to stop, so they cannot outlive it and keep writing into
+ * the workspace (which breaks the next clone on retry).
+ */
+function registerTerminationHandlers(log: ReturnType<typeof getLogger>): void {
+  let terminating = false;
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (terminating) {
+      return;
+    }
+    terminating = true;
+    log.warn({ signal }, 'Agent worker received termination signal; cleaning up child processes');
+    void runChildCleanups().finally(() => {
+      process.exit(signal === 'SIGINT' ? 130 : 143);
+    });
+  };
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
+}
+
 async function main(): Promise<void> {
   const log = getLogger();
   registerProcessHandlers(log, {
     exitOnUncaughtException: true,
     exitOnUnhandledRejection: true,
   });
+  registerTerminationHandlers(log);
 
   const jobFile = process.env.LOCALAGENT_JOB_FILE;
   if (!jobFile || !fs.existsSync(jobFile)) {
@@ -55,6 +78,7 @@ async function main(): Promise<void> {
 
   try {
     await runJob(job);
+    await runChildCleanups();
     process.exit(0);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Agent worker failed';
@@ -112,6 +136,7 @@ async function main(): Promise<void> {
     }
 
     agentLog.error({ err }, message);
+    await runChildCleanups();
     process.exit(1);
   }
 }

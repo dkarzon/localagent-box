@@ -239,8 +239,11 @@ describe('createOpenCodeSessionRunner (v2 API)', () => {
       const child = Object.assign(new EventEmitter(), {
         stdout: new EventEmitter(),
         stderr: new EventEmitter(),
-        killed: true,
-        kill: () => true,
+        killed: false,
+        kill() {
+          setImmediate(() => child.emit('exit', 0, null));
+          return true;
+        },
       });
       if (args[0] === 'serve') serveChild = child;
       setImmediate(() => {

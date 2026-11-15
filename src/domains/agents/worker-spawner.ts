@@ -33,6 +33,8 @@ export interface WorkerSpawner {
   start: (agent: Agent) => void;
   kill: (agentId: string) => ChildProcess | undefined;
   has: (agentId: string) => boolean;
+  /** True while a killed worker for this agent has not yet exited. */
+  isTerminating: (agentId: string) => boolean;
   activeCount: () => number;
   shutdown: () => Promise<void>;
 }
@@ -50,13 +52,33 @@ export function createWorkerSpawner(options: {
   fs?: FsLike;
   path?: typeof path;
   spawn?: SpawnFn;
-  onWorkerExit: (agentId: string, code: number | null, signal: NodeJS.Signals | null) => void;
+  onWorkerExit: (
+    agentId: string,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    info: { terminated: boolean },
+  ) => void;
   onWorkerError: (agentId: string, message: string) => void;
 }): WorkerSpawner {
   const fsImpl = options.fs || fs;
   const pathImpl = options.path || path;
   const spawnImpl = options.spawn || spawn;
   const workers = new Map<string, ChildProcess>();
+  // Killed workers stay here until they actually exit, so a retry cannot
+  // start a new worker on the same workspace while the old one tears down.
+  const terminating = new Map<string, ChildProcess>();
+
+  /** Forget `child` for `agentId`; returns true if it had been killed. */
+  function forget(agentId: string, child: ChildProcess): boolean {
+    if (terminating.get(agentId) === child) {
+      terminating.delete(agentId);
+      return true;
+    }
+    if (workers.get(agentId) === child) {
+      workers.delete(agentId);
+    }
+    return false;
+  }
 
   function pumpStream(stream: NodeJS.ReadableStream | null | undefined, logPath: string): void {
     stream?.on('data', (chunk: Buffer) => {
@@ -136,22 +158,28 @@ export function createWorkerSpawner(options: {
     pumpStream(child.stderr, logPath);
 
     child.on('exit', (code, signal) => {
-      workers.delete(agent.agentId);
-      options.onWorkerExit(agent.agentId, code, signal);
+      const terminated = forget(agent.agentId, child);
+      options.onWorkerExit(agent.agentId, code, signal, { terminated });
     });
 
     child.on('error', (err) => {
-      workers.delete(agent.agentId);
+      forget(agent.agentId, child);
       options.onWorkerError(agent.agentId, err.message);
     });
   }
 
   function kill(agentId: string): ChildProcess | undefined {
     const child = workers.get(agentId);
-    if (child && !child.killed) {
-      child.kill('SIGTERM');
+    if (!child) {
+      return undefined;
     }
     workers.delete(agentId);
+    if (child.exitCode == null && child.signalCode == null) {
+      terminating.set(agentId, child);
+      if (!child.killed) {
+        child.kill('SIGTERM');
+      }
+    }
     return child;
   }
 
@@ -159,10 +187,11 @@ export function createWorkerSpawner(options: {
     start,
     kill,
     has: (agentId) => workers.has(agentId),
+    isTerminating: (agentId) => terminating.has(agentId),
     activeCount: () => workers.size,
     shutdown: () => {
       getLogger().info({ workerCount: workers.size }, 'Shutting down agent workers');
-      const children = [...workers.values()];
+      const children = [...workers.values(), ...terminating.values()];
 
       for (const child of children) {
         if (!child.killed) {
@@ -171,6 +200,7 @@ export function createWorkerSpawner(options: {
       }
 
       workers.clear();
+      terminating.clear();
 
       if (children.length === 0) {
         return Promise.resolve();

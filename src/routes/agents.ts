@@ -99,6 +99,23 @@ const handleManualFix = withErrorHandling(async (_req, res, ctx, agentId, findin
   });
 });
 
+const handleManualFixBatch = withErrorHandling(async (req, res, ctx, agentId) => {
+  const body = await readJsonBody(req);
+  const rawIds = Array.isArray(body.findingIds) ? (body.findingIds as unknown[]) : null;
+  const findingIds = (rawIds ?? []).map((findingId) => (typeof findingId === 'string' ? findingId.trim() : ''));
+  if (rawIds === null || findingIds.length === 0 || findingIds.some((findingId) => findingId === '')) {
+    throw new CodedError('findingIds must be an array of non-empty strings', 'VALIDATION_ERROR');
+  }
+  const result = await ctx.agentManager.createManualFixBatch(agentId, findingIds);
+  sendJson(res, 201, {
+    agentId,
+    findingIds: result.findings.map((finding) => finding.id),
+    agent: result.agent,
+    findings: result.findings,
+    staleReview: result.staleReview,
+  });
+});
+
 const handleResumeAutofix = withErrorHandling(async (_req, res, ctx, agentId) => {
   const result = await ctx.agentManager.resumeAutomaticChain(agentId);
   sendJson(res, 200, { agentId, ...result });
@@ -248,6 +265,15 @@ const agentsRoute: Route = {
         return;
       }
       await handleResumeAutofix(req, res, ctx, resumeAutofixMatch[1]);
+      return;
+    }
+
+    const manualFixBatchMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/findings\/fix$/);
+    if (manualFixBatchMatch && req.method === 'POST') {
+      if (!requireAuth(req, res)) {
+        return;
+      }
+      await handleManualFixBatch(req, res, ctx, decodePathParam(manualFixBatchMatch[1]));
       return;
     }
 

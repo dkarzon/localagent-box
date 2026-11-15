@@ -4,6 +4,7 @@ import type { Repo, RepoAutofixSettings } from './types';
 export interface RepoSettingsUpdates {
   autoReviewPullRequests?: boolean | null;
   autofix?: Partial<RepoAutofixSettings>;
+  webhookUrl?: string | null;
 }
 
 export async function updateRepoSettings(

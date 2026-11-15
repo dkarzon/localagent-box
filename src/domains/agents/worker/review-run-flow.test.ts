@@ -5,7 +5,12 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import type { Agent, AgentJob, AppConfig } from '../../../types';
 import { createJsonStore } from '../../../lib/json-store';
-import { completeReviewCheck, resolveReviewRunConfig, runReviewJob } from './review-run-flow';
+import {
+  REVIEW_SUMMARY_COMMENT_MARKER,
+  completeReviewCheck,
+  resolveReviewRunConfig,
+  runReviewJob,
+} from './review-run-flow';
 import type { WorkerContext } from './worker-context';
 
 describe('resolveReviewRunConfig', () => {
@@ -169,6 +174,7 @@ function makeFlowHarness(root: string, expectedSha: string | null): FlowHarness 
       },
       createPullRequestReview: async () => ({ id: '1', html_url: 'x' }),
       createPullRequestReviewComment: async () => ({ id: '2', html_url: 'x' }),
+      upsertStickyIssueComment: async () => ({ id: 900, html_url: 'x', created: true }),
       listPullRequestReviewComments: async () => postedReviewComments,
       createPullRequestReviewCommentWithId: undefined,
     },
@@ -371,6 +377,129 @@ describe('runReviewJob findings persistence', () => {
     assert.ok(log.includes('could not map a GitHub comment to finding ordinal 0'));
   });
 
+  it('posts the summary to the sticky comment and line findings as a short review', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [
+        { content: 'Line issue', severity: 'high', path: 'a.ts', start_line: 3, end_line: 4 },
+      ],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    (harness.ctx as { repo: unknown }).repo = {
+      repoId: 'r1',
+      owner: 'o',
+      name: 'n',
+      defaultBranch: 'main',
+      cloneUrl: '',
+      registeredAt: '',
+      lastVerifiedAt: null,
+      lastVerifyStatus: null,
+      lastVerifyMessage: null,
+      autoReviewPullRequests: null,
+    };
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.findPullRequestByHead = async () => ({ number: 7, head: { sha: 'sha123' } });
+    const reviews: Array<{ body: string; comments?: unknown[] }> = [];
+    githubApp.createPullRequestReview = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      _prNumber: number,
+      input: { body: string; comments?: unknown[] },
+    ) => {
+      reviews.push(input);
+      return { id: '1', html_url: 'x' };
+    };
+    const summaries: Array<{ marker: string; body: string; prNumber: number }> = [];
+    githubApp.upsertStickyIssueComment = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      prNumber: number,
+      input: { marker: string; body: string },
+    ) => {
+      summaries.push({ ...input, prNumber });
+      return { id: 900, html_url: 'x', created: false };
+    };
+
+    await runReviewJob(harness.ctx);
+
+    assert.equal(reviews.length, 1);
+    assert.equal(reviews[0].comments?.length, 1);
+    assert.doesNotMatch(reviews[0].body, /## Code Review/);
+
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].prNumber, 7);
+    assert.equal(summaries[0].marker, REVIEW_SUMMARY_COMMENT_MARKER);
+    assert.match(summaries[0].body, /^## Code Review/);
+    assert.doesNotMatch(summaries[0].body, /Line issue/, 'line findings stay out of the summary');
+
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(log.includes('summary comment updated'));
+  });
+
+  it('folds all findings into the sticky summary when line comments fail', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      comments: [
+        { content: 'Line issue', severity: 'high', path: 'a.ts', start_line: 3, end_line: 4 },
+      ],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    (harness.ctx as { repo: unknown }).repo = {
+      repoId: 'r1',
+      owner: 'o',
+      name: 'n',
+      defaultBranch: 'main',
+      cloneUrl: '',
+      registeredAt: '',
+      lastVerifiedAt: null,
+      lastVerifyStatus: null,
+      lastVerifyMessage: null,
+      autoReviewPullRequests: null,
+    };
+    const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
+    githubApp.findPullRequestByHead = async () => ({ number: 7, head: { sha: 'sha123' } });
+    githubApp.createPullRequestReview = async () => {
+      throw new Error('line could not be resolved');
+    };
+    const summaries: string[] = [];
+    githubApp.upsertStickyIssueComment = async (
+      _config: unknown,
+      _owner: string,
+      _repoName: string,
+      _prNumber: number,
+      input: { body: string },
+    ) => {
+      summaries.push(input.body);
+      return { id: 900, html_url: 'x', created: true };
+    };
+
+    await runReviewJob(harness.ctx);
+
+    assert.equal(summaries.length, 1);
+    assert.match(summaries[0], /### Findings/);
+    assert.match(summaries[0], /Line issue/);
+
+    const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
+    assert.equal(agent?.status, 'completed');
+    assert.equal(agent?.result?.warning, undefined);
+  });
+
   it('keeps findings persisted and unlinked when GitHub posting fails', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
     cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -401,6 +530,9 @@ describe('runReviewJob findings persistence', () => {
     const githubApp = (harness.ctx as unknown as { githubApp: Record<string, unknown> }).githubApp;
     githubApp.findPullRequestByHead = async () => ({ number: 7, head: { sha: 'sha123' } });
     githubApp.createPullRequestReview = async () => {
+      throw new Error('posting down');
+    };
+    githubApp.upsertStickyIssueComment = async () => {
       throw new Error('posting down');
     };
 
@@ -889,7 +1021,7 @@ describe('runReviewJob check-run lifecycle', () => {
     };
 
     const postedBodies: Array<Record<string, unknown>> = [];
-    githubApp.createPullRequestReview = async (
+    githubApp.upsertStickyIssueComment = async (
       _config: unknown,
       _owner: string,
       _repoName: string,
@@ -897,13 +1029,13 @@ describe('runReviewJob check-run lifecycle', () => {
       input: Record<string, unknown>,
     ) => {
       postedBodies.push(input);
-      return { id: '9', html_url: 'x' };
+      return { id: 9, html_url: 'x', created: true };
     };
 
     await runReviewJob(harness.ctx);
 
     assert.equal(lookupCount, 2, 'PR lookup should be retried after the transient failure');
-    assert.equal(postedBodies.length, 1, 'review comments should post after the retry');
+    assert.equal(postedBodies.length, 1, 'summary comment should post after the retry');
 
     const agent = harness.agentsStore.load().agents.find((entry) => entry.agentId === 'rev1');
     assert.equal(agent?.status, 'completed');

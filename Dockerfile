@@ -46,7 +46,7 @@ COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
 
 RUN npm install -g @opencode/cli@2.2.7
-RUN npm install -g @alibaba-group/open-code-review@v1.13.3
+RUN npm install -g @alibaba-group/open-code-review@v1.13.10
 
 # corepack: required by the nodejs-pnpm / nodejs-yarn bootstrap profiles.
 # Not bundled with modern node: images, so install and enable it, then

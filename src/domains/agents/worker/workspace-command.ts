@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { registerChildCleanup } from '../../../lib/child-cleanup';
 
 export const DEFAULT_WORKSPACE_COMMAND_TIMEOUT_MS = 120_000;
 export const MAX_WORKSPACE_COMMAND_OUTPUT_LINES = 50;
@@ -76,6 +77,7 @@ export function runWorkspaceCommand(
         return;
       }
       settled = true;
+      unregisterCleanup();
       clearTimeout(timer);
       clearTimeout(killGraceTimer);
       resolve(result);
@@ -96,6 +98,10 @@ export function runWorkspaceCommand(
         child.kill(signal);
       }
     };
+
+    // If the worker is terminated mid-command, kill the whole process group
+    // (it is detached, so it would not receive the worker's signal).
+    const unregisterCleanup = registerChildCleanup(() => killProcessTree('SIGKILL'));
 
     child.stdout?.on('data', appendChunk);
     child.stderr?.on('data', appendChunk);

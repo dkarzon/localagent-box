@@ -239,7 +239,7 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `githubAppPrivateKey` | PEM private key *(sent as `***` in GET; omit or send `***` on PUT to keep existing key)* |
 | `gitUserName` | Commit author name |
 | `gitUserEmail` | Commit author email |
-| `webhookUrl` | Optional HTTP(S) URL; POST JSON on terminal agent status (`agent.completed`, `agent.failed`, `agent.cancelled`) |
+| `webhookUrl` | Optional HTTP(S) URL; POST JSON on terminal agent status (`agent.completed`, `agent.failed`, `agent.cancelled`). Global default; per-repo override on the Repositories page wins for that repo's agents |
 | `batchAutoApprovePermissions` | When true (default), batch agents auto-approve OpenCode tool permissions via per-agent `opencode.json` |
 | `loopAutoApprovePermissions` | When true (default), loop agents auto-approve tool permissions |
 | `interactiveAutoApprovePermissions` | When true, interactive agents auto-approve tool permissions (default false) |
@@ -485,7 +485,7 @@ Loop agents expose `agent.loop` on `GET /agents/:id` with fields such as `iterat
 
 ### Webhooks
 
-When `webhookUrl` is set, the server POSTs JSON to that URL when an agent reaches a terminal status. Payload shape: `{ event, agent, timestamp }` where `event` is `agent.completed`, `agent.failed`, or `agent.cancelled`.
+When `webhookUrl` is set, the server POSTs JSON to that URL when an agent reaches a terminal status. Payload shape: `{ event, agent, timestamp }` where `event` is `agent.completed`, `agent.failed`, or `agent.cancelled`. Individual repositories can override the global endpoint with their own `webhookUrl` (via the Repositories page or `PUT /api/v1/repos/{repoId}`); events for agents in that repo are sent to the per-repo endpoint, falling back to the global URL when the repo has none.
 
 ### Pull requests
 

@@ -48,7 +48,9 @@ Each agent run is a child Node process (spawned via `worker-spawner.ts`) that cl
 
 If you configure `webhookUrl`, localagent-box will `POST` a JSON payload to it whenever an agent finishes. The only validation is that the URL is `http://` or `https://` (`src/lib/webhook.ts`) — there is no blocklist for internal/link-local addresses (e.g. `169.254.169.254`, `host.docker.internal`, RFC1918 ranges). A misconfigured or malicious `webhookUrl` can be used to probe or hit internal services reachable from the container/host.
 
-**Implication:** only set `webhookUrl` to an endpoint you control, and be aware that anyone with access to the mutating config API can point it anywhere on the reachable network.
+The same applies to the per-repo `webhookUrl` override (`PUT /api/v1/repos/{repoId}`), which takes priority over the global setting for that repo's agents.
+
+**Implication:** only set `webhookUrl` (global or per-repo) to an endpoint you control, and be aware that anyone with access to the mutating config or repo API can point it anywhere on the reachable network.
 
 ### 6. No inbound GitHub webhook signature verification
 

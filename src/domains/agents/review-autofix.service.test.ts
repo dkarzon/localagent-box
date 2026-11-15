@@ -591,6 +591,248 @@ describe('createManualFix', () => {
   });
 });
 
+describe('createManualFixBatch', () => {
+  function availableFinding(ordinal: number, overrides: Partial<ReviewFindingRecord> = {}): ReviewFindingRecord {
+    return finding({
+      id: `review1:finding:${ordinal}`,
+      ordinal,
+      fixStatus: 'available',
+      assignedAgentId: null,
+      fixedAt: null,
+      reviewedSha: 'sha-old',
+      ...overrides,
+    });
+  }
+
+  function pendingGithub(overrides: Partial<ReviewFindingRecord['github']> = {}) {
+    return {
+      reviewId: '1',
+      commentId: 42,
+      commentUrl: 'https://example.com/comment/42',
+      threadId: null,
+      resolutionStatus: 'pending' as const,
+      resolutionError: null,
+      resolvedAt: null,
+      ...overrides,
+    };
+  }
+
+  it('creates exactly one agent for the whole selection and assigns every finding', async () => {
+    const ctx = setup({ findings: [availableFinding(0), availableFinding(1), availableFinding(2)] });
+    ctx.branches = ['feature'];
+
+    const result = await ctx.service.createManualFixBatch('review1', [
+      'review1:finding:0',
+      'review1:finding:1',
+      'review1:finding:2',
+    ]);
+
+    assert.deepEqual(ctx.calls.created.length, 1);
+    const body = ctx.calls.created[0]!;
+    assert.equal(body.mode, 'batch');
+    assert.equal(body.agentBranch, 'feature');
+    assert.equal(body.useExistingBranch, true);
+    assert.deepEqual((body.autofix as { kind: string }).kind, 'manual');
+    assert.deepEqual((body.autofix as { findingIds: string[] }).findingIds, [
+      'review1:finding:0',
+      'review1:finding:1',
+      'review1:finding:2',
+    ]);
+    assert.match(body.prompt as string, /review1:finding:1/);
+
+    assert.equal(result.agent.agentId, 'fix1');
+    assert.equal(result.findings.length, 3);
+    const persisted = ctx.repository.readReviewFindings('review1');
+    for (const entry of persisted ?? []) {
+      assert.equal(entry.fixStatus, 'assigned');
+      assert.equal(entry.assignedAgentId, 'fix1');
+    }
+  });
+
+  it('collapses duplicate IDs so each finding is assigned once', async () => {
+    const ctx = setup({ findings: [availableFinding(0), availableFinding(1)] });
+    ctx.branches = ['feature'];
+
+    const result = await ctx.service.createManualFixBatch('review1', [
+      'review1:finding:0',
+      'review1:finding:0',
+      'review1:finding:1',
+    ]);
+
+    assert.deepEqual(ctx.calls.created.length, 1);
+    assert.deepEqual((ctx.calls.created[0]!.autofix as { findingIds: string[] }).findingIds, [
+      'review1:finding:0',
+      'review1:finding:1',
+    ]);
+    assert.equal(result.findings.length, 2);
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.deepEqual(
+      persisted?.map((entry) => [entry.fixStatus, entry.assignedAgentId]),
+      [
+        ['assigned', 'fix1'],
+        ['assigned', 'fix1'],
+      ],
+    );
+  });
+
+  it('rejects a selection containing an assigned finding and assigns nothing', async () => {
+    const ctx = setup({
+      findings: [
+        availableFinding(0),
+        availableFinding(1, { fixStatus: 'assigned', assignedAgentId: 'manual-1' }),
+        availableFinding(2),
+      ],
+    });
+    ctx.branches = ['feature'];
+
+    await assert.rejects(
+      () =>
+        ctx.service.createManualFixBatch('review1', [
+          'review1:finding:0',
+          'review1:finding:1',
+          'review1:finding:2',
+        ]),
+      (err: unknown) => err instanceof CodedError && err.code === 'DUPLICATE',
+    );
+
+    assert.deepEqual(ctx.calls.created, []);
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.deepEqual(
+      persisted?.map((entry) => [entry.fixStatus, entry.assignedAgentId]),
+      [
+        ['available', null],
+        ['assigned', 'manual-1'],
+        ['available', null],
+      ],
+    );
+  });
+
+  it('rejects an unknown ID without creating an agent', async () => {
+    const ctx = setup({ findings: [availableFinding(0)] });
+    ctx.branches = ['feature'];
+
+    await assert.rejects(
+      () => ctx.service.createManualFixBatch('review1', ['review1:finding:0', 'review1:finding:99']),
+      (err: unknown) => err instanceof CodedError && err.code === 'NOT_FOUND',
+    );
+    assert.deepEqual(ctx.calls.created, []);
+    assert.equal(ctx.repository.readReviewFindings('review1')?.[0].fixStatus, 'available');
+  });
+
+  it('rejects an empty selection', async () => {
+    const ctx = setup({ findings: [availableFinding(0)] });
+    ctx.branches = ['feature'];
+
+    await assert.rejects(
+      () => ctx.service.createManualFixBatch('review1', []),
+      (err: unknown) => err instanceof CodedError && err.code === 'VALIDATION_ERROR',
+    );
+    assert.deepEqual(ctx.calls.created, []);
+  });
+
+  it('rejects a selection larger than the per-agent bound', async () => {
+    const ids = Array.from({ length: 21 }, (_, index) => `review1:finding:${index}`);
+    const ctx = setup({ findings: ids.map((id, index) => availableFinding(index, { id })) });
+    ctx.branches = ['feature'];
+
+    await assert.rejects(
+      () => ctx.service.createManualFixBatch('review1', ids),
+      (err: unknown) => err instanceof CodedError && err.code === 'VALIDATION_ERROR',
+    );
+    assert.deepEqual(ctx.calls.created, []);
+    assert.deepEqual(
+      ctx.repository.readReviewFindings('review1')?.map((entry) => entry.fixStatus),
+      ids.map(() => 'available'),
+    );
+  });
+
+  it('fixes every selected finding and resolves each linked thread once', async () => {
+    const ctx = setup({
+      findings: [
+        availableFinding(0, { github: pendingGithub({ commentId: 1, threadId: 'thread-1' }) }),
+        availableFinding(1, { github: pendingGithub({ commentId: 2, threadId: 'thread-2' }) }),
+        availableFinding(2, { github: pendingGithub({ commentId: null }) }),
+        availableFinding(3, { github: pendingGithub({ commentId: null }) }),
+      ],
+    });
+    ctx.branches = ['feature'];
+
+    const result = await ctx.service.createManualFixBatch('review1', [
+      'review1:finding:0',
+      'review1:finding:1',
+      'review1:finding:2',
+    ]);
+    ctx.service.handleFixAgentStarted(result.agent.agentId);
+    ctx.repository.update(result.agent.agentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.deepEqual(
+      persisted?.map((entry) => entry.fixStatus),
+      ['fixed', 'fixed', 'fixed', 'available'],
+    );
+    // One resolution per selected finding that has a linked comment (the cached
+    // thread path is used, so no lookups); the unselected finding is untouched.
+    assert.deepEqual(ctx.calls.resolved, ['thread-1', 'thread-2']);
+    assert.deepEqual(ctx.calls.lookups, []);
+    assert.equal(persisted?.[2].github.resolutionStatus, 'pending');
+  });
+
+  it('returns a failed selection to failed when the agent does not push', async () => {
+    const ctx = setup({ findings: [availableFinding(0), availableFinding(1)] });
+    ctx.branches = ['feature'];
+
+    const result = await ctx.service.createManualFixBatch('review1', [
+      'review1:finding:0',
+      'review1:finding:1',
+    ]);
+    ctx.repository.update(result.agent.agentId, { status: 'failed', pushed: false });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.deepEqual(
+      persisted?.map((entry) => entry.fixStatus),
+      ['failed', 'failed'],
+    );
+    assert.deepEqual(ctx.calls.created.filter((entry) => entry.__kind === 'review').length, 0);
+  });
+
+  it('reports staleness when any selected finding was reviewed against an older SHA', async () => {
+    const ctx = setup({
+      findings: [
+        availableFinding(0, { reviewedSha: 'sha-new' }),
+        availableFinding(1, { reviewedSha: 'sha-old' }),
+      ],
+    });
+    ctx.branches = ['feature'];
+    ctx.repository.update('review1', {
+      review: { baseBranch: 'main', headBranch: 'feature', prNumber: 7, headSha: 'sha-new' },
+    });
+
+    const result = await ctx.service.createManualFixBatch('review1', [
+      'review1:finding:0',
+      'review1:finding:1',
+    ]);
+
+    assert.equal(result.staleReview, true);
+    // The headline SHA must not claim the whole selection was reviewed against
+    // the first finding's SHA; per-finding SHAs remain in the payload.
+    const prompt = ctx.calls.created[0]!.prompt as string;
+    assert.doesNotMatch(prompt, /The review ran against sha-/);
+    assert.match(prompt, /reviewed snapshot SHA is unknown/);
+    assert.match(prompt, /"reviewedSha": "sha-old"/);
+  });
+
+  it('names the shared reviewed SHA when the whole selection agrees', async () => {
+    const ctx = setup({ findings: [availableFinding(0), availableFinding(1)] });
+    ctx.branches = ['feature'];
+
+    await ctx.service.createManualFixBatch('review1', ['review1:finding:0', 'review1:finding:1']);
+
+    assert.match(ctx.calls.created[0]!.prompt as string, /The review ran against sha-old\./);
+  });
+});
+
 describe('startAutomaticChain', () => {
   function automaticFinding(ordinal: number): ReviewFindingRecord {
     return finding({

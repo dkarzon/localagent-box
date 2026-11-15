@@ -41,8 +41,15 @@ describe('formatReviewMarkdown', () => {
     assert.match(markdown, /^## Code Review/);
     assert.match(markdown, /No issues found/);
     assert.match(markdown, /Review complete: 0 finding\(s\) across 4 selected item\(s\)\./);
-    assert.match(markdown, /4 files reviewed · 4m11s/);
-    assert.match(markdown, /AgentSessionInfo\.tsx/);
+    assert.match(
+      markdown,
+      /\*\*Files reviewed:\*\* 4 · \*\*Findings:\*\* 0 · \*\*Elapsed:\*\* 4m11s · \*\*Tokens:\*\* 97,264 \(91,736 in \/ 5,528 out\)/,
+    );
+    assert.doesNotMatch(markdown, /### Run stats/);
+    assert.doesNotMatch(markdown, /\| Metric \| Value \|/);
+    assert.doesNotMatch(markdown, /### Coverage/);
+    assert.doesNotMatch(markdown, /Files reviewed successfully/);
+    assert.doesNotMatch(markdown, /AgentSessionInfo\.tsx/);
     assert.match(markdown, /localagent-box · OCR v1\.9\.4/);
     assert.doesNotMatch(markdown, /\[object Object\]/);
     assert.doesNotMatch(markdown, /"status":/);
@@ -99,8 +106,10 @@ describe('formatReviewMarkdown', () => {
     assert.match(markdown, /Review partially complete/);
     assert.match(markdown, /10 of 11 selected item\(s\) failed/);
     assert.match(markdown, /`main` → `typescript`/);
-    assert.match(markdown, /\| Failed \| 10 \|/);
-    assert.match(markdown, /Files that could not be reviewed/);
+    assert.doesNotMatch(markdown, /### Coverage/);
+    assert.match(markdown, /### Files not reviewed/);
+    assert.match(markdown, /\*\*❌ Errored\*\*/);
+    assert.doesNotMatch(markdown, /Skipped/);
     assert.match(markdown, /timeout: file review exceeded its time limit/);
     assert.match(markdown, /GrowthTrackerTabHeaderBlock\.tsx/);
     assert.match(markdown, /LLM retries/);
@@ -108,9 +117,28 @@ describe('formatReviewMarkdown', () => {
     assert.match(markdown, /timeout \(11\)/);
     assert.match(markdown, /Per-file LLM failures/);
     assert.match(markdown, /`GlobalStyles\.d\.ts` \| main_task \| failed/);
-    assert.match(markdown, /Files reviewed successfully/);
-    assert.match(markdown, /utils\/imageSource\.d\.ts/);
+    assert.doesNotMatch(markdown, /Files reviewed successfully/);
+    assert.doesNotMatch(markdown, /utils\/imageSource\.d\.ts/);
     assert.doesNotMatch(markdown, /No issues found/);
+  });
+
+  it('lists skipped (waived) files alongside errored files', () => {
+    const markdown = formatReviewMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 1, comments: 0 },
+      manifest: {
+        coverage: {
+          completed: [{ path: 'src/ok.ts' }],
+          waived: [{ path: 'package-lock.json', reason: 'generated file' }],
+        },
+      },
+    });
+
+    assert.match(markdown, /### Files not reviewed/);
+    assert.match(markdown, /\*\*⏭️ Skipped\*\*/);
+    assert.match(markdown, /- `package-lock\.json` — generated file/);
+    assert.doesNotMatch(markdown, /Errored/);
+    assert.doesNotMatch(markdown, /src\/ok\.ts/);
   });
 
   it('formats findings with line ranges and suggestions', () => {
@@ -356,19 +384,25 @@ describe('severity and category surfacing', () => {
     const markdown = formatReviewMarkdown(sample);
 
     assert.match(markdown, /### Severity & categories/);
-    assert.match(markdown, /\| 🔴 critical \| 1 \|/);
-    assert.match(markdown, /\| 🟡 medium \| 1 \|/);
-    assert.match(markdown, /\| 🔒 Security \| 1 \|/);
-    assert.match(markdown, /\| ⚡ Performance \| 1 \|/);
-    assert.match(markdown, /\| 🎨 Style \| 1 \|/);
+    const lines = markdown.split('\n');
+    const severityHeader = lines.indexOf('| 🔴 critical | 🟡 medium | 🔵 low |');
+    assert.ok(severityHeader >= 0);
+    assert.equal(lines[severityHeader + 1], '| :---: | :---: | :---: |');
+    assert.equal(lines[severityHeader + 2], '| 1 | 1 | 1 |');
+
+    // Categories sort by count; ties keep first-seen order.
+    const categoryHeader = lines.indexOf('| 🎨 Style | 🔒 Security | ⚡ Performance |');
+    assert.ok(categoryHeader >= 0);
+    assert.equal(lines[categoryHeader + 1], '| :---: | :---: | :---: |');
+    assert.equal(lines[categoryHeader + 2], '| 1 | 1 | 1 |');
   });
 
   it('includes the breakdown in the GitHub PR summary body', () => {
     const summary = formatReviewSummaryMarkdown(sample);
 
     assert.match(summary, /### Severity & categories/);
-    assert.match(summary, /\| 🔴 critical \| 1 \|/);
-    assert.match(summary, /\| 🔒 Security \| 1 \|/);
+    assert.match(summary, /\| 🔴 critical \| 🟡 medium \| 🔵 low \|/);
+    assert.match(summary, /\| 🎨 Style \| 🔒 Security \| ⚡ Performance \|/);
     assert.doesNotMatch(summary, /### Findings/);
   });
 

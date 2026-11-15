@@ -20,7 +20,7 @@ Add host-orchestrated autofix support to review sessions. Eligible findings are 
 
 ## Non-goals for v1
 
-- Selecting multiple findings for an ad hoc manual batch.
+- Selecting multiple findings for an ad hoc manual batch — now supported (#44): a selection of actionable findings goes to a single manual fix agent.
 - Determining whether each finding was actually fixed by inspecting agent output.
 - Automatically retrying a failed fix batch.
 - More than one autofix cycle from the same review chain.

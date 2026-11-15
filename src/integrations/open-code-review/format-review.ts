@@ -213,62 +213,63 @@ function headlineFor(
   return `🔍 **${findingCount} finding(s)** across ${filesReviewed} file(s).`;
 }
 
-function appendCoverageSummary(lines: string[], result: OcrReviewEnvelope): void {
-  const coverage = getCoverage(result);
-  if (!coverage) {
-    return;
-  }
-
-  const selected = coverage.selected?.length ?? 0;
-  const completed = coverage.completed?.length ?? 0;
-  const failed = coverage.failed?.length ?? 0;
-  const waived = coverage.waived?.length ?? 0;
-  const reused = coverage.reused?.length ?? 0;
-
-  if (selected + completed + failed + waived + reused === 0) {
-    return;
-  }
-
-  lines.push('', '### Coverage', '');
-  lines.push('| | Count |');
-  lines.push('| --- | ---: |');
-  if (selected > 0) lines.push(`| Selected | ${selected} |`);
-  if (completed > 0) lines.push(`| Completed | ${completed} |`);
-  if (failed > 0) lines.push(`| Failed | ${failed} |`);
-  if (waived > 0) lines.push(`| Waived | ${waived} |`);
-  if (reused > 0) lines.push(`| Reused | ${reused} |`);
-}
-
-function appendRunStats(lines: string[], result: OcrReviewEnvelope): void {
+function appendRunStats(lines: string[], result: OcrReviewEnvelope, filesReviewed: number): void {
   const stats = getRunStats(result);
-  if (!stats) {
-    return;
-  }
 
-  const rows: string[] = [];
-  if (typeof stats.files_reviewed === 'number') {
-    rows.push(`| Files reviewed | ${stats.files_reviewed} |`);
+  const parts: string[] = [];
+  if (filesReviewed > 0) {
+    parts.push(`**Files reviewed:** ${filesReviewed}`);
   }
-  if (typeof stats.comments === 'number') {
-    rows.push(`| Findings | ${stats.comments} |`);
+  if (typeof stats?.comments === 'number') {
+    parts.push(`**Findings:** ${stats.comments}`);
   }
-  if (stats.elapsed) {
-    rows.push(`| Elapsed | ${stats.elapsed} |`);
+  if (stats?.elapsed) {
+    parts.push(`**Elapsed:** ${stats.elapsed}`);
   }
-  const totalTokens = formatNumber(stats.total_tokens);
-  const inputTokens = formatNumber(stats.input_tokens);
-  const outputTokens = formatNumber(stats.output_tokens);
+  const totalTokens = formatNumber(stats?.total_tokens);
+  const inputTokens = formatNumber(stats?.input_tokens);
+  const outputTokens = formatNumber(stats?.output_tokens);
   if (totalTokens) {
     const tokenDetail =
       inputTokens && outputTokens ? ` (${inputTokens} in / ${outputTokens} out)` : '';
-    rows.push(`| Tokens | ${totalTokens}${tokenDetail} |`);
+    parts.push(`**Tokens:** ${totalTokens}${tokenDetail}`);
   }
 
-  if (rows.length === 0) {
+  if (parts.length === 0) {
     return;
   }
 
-  lines.push('', '### Run stats', '', '| Metric | Value |', '| --- | --- |', ...rows);
+  lines.push('', parts.join(' · '));
+}
+
+function appendUnreviewedFiles(lines: string[], result: OcrReviewEnvelope): void {
+  const coverage = getCoverage(result);
+  const failed = coverage?.failed || [];
+  const skipped = coverage?.waived || [];
+  if (failed.length === 0 && skipped.length === 0) {
+    return;
+  }
+
+  lines.push('', '### Files not reviewed', '');
+  const appendGroup = (items: OcrCoverageItem[], label: string, noun: string) => {
+    if (items.length === 0) {
+      return;
+    }
+    lines.push(`**${label}**`, '');
+    for (const item of items.slice(0, 25)) {
+      lines.push(formatFailedItem(item));
+    }
+    if (items.length > 25) {
+      lines.push('', `_…and ${items.length - 25} more ${noun} file(s)._`);
+    }
+    lines.push('');
+  };
+  appendGroup(failed, '❌ Errored', 'errored');
+  appendGroup(skipped, '⏭️ Skipped', 'skipped');
+  // Drop the trailing blank line left by the last group.
+  if (lines[lines.length - 1] === '') {
+    lines.pop();
+  }
 }
 
 function appendBranchRange(lines: string[], result: OcrReviewEnvelope): void {
@@ -544,21 +545,38 @@ function appendSeverityCategoryBreakdown(lines: string[], comments: OcrComment[]
   lines.push('', '### Severity & categories', '');
 
   if (severityRows.length > 0) {
-    lines.push('| Severity | Count |', '| --- | ---: |');
-    for (const { severity, count } of severityRows) {
-      lines.push(`| ${SEVERITY_EMOJI[severity] || ''} ${severity} | ${count} |`);
-    }
+    lines.push(
+      ...formatCountsRow(
+        severityRows.map(({ severity, count }) => ({
+          label: `${SEVERITY_EMOJI[severity] || ''} ${severity}`.trim(),
+          count,
+        })),
+      ),
+    );
   }
 
   if (categoryRows.length > 0) {
     if (severityRows.length > 0) {
       lines.push('');
     }
-    lines.push('| Category | Count |', '| --- | ---: |');
-    for (const { category, count } of categoryRows) {
-      lines.push(`| ${CATEGORY_LABELS[category] || category} | ${count} |`);
-    }
+    lines.push(
+      ...formatCountsRow(
+        categoryRows.map(({ category, count }) => ({
+          label: CATEGORY_LABELS[category] || category,
+          count,
+        })),
+      ),
+    );
   }
+}
+
+/** One-row markdown table: labels as headers, counts beneath. */
+function formatCountsRow(entries: Array<{ label: string; count: number }>): string[] {
+  return [
+    `| ${entries.map((entry) => entry.label).join(' | ')} |`,
+    `| ${entries.map(() => ':---:').join(' | ')} |`,
+    `| ${entries.map((entry) => entry.count).join(' | ')} |`,
+  ];
 }
 
 function buildReviewMarkdownCore(
@@ -576,20 +594,8 @@ function buildReviewMarkdownCore(
 
   lines.push(headlineFor(result, comments, findingCount, filesReviewed, failedCount));
 
-  const statParts: string[] = [];
-  if (filesReviewed > 0) {
-    statParts.push(`${filesReviewed} file${filesReviewed === 1 ? '' : 's'} reviewed`);
-  }
-  if (stats?.elapsed) {
-    statParts.push(stats.elapsed);
-  }
-  if (statParts.length > 0) {
-    lines.push('', statParts.join(' · '));
-  }
-
+  appendRunStats(lines, result, filesReviewed);
   appendBranchRange(lines, result);
-  appendCoverageSummary(lines, result);
-  appendRunStats(lines, result);
   appendSeverityCategoryBreakdown(lines, comments);
 
   if (options.includeFindings && comments.length > 0) {
@@ -607,15 +613,7 @@ function buildReviewMarkdownCore(
     appendUnplacedFindings(lines, options.unplacedComments);
   }
 
-  if (coverage?.failed && coverage.failed.length > 0) {
-    lines.push('', '### Files that could not be reviewed', '');
-    for (const item of coverage.failed.slice(0, 25)) {
-      lines.push(formatFailedItem(item));
-    }
-    if (coverage.failed.length > 25) {
-      lines.push('', `_…and ${coverage.failed.length - 25} more failed file(s)._`);
-    }
-  }
+  appendUnreviewedFiles(lines, result);
 
   if (result.warnings && result.warnings.length > 0) {
     lines.push('', '### Warnings', '');
@@ -627,15 +625,6 @@ function buildReviewMarkdownCore(
 
   appendToolCalls(lines, result);
   appendRetryReport(lines, result);
-
-  const reviewedPaths = getReviewedFilePaths(result);
-  if (reviewedPaths.length > 0) {
-    lines.push('', '<details>', '<summary>Files reviewed successfully</summary>', '');
-    for (const filePath of reviewedPaths) {
-      lines.push(`- \`${filePath}\``);
-    }
-    lines.push('', '</details>');
-  }
 
   const model = result.manifest?.execution?.model || result.llm?.model;
   const ocrVersion = result.manifest?.execution?.ocr_version;

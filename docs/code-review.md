@@ -135,13 +135,14 @@ Eligible findings are sorted by severity (OCR order within a severity), split in
 4. **Resume Remaining Batches** (UI or API) skips the failed batch and creates the next pending one.
 5. After the last successful batch, exactly one autofix-ineligible verification review is created. Verification reviews can never start another chain; their findings still allow individual Manual Fix.
 
-Manual fixes of single findings (below-threshold, unknown severity, stale, no PR) coalesce into one verification review after all related fix agents on the branch drain.
+Manual fixes of single findings (below-threshold, unknown severity, stale, no PR) coalesce into one verification review after all related fix agents on the branch drain. Several actionable findings can also be selected in the findings table and sent to a single manual fix agent — one agent per request, so parallel agents never conflict on the same branch.
 
 ### API
 
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /api/v1/agents/:reviewAgentId/findings` | Structured findings, autofix plan, staleness, verification link |
+| `POST /api/v1/agents/:reviewAgentId/findings/fix` | Create one manual fix agent for several findings (`{"findingIds": [...]}`, up to 20; conflicts when any is not actionable) |
 | `POST /api/v1/agents/:reviewAgentId/findings/:findingId/fix` | Create a one-finding manual fix agent (conflicts while assigned) |
 | `POST /api/v1/agents/:reviewAgentId/autofix/resume` | Resume a paused chain (skips failed batches; `DUPLICATE` on conflict) |
 | `POST /api/v1/agents/:reviewAgentId/findings/:findingId/retry-resolution` | Retry GitHub thread resolution (never creates an agent) |

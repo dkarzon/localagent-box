@@ -16,6 +16,7 @@ import {
 import type { GithubAppService } from '../../services/github-app';
 import type { GitService } from '../../services/git-service';
 import type { OllamaChatService } from '../../services/ollama-client';
+import type { WebhookSender } from '../../lib/webhook';
 import { createConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
 import { createAgentRepository } from './agent.repository';
@@ -105,6 +106,10 @@ function createTestContext(options?: {
   onCreatePullRequest?: () => void;
   ollamaChat?: OllamaChatService;
   capturePullRequest?: (input: { title: string; body: string }) => void;
+  webhookSender?: WebhookSender;
+  repoOverride?: Partial<Repo>;
+  /** Mutable flag: when `fail` is true, repo lookups throw (e.g. repo deleted mid-run). */
+  repoLookup?: { fail: boolean };
   maxConcurrent?: number;
 }): TestContext {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-service-'));
@@ -136,12 +141,14 @@ function createTestContext(options?: {
     path,
   });
 
+  const repoEntry: Repo = { ...testRepo, ...options?.repoOverride };
+
   const repoManager = {
     getRepo: (repoId: string) => {
-      if (repoId !== testRepo.repoId) {
+      if (repoId !== testRepo.repoId || options?.repoLookup?.fail) {
         throw new Error(`Unknown repo: ${repoId}`);
       }
-      return testRepo;
+      return repoEntry;
     },
   } as RepoService;
 
@@ -186,6 +193,7 @@ function createTestContext(options?: {
     }),
     createPullRequestReview: async () => ({ id: '1', html_url: 'https://example.com/review/1' }),
     createPullRequestReviewComment: async () => ({ id: '2', html_url: 'https://example.com/review/comment/2' }),
+    upsertStickyIssueComment: async () => ({ id: 3, html_url: 'https://example.com/comment/3', created: true }),
     listPullRequestReviewComments: async () => [],
     findReviewThreadIdForComment: async () => null,
     resolvePullRequestReviewThread: async (_config, threadId) => ({
@@ -221,6 +229,9 @@ function createTestContext(options?: {
     commitAll: async () => 'deadbeef1234567890',
     pushBranch: async () => {},
     getCommitDiff: async () => null,
+    markRunStart: async () => {},
+    getHeadSha: async () => 'deadbeef1234567890',
+    getCommitsSinceRunStart: async () => ({ commits: 0, filesChanged: 0 }),
   };
 
   const spawned: Array<ReturnType<typeof mockChildProcess>> = [];
@@ -233,6 +244,7 @@ function createTestContext(options?: {
     githubApp,
     gitService,
     ollamaChat: options?.ollamaChat,
+    webhookSender: options?.webhookSender,
     repository,
     spawn: () => {
       const child = mockChildProcess();
@@ -1499,6 +1511,48 @@ describe('createAgentService (shared-branch queue)', () => {
     assert.equal(hasStartedWorker(ctx, second.agentId), false);
   });
 
+  it('retry moves the agent to a fresh workspace and removes the old one', () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const oldWorkspaceDir = ctx.repository.getWorkspaceDir(agent.workspaceId);
+    fs.writeFileSync(path.join(oldWorkspaceDir, 'leftover.txt'), 'x', 'utf8');
+
+    ctx.repository.update(agent.agentId, { status: 'failed', error: 'boom' });
+    ctx.spawned[0].emitExit(1);
+
+    const retried = ctx.service.retryAgent(agent.agentId);
+    assert.notEqual(retried.workspaceId, agent.workspaceId);
+    assert.equal(fs.existsSync(oldWorkspaceDir), false);
+    assert.equal(fs.existsSync(ctx.repository.getWorkspaceDir(retried.workspaceId)), true);
+    const job = JSON.parse(
+      fs.readFileSync(path.join(ctx.repository.getAgentDir(agent.agentId), 'job.json'), 'utf8'),
+    );
+    assert.equal(job.workspaceDir, ctx.repository.getWorkspaceDir(retried.workspaceId));
+  });
+
+  it('does not start a retry until the cancelled worker has actually exited', () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    assert.equal(ctx.spawned.length, 1);
+
+    ctx.service.cancelAgent(agent.agentId);
+    const retried = ctx.service.retryAgent(agent.agentId);
+    assert.equal(retried.status, 'queued');
+    assert.equal(ctx.spawned.length, 1, 'old worker is still exiting');
+
+    ctx.spawned[0].emitExit(null, 'SIGTERM');
+    assert.equal(ctx.spawned.length, 2);
+    assert.equal(ctx.service.getAgent(agent.agentId).status, 'queued');
+  });
+
   it('rejects retry unless the session is failed or cancelled', () => {
     const ctx = createTestContext();
     const agent = ctx.service.createAgent({
@@ -2018,5 +2072,117 @@ describe('review check-run reconciliation', () => {
 
     assert.equal(retried.status, 'queued');
     assert.equal(repository.findById(agentId)?.review, undefined);
+  });
+});
+
+describe('createAgentService (per-repo webhook endpoint)', () => {
+  function makeWebhookCapture(): {
+    webhookSender: WebhookSender;
+    deliveries: Array<{ url: string; data: unknown }>;
+  } {
+    const deliveries: Array<{ url: string; data: unknown }> = [];
+    const webhookSender: WebhookSender = {
+      sendWebhook: async (url, data) => {
+        deliveries.push({ url, data });
+        return undefined;
+      },
+    };
+    return { webhookSender, deliveries };
+  }
+
+  it('falls back to the global webhook url when the repo has no override', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({ webhookSender });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/global-agent');
+    assert.equal((deliveries[0].data as { event: string }).event, 'agent.completed');
+    assert.equal((deliveries[0].data as { agent: Agent }).agent.agentId, agent.agentId);
+  });
+
+  it('delivers to the repo endpoint even when the global url is empty', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({
+      webhookSender,
+      repoOverride: { webhookUrl: 'https://hooks.example.com/repo-agent' },
+    });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/repo-agent');
+  });
+
+  it('prefers the repo override over the configured global url', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({
+      webhookSender,
+      repoOverride: { webhookUrl: 'https://hooks.example.com/repo-agent' },
+    });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/repo-agent');
+  });
+
+  it('falls back to the global url when the repo lookup fails', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const repoLookup = { fail: false };
+    const ctx = createTestContext({
+      webhookSender,
+      repoLookup,
+      repoOverride: { webhookUrl: 'https://hooks.example.com/repo-agent' },
+    });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    repoLookup.fail = true;
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].url, 'https://hooks.example.com/global-agent');
+  });
+
+  it('skips delivery when neither the repo nor the global setting has a url', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({ webhookSender });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'completed',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+    });
+    ctx.spawned[0].emitExit(0);
+
+    assert.equal(deliveries.length, 0);
   });
 });
