@@ -22,13 +22,20 @@ export function buildReviewBackground(
   parentContext?: string | null,
   parentTask?: string | null,
 ): string {
+  // Retry guard: a previous attempt persists its built background (which already
+  // begins with DEFAULT_REVIEW_RULES) into review.background; rebuilds must not
+  // stack the rules block again.
+  const rawCallerBackground = agent.review?.background;
+  const callerBackground =
+    rawCallerBackground && rawCallerBackground.startsWith(DEFAULT_REVIEW_RULES)
+      ? rawCallerBackground.slice(DEFAULT_REVIEW_RULES.length).trim()
+      : rawCallerBackground;
+
   let bg = `${DEFAULT_REVIEW_RULES}\n\n`;
 
   if (repoPromptOverrides?.reviewBackground) {
     bg += `Repository Review Instructions: ${repoPromptOverrides.reviewBackground}\n\n`;
   }
-
-  const callerBackground = agent.review?.background;
   if (callerBackground) {
     bg += `Current Request Context: ${callerBackground}\n\n`;
   }

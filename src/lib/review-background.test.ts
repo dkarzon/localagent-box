@@ -68,6 +68,17 @@ describe('buildReviewBackground', () => {
     assert.ok(parentIndex > callerIndex);
   });
 
+  it('does not stack the rules block when rebuilding a persisted background on retry', () => {
+    const firstPass = buildReviewBackground(baseAgent, { reviewBackground: 'Check auth flows' }, null);
+    const retried = buildReviewBackground(
+      { ...baseAgent, review: { ...baseAgent.review!, background: firstPass } },
+      null,
+      null,
+    );
+    assert.equal(retried.split(DEFAULT_REVIEW_RULES).length, 2);
+    assert.match(retried, /Current Request Context: Repository Review Instructions: Check auth flows/);
+  });
+
   it('includes parent transcript when provided', () => {
     const result = buildReviewBackground(
       { ...baseAgent, review: { ...baseAgent.review!, background: null } },

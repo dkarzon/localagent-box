@@ -486,7 +486,13 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, `Dropped ${rawComments.length - dedupedComments.length} exact duplicate comment(s)`);
   }
   const successfulOcrResult: OcrReviewEnvelope = dedupedComments
-    ? { ...ocrResult, comments: dedupedComments }
+    ? {
+        ...ocrResult,
+        comments: dedupedComments,
+        ...(typeof ocrResult.summary === 'object' && ocrResult.summary !== null
+          ? { summary: { ...ocrResult.summary, comments: dedupedComments.length } }
+          : {}),
+      }
     : ocrResult;
 
   let storedPath = '';

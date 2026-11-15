@@ -54,4 +54,30 @@ describe('dedupeOcrComments', () => {
     assert.equal(kept.length, 1);
     assert.equal(kept[0], a);
   });
+
+  it('keeps same-text comments anchored to different end lines when start_line is absent', () => {
+    const comments: OcrComment[] = [
+      { path: 'src/a.ts', content: 'Same issue.', end_line: 10 },
+      { path: 'src/a.ts', content: 'Same issue.', end_line: 12 },
+    ];
+
+    assert.equal(dedupeOcrComments(comments).length, 2);
+  });
+
+  it('does not throw on malformed comments with non-string fields', () => {
+    const malformed = {
+      path: 'src/a.ts',
+      content: undefined as unknown as string,
+      start_line: 1,
+    } as OcrComment;
+    const badPath = {
+      path: 7 as unknown as string,
+      content: 'Real content.',
+      start_line: 2,
+    } as OcrComment;
+    const ok: OcrComment = { path: 'src/a.ts', content: 'Real content.', start_line: 3 };
+
+    const kept = dedupeOcrComments([malformed, badPath, ok]);
+    assert.equal(kept.length, 3);
+  });
 });

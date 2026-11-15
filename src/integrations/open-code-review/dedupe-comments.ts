@@ -2,10 +2,13 @@ import type { OcrComment } from './types';
 
 /** Identity key for exact-duplicate detection: path, lines, and whitespace-normalized content. */
 function duplicateKey(comment: OcrComment): string {
-  const path = (comment.path || comment.file || '').trim();
+  const pathPart = comment.path || comment.file;
+  const path = typeof pathPart === 'string' ? pathPart.trim() : '';
   const start = typeof comment.start_line === 'number' ? comment.start_line : '';
-  const end = typeof comment.end_line === 'number' ? comment.end_line : start;
-  const content = comment.content.trim().replace(/\s+/g, ' ');
+  const rawEnd = comment.end_line ?? comment.start_line;
+  const end = typeof rawEnd === 'number' ? rawEnd : '';
+  const rawContent = typeof comment.content === 'string' ? comment.content : '';
+  const content = rawContent.trim().replace(/\s+/g, ' ');
   return `${path}\u0000${start}\u0000${end}\u0000${content}`;
 }
 
