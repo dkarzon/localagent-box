@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ReviewAutofixPlan,
   ReviewFindingRecord,
@@ -29,6 +29,11 @@ const fixStatusBadgeVariant: Record<ReviewFindingFixStatus, string> = {
   fixed: 'verified',
   failed: 'error',
 };
+
+/** Fix statuses a row can be selected for a manual fix batch. */
+function isSelectable(finding: ReviewFindingRecord): boolean {
+  return finding.fixStatus === 'available' || finding.fixStatus === 'failed';
+}
 
 function locationLabel(finding: ReviewFindingRecord): string {
   if (!finding.path) return '—';
@@ -85,6 +90,10 @@ interface ReviewFindingsTableProps {
   onManualFix?: ((findingId: string) => void) | null;
   /** Finding ID currently being sent to the manual-fix endpoint. */
   manualFixBusyId?: string | null;
+  /** Present when the caller supports sending a selection to one fix agent. */
+  onManualFixSelected?: (findingIds: string[]) => Promise<boolean> | void;
+  /** True while the batch-selection fix request is in flight. */
+  manualFixSelectedBusy?: boolean;
 }
 
 const chainStatusLabel: Record<ReviewAutofixPlan['chainStatus'], string> = {
@@ -102,6 +111,8 @@ export function ReviewFindingsTable({
   resumeBusy = false,
   onManualFix,
   manualFixBusyId = null,
+  onManualFixSelected,
+  manualFixSelectedBusy = false,
 }: ReviewFindingsTableProps) {
   const [sort, setSort] = useState<TableSort>('severity');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -124,6 +135,62 @@ export function ReviewFindingsTable({
     () => sortFindingsForTable(applyFilters(findings, filters), sort),
     [findings, filters, sort],
   );
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const headerCheckboxRef = useRef<HTMLInputElement>(null);
+
+  // Polling replaces the findings array; drop ids that disappeared or are no
+  // longer selectable (assigned, fixing or fixed rows cannot be re-queued).
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = new Set<string>();
+      for (const finding of findings) {
+        if (prev.has(finding.id) && isSelectable(finding)) next.add(finding.id);
+      }
+      return next.size === prev.size && [...prev].every((id) => next.has(id)) ? prev : next;
+    });
+  }, [findings]);
+
+  const visibleActionable = useMemo(
+    () => visible.filter((finding) => isSelectable(finding)),
+    [visible],
+  );
+  const selectedVisibleCount = visibleActionable.filter((finding) =>
+    selectedIds.has(finding.id),
+  ).length;
+
+  useEffect(() => {
+    const checkbox = headerCheckboxRef.current;
+    if (!checkbox) return;
+    checkbox.indeterminate =
+      selectedVisibleCount > 0 && selectedVisibleCount < visibleActionable.length;
+  }, [selectedIds, visibleActionable, selectedVisibleCount]);
+
+  function toggleSelection(findingId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(findingId)) next.delete(findingId);
+      else next.add(findingId);
+      return next;
+    });
+  }
+
+  function setSelectionForVisible(checked: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const finding of visibleActionable) {
+        if (checked) next.add(finding.id);
+        else next.delete(finding.id);
+      }
+      return next;
+    });
+  }
+
+  async function fixSelected() {
+    if (!onManualFixSelected || selectedIds.size === 0) return;
+    const ok = await onManualFixSelected([...selectedIds]);
+    if (ok) setSelectedIds(new Set());
+  }
 
   if (findings.length === 0) return null;
 
@@ -161,6 +228,19 @@ export function ReviewFindingsTable({
               onClick={onResume}
             >
               {resumeBusy ? 'Resuming…' : 'Resume Remaining Batches'}
+            </button>
+          ) : null}
+          {onManualFixSelected && selectedIds.size > 0 ? (
+            <button
+              type="button"
+              className="inline-flex items-center rounded border border-primary bg-transparent px-3 py-1 text-xs text-primary transition-colors hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={manualFixSelectedBusy}
+              title="Queue one fix agent for the selected findings"
+              onClick={() => {
+                void fixSelected();
+              }}
+            >
+              {manualFixSelectedBusy ? 'Queueing…' : `Fix selected (${selectedIds.size})`}
             </button>
           ) : null}
           <select
@@ -217,6 +297,17 @@ export function ReviewFindingsTable({
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead>
             <tr className="border-b border-surface-container-highest text-xs uppercase tracking-wide text-on-surface-variant">
+              <th className="px-4 py-2 font-medium">
+                <input
+                  ref={headerCheckboxRef}
+                  type="checkbox"
+                  aria-label="Select all visible findings"
+                  checked={
+                    visibleActionable.length > 0 && selectedVisibleCount === visibleActionable.length
+                  }
+                  onChange={(e) => setSelectionForVisible(e.target.checked)}
+                />
+              </th>
               <th className="px-4 py-2 font-medium">Severity</th>
               <th className="px-4 py-2 font-medium">Category</th>
               <th className="px-4 py-2 font-medium">Finding</th>
@@ -232,14 +323,16 @@ export function ReviewFindingsTable({
                 key={finding.id}
                 finding={finding}
                 expanded={expandedId === finding.id}
+                selected={selectedIds.has(finding.id)}
                 onToggle={() => setExpandedId((id) => (id === finding.id ? null : finding.id))}
+                onToggleSelect={() => toggleSelection(finding.id)}
                 onManualFix={onManualFix}
                 manualFixBusy={manualFixBusyId === finding.id}
               />
             ))}
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-on-surface-variant">
+                <td colSpan={8} className="px-4 py-6 text-center text-on-surface-variant">
                   No findings match the current filters.
                 </td>
               </tr>
@@ -254,13 +347,17 @@ export function ReviewFindingsTable({
 function FindingRow({
   finding,
   expanded,
+  selected,
   onToggle,
+  onToggleSelect,
   onManualFix,
   manualFixBusy = false,
 }: {
   finding: ReviewFindingRecord;
   expanded: boolean;
+  selected: boolean;
   onToggle: () => void;
+  onToggleSelect: () => void;
   onManualFix?: ((findingId: string) => void) | null;
   manualFixBusy?: boolean;
 }) {
@@ -268,6 +365,7 @@ function FindingRow({
   const statusVariant = fixStatusBadgeVariant[finding.fixStatus] ?? 'neutral';
   const commentUrl = finding.github.commentUrl;
   const manualFixPending = finding.fixStatus === 'assigned' || finding.fixStatus === 'fixing';
+  const selectable = isSelectable(finding);
 
   return (
     <>
@@ -275,6 +373,18 @@ function FindingRow({
         className="cursor-pointer border-b border-surface-container-highest hover:bg-surface-container/40"
         onClick={onToggle}
       >
+        <td className="px-4 py-2">
+          <input
+            type="checkbox"
+            aria-label={`Select finding ${finding.id}`}
+            checked={selected}
+            disabled={!selectable}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect();
+            }}
+          />
+        </td>
         <td className="px-4 py-2">
           <span
             className={`inline-flex rounded px-2 py-0.5 text-xs ${
@@ -354,7 +464,7 @@ function FindingRow({
       </tr>
       {expanded ? (
         <tr className="border-b border-surface-container-highest bg-surface-container/20">
-          <td colSpan={7} className="px-4 py-4">
+          <td colSpan={8} className="px-4 py-4">
             <div className="grid gap-3 text-sm">
               <div className="whitespace-pre-wrap text-on-surface">{finding.content}</div>
               {finding.existingCode ? (

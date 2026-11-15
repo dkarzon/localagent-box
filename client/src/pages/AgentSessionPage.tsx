@@ -9,6 +9,7 @@ import {
 } from '../api/agents';
 import {
   createManualFix,
+  createManualFixBatch,
   fetchAgentFindings,
   fetchAgentReviewResult,
   resumeAutofixChain,
@@ -153,6 +154,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [findings, setFindings] = useState<AgentFindingsResponse | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
   const [manualFixBusyId, setManualFixBusyId] = useState<string | null>(null);
+  const [manualFixSelectedBusy, setManualFixSelectedBusy] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const desktopHeaderRef = useRef<HTMLDivElement>(null);
   const mobileHeaderRef = useRef<HTMLElement>(null);
@@ -278,6 +280,33 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         setPageStatusVariant('error');
       } finally {
         setManualFixBusyId(null);
+      }
+    },
+    [agentId, token, loadReviewResult],
+  );
+
+  const handleManualFixSelected = useCallback(
+    async (findingIds: string[]) => {
+      if (findingIds.length === 0) return false;
+      setManualFixSelectedBusy(true);
+      setPageStatus('Queueing fix agent…');
+      setPageStatusVariant('');
+      try {
+        const result = await createManualFixBatch(agentId, findingIds, token);
+        setPageStatus(
+          result.staleReview
+            ? `Fix agent queued for ${result.findings.length} findings (reviewed branch head has moved on — agent uses the latest head).`
+            : `Fix agent queued for ${result.findings.length} findings.`,
+        );
+        setPageStatusVariant('success');
+        await loadReviewResult();
+        return true;
+      } catch (err) {
+        setPageStatus(err instanceof Error ? err.message : 'Failed to queue the fix agent');
+        setPageStatusVariant('error');
+        return false;
+      } finally {
+        setManualFixSelectedBusy(false);
       }
     },
     [agentId, token, loadReviewResult],
@@ -894,6 +923,8 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
               resumeBusy={resumeBusy}
               onManualFix={handleManualFix}
               manualFixBusyId={manualFixBusyId}
+              onManualFixSelected={handleManualFixSelected}
+              manualFixSelectedBusy={manualFixSelectedBusy}
             />
           </div>
         ) : null}

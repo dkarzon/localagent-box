@@ -86,6 +86,29 @@ export async function createManualFix(
   );
 }
 
+export interface ManualFixBatchResponse {
+  agentId: string;
+  findingIds: string[];
+  agent: Agent;
+  findings: ReviewFindingRecord[];
+  staleReview: boolean;
+}
+
+export async function createManualFixBatch(
+  agentId: string,
+  findingIds: string[],
+  token: string,
+): Promise<ManualFixBatchResponse> {
+  return apiFetch<ManualFixBatchResponse>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/findings/fix`,
+    {
+      method: 'POST',
+      headers: authHeaders(token, true),
+      body: JSON.stringify({ findingIds }),
+    },
+  );
+}
+
 export async function fetchAgentMessages(
   agentId: string,
   since = 0,

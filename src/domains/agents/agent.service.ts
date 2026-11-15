@@ -48,6 +48,7 @@ import { createAgentRepository, type AgentRepository } from './agent.repository'
 import {
   createReviewAutofixService,
   type ManualFixResult,
+  type ManualFixBatchResult,
   type ReviewAutofixService,
 } from './review-autofix.service';
 import { createAgentQueue } from './agent-queue';
@@ -115,6 +116,7 @@ export interface AgentService {
   };
   retryFindingResolution: ReviewAutofixService['retryFindingResolution'];
   createManualFix: ReviewAutofixService['createManualFix'];
+  createManualFixBatch: ReviewAutofixService['createManualFixBatch'];
   resumeAutomaticChain: ReviewAutofixService['resumeAutomaticChain'];
   restoreOnStartup: () => Promise<void>;
   shutdown: () => Promise<void>;
@@ -1511,6 +1513,10 @@ export function createAgentService(options: {
     retryFindingResolution: reviewAutofix.retryFindingResolution,
     createManualFix: (reviewAgentId: string, findingId: string): Promise<ManualFixResult> =>
       reviewAutofix.createManualFix(reviewAgentId, findingId),
+    createManualFixBatch: (
+      reviewAgentId: string,
+      findingIds: string[],
+    ): Promise<ManualFixBatchResult> => reviewAutofix.createManualFixBatch(reviewAgentId, findingIds),
     resumeAutomaticChain: (reviewAgentId: string): Promise<{ batchIndex: number }> =>
       reviewAutofix.resumeAutomaticChain(reviewAgentId),
     sendMessage,
