@@ -180,7 +180,7 @@ describe('formatReviewMarkdown', () => {
     assert.match(markdown, /`src\/bar\.ts:10`/);
   });
 
-  it('includes collapsible reasoning under findings', () => {
+  it('omits the thinking reasoning block from findings', () => {
     const markdown = formatReviewMarkdown({
       status: 'complete',
       summary: { files_reviewed: 1, comments: 1 },
@@ -189,14 +189,17 @@ describe('formatReviewMarkdown', () => {
           path: 'src/foo.ts',
           content: 'Potential race condition.',
           start_line: 10,
-          thinking: 'The map is written without synchronization.',
+          severity: 'high',
+          category: 'bug',
+          thinking: 'The tool calls failed because I passed individual args instead of a comments array.',
         },
       ],
     });
 
     assert.match(markdown, /Potential race condition\./);
-    assert.match(markdown, /<summary>Reasoning<\/summary>/);
-    assert.match(markdown, /written without synchronization/);
+    assert.match(markdown, /🟠 \*\*high\*\* · 🐛 Bug/);
+    assert.doesNotMatch(markdown, /Reasoning/);
+    assert.doesNotMatch(markdown, /tool calls failed/);
   });
 
   it('formats OCR session markdown with resume hint', () => {
@@ -265,6 +268,23 @@ describe('formatReviewSummaryMarkdown', () => {
     assert.ok(findingsIndex >= 0 && footerIndex >= 0);
     assert.ok(findingsIndex < footerIndex);
   });
+
+  it('omits the reasoning block from the summary-only fallback', () => {
+    const summary = formatReviewSummaryMarkdown({
+      status: 'complete',
+      summary: { files_reviewed: 1, comments: 1 },
+      comments: [
+        {
+          content: 'General concern without a file path.',
+          thinking: 'Irrelevant tool-call chatter.',
+        },
+      ],
+    });
+
+    assert.match(summary, /General concern without a file path\./);
+    assert.doesNotMatch(summary, /Reasoning/);
+    assert.doesNotMatch(summary, /Irrelevant tool-call chatter/);
+  });
 });
 
 describe('partitionReviewComments', () => {
@@ -329,6 +349,24 @@ describe('formatFindingCommentBody', () => {
     assert.match(body, /Use a lock\./);
     assert.match(body, /```suggestion/);
     assert.match(body, /mu\.Lock\(\)/);
+  });
+
+  it('drops thinking but keeps content, badges, and referenced code', () => {
+    const body = formatFindingCommentBody({
+      path: 'src/foo.ts',
+      content: 'Use a lock.',
+      severity: 'high',
+      category: 'bug',
+      existing_code: 'm[key] = value;',
+      thinking: 'Per-call tool chatter that repeats across comments.',
+    });
+
+    assert.match(body, /Use a lock\./);
+    assert.match(body, /🟠 \*\*high\*\* · 🐛 Bug/);
+    assert.match(body, /Referenced code/);
+    assert.match(body, /m\[key\] = value;/);
+    assert.doesNotMatch(body, /Reasoning/);
+    assert.doesNotMatch(body, /tool chatter/);
   });
 });
 

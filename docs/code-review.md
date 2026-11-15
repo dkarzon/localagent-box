@@ -101,9 +101,10 @@ Poll `GET /api/v1/agents/<reviewAgentId>` — `agent.review` includes `baseBranc
 
 OCR receives a merged **background** string built from:
 
-1. **Repo preamble** — `reviewBackground` in `.localagent-box/config.json` (see [repo-config.md](./repo-config.md))
-2. **Caller `background`** on create (API or UI)
-3. **Parent context** — when `parentAgentId` is set: parent task + transcript summary (auto-spawn fills this from the coding session)
+1. **Default review rules** — always first, for every repo: only diff-introduced problems, one posting per distinct issue, race claims must name the `await` that opens the window, no speculative refactor suggestions, and every bug finding must describe a reachable failure. Repo and session sections may extend but not replace them.
+2. **Repo preamble** — `reviewBackground` in `.localagent-box/config.json` (see [repo-config.md](./repo-config.md)), applied after the defaults
+3. **Caller `background`** on create (API or UI)
+4. **Parent context** — when `parentAgentId` is set: parent task + transcript summary (auto-spawn fills this from the coding session)
 
 ## Autofix (review findings)
 

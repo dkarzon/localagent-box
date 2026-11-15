@@ -50,7 +50,7 @@ Replaces the default loop-mode context paragraph, which instructs agents about m
 
 ### `reviewBackground` *(string)*
 
-Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) as repository-level review instructions when running `mode: review` agents. Merged into OCR's `-b` background alongside per-session `background` and parent-agent context. See [code-review.md](./code-review.md).
+Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) as repository-level review instructions when running `mode: review` agents. Applied after the built-in default review rules (diff-only findings, one posting per issue, no speculative refactors, reachable-failure requirement) which always start the `-b` background for every repo, and merged alongside per-session `background` and parent-agent context, so repos extend the defaults. See [code-review.md](./code-review.md).
 
 ## `.localagent-box/setup.sh` — Setup Script
 

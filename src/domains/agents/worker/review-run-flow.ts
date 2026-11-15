@@ -7,6 +7,7 @@ import {
   formatReviewSummaryMarkdown,
   partitionReviewComments,
 } from '../../../integrations/open-code-review/format-review';
+import { dedupeOcrComments } from '../../../integrations/open-code-review/dedupe-comments';
 import { resolveReviewProvider } from '../../../lib/llm-provider';
 import {
   getOcrFileTimeoutMinutes,
@@ -16,7 +17,7 @@ import {
   runOcrReview,
   runOcrSessionShow,
 } from '../../../integrations/open-code-review/runner';
-import type { OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
+import type { OcrComment, OcrReviewEnvelope } from '../../../integrations/open-code-review/types';
 import { extractOcrTokenUsage } from '../../../integrations/open-code-review/token-usage';
 import { buildReviewBackground, readParentTranscriptLines } from '../../../lib/review-background';
 import {
@@ -477,7 +478,16 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
     return;
   }
 
-  const successfulOcrResult: OcrReviewEnvelope = ocrResult;
+  // Exact duplicates are dropped once on the OCR comments so the saved result,
+  // persisted findings, and posted comments stay in step.
+  const rawComments: OcrComment[] | null = Array.isArray(ocrResult.comments) ? ocrResult.comments : null;
+  const dedupedComments = rawComments ? dedupeOcrComments(rawComments) : null;
+  if (rawComments && dedupedComments && dedupedComments.length < rawComments.length) {
+    appendLog(logPath, `Dropped ${rawComments.length - dedupedComments.length} exact duplicate comment(s)`);
+  }
+  const successfulOcrResult: OcrReviewEnvelope = dedupedComments
+    ? { ...ocrResult, comments: dedupedComments }
+    : ocrResult;
 
   let storedPath = '';
   try {

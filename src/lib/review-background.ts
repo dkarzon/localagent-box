@@ -1,9 +1,20 @@
 import type { Agent } from '../types';
 import type { RepoPromptOverrides } from '../types';
 
+/** Default review rules prepended to every OCR review background. */
+export const DEFAULT_REVIEW_RULES = [
+  'Review rules:',
+  '- Only report problems introduced or made worse by this diff. Do not flag pre-existing patterns in unchanged code or shared helpers the diff only calls.',
+  '- Report each distinct issue once, on the line where the fix belongs, even if it is visible from several files.',
+  '- For a race-condition or concurrency claim, name the exact `await` or async boundary that opens the window. Synchronous JavaScript in Node runs to completion without interleaving; do not report races without an await between the check and the write.',
+  '- Do not suggest refactors, helper extraction, or deduplication unless the duplication causes a concrete, reachable defect in this diff.',
+  '- Every bug finding must describe a reachable failure: the input or state and the wrong result.',
+].join('\n');
+
 /**
  * Builds concatenated background context for OCR review:
- * repo preamble, caller context, and parent agent task/transcript when auto-spawned.
+ * default review rules first, then repo preamble, caller context,
+ * and parent agent task/transcript when auto-spawned.
  */
 export function buildReviewBackground(
   agent: Agent,
@@ -11,7 +22,7 @@ export function buildReviewBackground(
   parentContext?: string | null,
   parentTask?: string | null,
 ): string {
-  let bg = '';
+  let bg = `${DEFAULT_REVIEW_RULES}\n\n`;
 
   if (repoPromptOverrides?.reviewBackground) {
     bg += `Repository Review Instructions: ${repoPromptOverrides.reviewBackground}\n\n`;
