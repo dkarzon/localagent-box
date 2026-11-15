@@ -229,6 +229,9 @@ function createTestContext(options?: {
     commitAll: async () => 'deadbeef1234567890',
     pushBranch: async () => {},
     getCommitDiff: async () => null,
+    markRunStart: async () => {},
+    getHeadSha: async () => 'deadbeef1234567890',
+    getCommitsSinceRunStart: async () => ({ commits: 0, filesChanged: 0 }),
   };
 
   const spawned: Array<ReturnType<typeof mockChildProcess>> = [];
