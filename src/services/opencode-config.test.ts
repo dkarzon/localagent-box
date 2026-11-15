@@ -95,33 +95,37 @@ describe('buildOpenCodeConfig', () => {
       opencodeModel: 'llama3.2',
     } as AppConfig;
     const file = buildOpenCodeConfig(config, { codegraph: true });
-    assert.deepEqual(file.mcp?.codegraph, {
+    assert.deepEqual(file.mcp?.servers.codegraph, {
       type: 'local',
       command: ['codegraph', 'serve', '--mcp'],
-      enabled: true,
-      timeout: 15000,
+      disabled: false,
+      timeout: { catalog: 15000 },
     });
   });
 
-  it('omits tools block by default', () => {
+  it('keeps external_directory on ask by default (v2 allows it otherwise)', () => {
     const config = {
       ollamaBaseUrl: 'http://localhost:11434',
       opencodeProvider: 'ollama',
       opencodeModel: 'llama3.2',
     } as AppConfig;
     const file = buildOpenCodeConfig(config);
-    assert.equal(file.tools, undefined);
+    assert.deepEqual(file.permissions, [
+      { action: 'external_directory', resource: '*', effect: 'ask' },
+    ]);
   });
 
-  it('disables the question tool when requested for unattended modes', () => {
+  it('denies the question permission when requested for unattended modes', () => {
     const config = {
       ollamaBaseUrl: 'http://localhost:11434',
       opencodeProvider: 'ollama',
       opencodeModel: 'llama3.2',
     } as AppConfig;
     const file = buildOpenCodeConfig(config, { disableQuestionTool: true });
-    assert.deepEqual(file.tools, { question: false });
-    assert.deepEqual(file.permission, { question: 'deny' });
+    assert.deepEqual(file.permissions, [
+      { action: 'external_directory', resource: '*', effect: 'ask' },
+      { action: 'question', resource: '*', effect: 'deny' },
+    ]);
   });
 
   it('denies question after wildcard allow so auto-approve cannot re-enable it', () => {
@@ -134,10 +138,21 @@ describe('buildOpenCodeConfig', () => {
       autoApprovePermissions: true,
       disableQuestionTool: true,
     });
-    assert.deepEqual(file.permission, {
-      '*': { '*': 'allow' },
-      question: 'deny',
-    });
+    assert.deepEqual(file.permissions, [
+      { action: '*', resource: '*', effect: 'allow' },
+      { action: 'question', resource: '*', effect: 'deny' },
+    ]);
+  });
+
+  it('emits no legacy v1 tools/permission keys', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+    } as AppConfig;
+    const file = buildOpenCodeConfig(config, { autoApprovePermissions: true }) as unknown as Record<string, unknown>;
+    assert.equal(file.tools, undefined);
+    assert.equal(file.permission, undefined);
   });
 });
 
@@ -179,6 +194,36 @@ describe('buildOpenCodeConfig cloud provider', () => {
     const result = service.writeOpenCodeConfig(config);
     assert.ok(result);
     assert.equal(result?.config.model, 'ollama-cloud/gemma4:31b');
+  });
+
+  it('writeOpenCodeConfig references the instructions file by absolute path', () => {
+    const writes: Record<string, string> = {};
+    const fs = {
+      existsSync: () => false,
+      readFileSync: () => '',
+      appendFileSync: () => {},
+      mkdirSync: () => {},
+      writeFileSync: (p: string, data: string) => {
+        writes[p] = data;
+      },
+    };
+    const service = createOpenCodeConfigService({
+      fs: fs as never,
+      path: require('path').posix,
+      configDir: '/agents/a1/xdg/config/opencode',
+    });
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+      systemPrompt: 'Be terse.',
+    } as AppConfig;
+    const result = service.writeOpenCodeConfig(config);
+    const expected = '/agents/a1/xdg/config/opencode/localagent-instructions.md';
+    assert.deepEqual(result?.config.instructions, [expected]);
+    assert.ok(writes[expected]?.includes('Be terse.'));
+    const written = JSON.parse(writes['/agents/a1/xdg/config/opencode/opencode.json'] ?? '{}');
+    assert.deepEqual(written.instructions, [expected]);
   });
 
   it('writeOpenCodeConfig no-ops when selected host is missing', () => {
@@ -236,10 +281,10 @@ describe('buildOpenCodeConfig openai-compatible provider', () => {
 });
 
 describe('buildCodegraphMcpServer', () => {
-  it('matches the official opencode print-config shape', () => {
+  it('matches the OpenCode v2 mcp.servers local shape', () => {
     const server = buildCodegraphMcpServer();
     assert.deepEqual(server.command, ['codegraph', 'serve', '--mcp']);
     assert.equal(server.type, 'local');
-    assert.equal(server.enabled, true);
+    assert.equal(server.disabled, false);
   });
 });

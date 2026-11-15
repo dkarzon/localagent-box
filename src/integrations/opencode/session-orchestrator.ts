@@ -50,6 +50,7 @@ import {
 } from './runner';
 import {
   createOpenCodeSessionRunner,
+  getAgentOpenCodeConfigDir,
   isBatchTurnComplete,
   type OpenCodeServerEvent,
   type OpenCodeSessionRunner,
@@ -155,7 +156,7 @@ export async function runSessionOrchestrator(
   const codegraph = isCodegraphEnabled();
 
   const perAgentConfig = createOpenCodeConfigService({
-    configDir: path.join(agentDir, 'opencode-config'),
+    configDir: getAgentOpenCodeConfigDir(agentDir),
   });
   const disableQuestionTool = mode === 'batch';
   perAgentConfig.writeOpenCodeConfig(runConfig, {
@@ -164,7 +165,7 @@ export async function runSessionOrchestrator(
     disableQuestionTool,
     modelContextLengths: await resolveContextLengthsForRun(runConfig, logPath),
   });
-  const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
+  const opencodeConfigPath = path.join(getAgentOpenCodeConfigDir(agentDir), 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
   if (codegraph) {
     logCodegraphEnabled(logPath);
@@ -782,7 +783,7 @@ export async function startOpenCodeLoopSession(options: {
   const codegraph = isCodegraphEnabled();
 
   const perAgentConfig = createOpenCodeConfigService({
-    configDir: path.join(agentDir, 'opencode-config'),
+    configDir: getAgentOpenCodeConfigDir(agentDir),
   });
   perAgentConfig.writeOpenCodeConfig(runConfig, {
     autoApprovePermissions,

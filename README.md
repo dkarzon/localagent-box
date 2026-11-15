@@ -78,7 +78,7 @@ The repo has two parts: a **TypeScript Node.js API** in `src/` (compiled to `dis
 - **Node.js** ≥ 20
 - **Git** (clone/verify/push)
 - **Ollama** — optional for health checks; required to run agents against a local model
-- **OpenCode CLI** — `npm install -g opencode-ai@v1.18.18` (matches the version pinned in the Dockerfile; needed when starting agent jobs locally)
+- **OpenCode CLI (v2)** — `npm install -g @opencode/cli@2.2.7` (matches the version pinned in the Dockerfile; needed when starting agent jobs locally). Uninstall v1 first (`npm uninstall -g opencode-ai`) — both install an `opencode` binary.
 
 ### Install dependencies
 

@@ -44,7 +44,7 @@ export function collectOpenCodeSpawnDebug(options: {
   if (process.platform === 'win32' && !hasPathSep) {
     const npmRoot = path.join(process.env.APPDATA || '', 'npm');
     const candidates = [
-      path.join(npmRoot, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe'),
+      path.join(npmRoot, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe'),
       path.join(npmRoot, 'opencode.cmd'),
       path.join(npmRoot, 'opencode'),
     ];

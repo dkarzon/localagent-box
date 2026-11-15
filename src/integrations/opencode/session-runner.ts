@@ -73,11 +73,19 @@ export function parseSseDataLine(line: string): OpenCodeServerEvent | null {
   }
 }
 
+/**
+ * Per-agent `opencode.json` dir. Sits at `$XDG_CONFIG_HOME/opencode` so OpenCode finds it
+ * via its default config location as well as `OPENCODE_CONFIG_DIR` (undocumented in v2).
+ */
+export function getAgentOpenCodeConfigDir(agentDir: string): string {
+  return path.join(agentDir, 'xdg', 'config', 'opencode');
+}
+
 export function buildIsolationEnv(agentDir: string): Record<string, string> {
   const xdgShare = path.join(agentDir, 'xdg', 'share');
   const xdgState = path.join(agentDir, 'xdg', 'state');
   const xdgConfig = path.join(agentDir, 'xdg', 'config');
-  const opencodeConfigDir = path.join(agentDir, 'opencode-config');
+  const opencodeConfigDir = getAgentOpenCodeConfigDir(agentDir);
 
   return {
     XDG_DATA_HOME: xdgShare,

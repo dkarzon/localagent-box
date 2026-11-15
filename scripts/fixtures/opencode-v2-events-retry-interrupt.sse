@@ -1,0 +1,27 @@
+data: {"id":"evt_1c9f1035b001yB0NnSPEuM5bwG","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_1c9f106940010Uq746T2GXmimi","created":1794389378708,"type":"session.created","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","slug":"crisp-eagle","version":"2.2.7","projectID":"150392d88d393e42eeb22de52c75489aa4e3d39b","location":{"directory":"/workspace/agents/probe\\oc2work"},"subpath":"","title":"probe","agent":"build","model":{"id":"gemma4:e4b","providerID":"ollama"}},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":0,"version":1}}
+
+data: {"id":"evt_1c9f106a0001JDJ1x8eODY8Jmj","created":1794389378720,"type":"session.inbox.enqueued","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"inboxID":"msg_1c9f1069e001zSJqio67Drvfjo","sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","item":{"type":"user","payload":{"text":"say hi"},"delivery":"steer"}},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":1,"version":1}}
+
+data: {"id":"evt_1c9f106a3001O1p6YbbOgrLSKC","created":1794389378723,"type":"session.execution.started","data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3"},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":2,"version":1}}
+
+data: {"id":"evt_1c9f106ad001YIsVoh6mrY6vVz","created":1794389378733,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","delta":{"core/codemode":"b9321aa27fe3f9eb6662ad886008492dd401333a0049c044c54ac2323b9ead1e","core/skill-guidance":"bff4b06d06a8ef278197b18e0ecdd40180438a31fd0dc99259bfbc6c4e41a3f0","core/date":"8fda1d364fef8b5fbcccb039ef94b1ebe3705b3b3a6d558d6d10f92e84ff9e33","core/environment":"5d1a238b8542c294255f21b94b8dbc3b3b384ed85a209396f39eaea9287457d8"}},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":3,"version":2}}
+
+data: {"id":"evt_1c9f106b0001ZmRM2r7STLDyJh","created":1794389378736,"type":"session.inbox.delivered","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","inboxID":"msg_1c9f1069e001zSJqio67Drvfjo"},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":4,"version":1}}
+
+data: {"id":"evt_1c9f106c4001IQOehVuEr1PqFj","created":1794389378756,"type":"session.step.started","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","agent":"build","model":{"id":"gemma4:e4b","providerID":"ollama","variant":"default"},"assistantMessageID":"msg_1c9f106ba001oTqFxnSnRvDCcJ","started":1794389378751},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":5,"version":1}}
+
+data: {"id":"evt_1c9f106c7001I5eTIXAx4GD3I8","created":1794389378759,"type":"session.retry.scheduled","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","assistantMessageID":"msg_1c9f106ba001oTqFxnSnRvDCcJ","attempt":2,"at":1794389380878,"error":{"type":"provider.transport","message":"ECONNREFUSED: Unable to connect. Is the computer able to access the url?"}},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":6,"version":1}}
+
+data: {"id":"evt_1c9f10f1a001o2FfR8UYGTikKA","created":1794389380890,"type":"session.step.started","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","agent":"build","model":{"id":"gemma4:e4b","providerID":"ollama","variant":"default"},"assistantMessageID":"msg_1c9f106ba001oTqFxnSnRvDCcJ","started":1794389380888},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":7,"version":1}}
+
+data: {"id":"evt_1c9f10f1d001e18LMemwttZShW","created":1794389380893,"type":"session.retry.scheduled","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","assistantMessageID":"msg_1c9f106ba001oTqFxnSnRvDCcJ","attempt":3,"at":1794389385222,"error":{"type":"provider.transport","message":"ECONNREFUSED: Unable to connect. Is the computer able to access the url?"}},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":8,"version":1}}
+
+data: {"id":"evt_1c9f12012001lAz8KkaqbR7WW5","created":1794389385234,"type":"session.step.started","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","agent":"build","model":{"id":"gemma4:e4b","providerID":"ollama","variant":"default"},"assistantMessageID":"msg_1c9f106ba001oTqFxnSnRvDCcJ","started":1794389385232},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":9,"version":1}}
+
+data: {"id":"evt_1c9f12014001q40QJUUvqStvf3","created":1794389385236,"type":"session.retry.scheduled","location":{"directory":"/workspace/agents/probe\\oc2work"},"data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","assistantMessageID":"msg_1c9f106ba001oTqFxnSnRvDCcJ","attempt":4,"at":1794389392917,"error":{"type":"provider.transport","message":"ECONNREFUSED: Unable to connect. Is the computer able to access the url?"}},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":10,"version":1}}
+
+data: {"id":"evt_1c9f12dc8001BxpX1Wt295mVzW","created":1794389388744,"type":"session.execution.interrupted","data":{"sessionID":"ses_e360ef96fffeyJ2Rimr6R96LW3","reason":"user"},"durable":{"aggregateID":"ses_e360ef96fffeyJ2Rimr6R96LW3","seq":11,"version":1}}
