@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildAutoSpawnReviewBackground,
   buildReviewBackground,
+  DEFAULT_REVIEW_RULES,
   readParentTranscriptLines,
 } from './review-background';
 import type { Agent } from '../types';
@@ -43,6 +44,49 @@ describe('buildReviewBackground', () => {
     const result = buildReviewBackground(baseAgent, { reviewBackground: 'Check auth flows' }, null);
     assert.match(result, /Repository Review Instructions: Check auth flows/);
     assert.match(result, /Current Request Context: Focus on security/);
+  });
+
+  it('places default review rules first when no repo config exists', () => {
+    const result = buildReviewBackground(baseAgent, null, null);
+    assert.ok(result.startsWith(DEFAULT_REVIEW_RULES));
+    assert.match(result, /Current Request Context: Focus on security/);
+  });
+
+  it('keeps default rules first and repo, caller, parent sections in order after them', () => {
+    const result = buildReviewBackground(
+      baseAgent,
+      { reviewBackground: 'Check auth flows' },
+      'assistant: done',
+    );
+    const rulesIndex = result.indexOf(DEFAULT_REVIEW_RULES);
+    const repoIndex = result.indexOf('Repository Review Instructions');
+    const callerIndex = result.indexOf('Current Request Context');
+    const parentIndex = result.indexOf('Previous Activity Summary');
+    assert.equal(rulesIndex, 0);
+    assert.ok(repoIndex > rulesIndex);
+    assert.ok(callerIndex > repoIndex);
+    assert.ok(parentIndex > callerIndex);
+  });
+
+  it('reuses the persisted built background verbatim on retry instead of rebuilding it', () => {
+    const firstPass = buildReviewBackground(baseAgent, { reviewBackground: 'Check auth flows' }, null);
+    const retried = buildReviewBackground(
+      { ...baseAgent, review: { ...baseAgent.review!, background: firstPass } },
+      { reviewBackground: 'Check auth flows' },
+      null,
+    );
+    assert.equal(retried, firstPass);
+    assert.equal(retried.split(DEFAULT_REVIEW_RULES).length, 2);
+    assert.ok(!retried.includes('Current Request Context: Repository Review Instructions'));
+
+    // A changed override must not re-embed a fresh section over the stale one.
+    const changedOverride = buildReviewBackground(
+      { ...baseAgent, review: { ...baseAgent.review!, background: firstPass } },
+      { reviewBackground: 'Check tenant isolation' },
+      null,
+    );
+    assert.equal(changedOverride, firstPass);
+    assert.ok(!changedOverride.includes('Check tenant isolation'));
   });
 
   it('includes parent transcript when provided', () => {
