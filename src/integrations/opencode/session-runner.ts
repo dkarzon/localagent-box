@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
@@ -6,35 +7,33 @@ import type { ChildProcess } from 'child_process';
 import type { SpawnFn } from '../../types';
 import { collectOpenCodeSpawnDebug, getOpencodeBin, type OpenCodeModelRef } from './runner';
 import { getServerEnv } from '../../config/env';
+import { createOpenCodeV2EventAdapter, parseV2SseDataLine } from './v2-event-adapter';
 
-/** OpenCode 1.0.218 — minimal types; refine against GET /doc OpenAPI when bumped */
+/** OpenCode v2 server API (`@opencode/cli` 2.x) — schemas in docs/opencodeapi.v2.json. */
 
 export interface OpenCodeSession {
   id: string;
-  version: string;
-  projectID: string;
-  directory: string;
+  projectID?: string;
+  agent?: string;
+  model?: { id: string; providerID: string; variant?: string };
+  location?: { directory?: string };
   title?: string;
-  time: { created: number; updated: number };
+  time?: { created: number; updated: number };
 }
 
 export interface OpenCodeTextPartInput {
   type: 'text';
   text: string;
-  id?: string;
-  synthetic?: boolean;
-  ignored?: boolean;
 }
 
 export interface OpenCodePromptBody {
   parts: OpenCodeTextPartInput[];
   agent?: string;
   model?: OpenCodeModelRef | null;
-  system?: string;
   messageID?: string;
-  noReply?: boolean;
 }
 
+/** Internal (v1-shaped) event — v2 events are translated by `v2-event-adapter.ts`. */
 export interface OpenCodeServerEvent {
   type: string;
   properties: Record<string, unknown>;
@@ -46,31 +45,57 @@ export interface OpenCodeEventSubscription {
   ready: Promise<void>;
 }
 
+export type OpenCodePermissionReply = 'once' | 'always' | 'reject';
+
 export interface OpenCodeSessionRunner {
   port: number;
   baseUrl: string;
   startServer: () => Promise<void>;
-  /** Wait until `/path` succeeds (health alone is insufficient during DB migration). */
+  /** Wait until authenticated `GET /api/info` succeeds. */
   waitForServerReady: (timeoutMs?: number) => Promise<void>;
-  createSession: (title?: string) => Promise<OpenCodeSession>;
+  createSession: (
+    title?: string,
+    options?: { model?: OpenCodeModelRef | null; agent?: string },
+  ) => Promise<OpenCodeSession>;
   sendPromptAsync: (sessionId: string, body: OpenCodePromptBody) => Promise<void>;
-  replyPermission: (requestId: string, reply?: 'once' | 'always' | 'reject') => Promise<void>;
+  replyPermission: (
+    sessionId: string,
+    requestId: string,
+    reply?: OpenCodePermissionReply,
+  ) => Promise<void>;
+  /** Cancel a pending form (v2 replacement for the question tool). */
+  cancelForm: (sessionId: string, formId: string, message?: string) => Promise<void>;
+  /** Status map in the shape `isBatchTurnComplete` expects; idle sessions are omitted. */
+  getSessionStatusMap: () => Promise<Record<string, { type?: string }>>;
   abort: (sessionId: string) => Promise<void>;
   subscribeEvents: (onEvent: (event: OpenCodeServerEvent) => void) => OpenCodeEventSubscription;
   dispose: () => Promise<void>;
 }
 
-export function parseSseDataLine(line: string): OpenCodeServerEvent | null {
-  const prefix = 'data: ';
-  const trimmed = line.trim();
-  if (!trimmed.startsWith(prefix)) {
-    return null;
+/** v2 server HTTP Basic username is fixed. */
+export const OPENCODE_SERVER_USERNAME = 'opencode';
+
+export function generateServerPassword(): string {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+export function buildBasicAuthHeader(password: string): string {
+  return `Basic ${Buffer.from(`${OPENCODE_SERVER_USERNAME}:${password}`).toString('base64')}`;
+}
+
+export function toV2ModelRef(model: OpenCodeModelRef): { id: string; providerID: string } {
+  return { id: model.modelID, providerID: model.providerID };
+}
+
+/** `GET /api/session/active` lists running sessions only; map to the legacy busy/idle shape. */
+export function toSessionStatusMap(
+  active: Record<string, { type?: string } | undefined>,
+): Record<string, { type?: string }> {
+  const out: Record<string, { type?: string }> = {};
+  for (const [id, status] of Object.entries(active)) {
+    out[id] = { type: status?.type === 'running' ? 'busy' : status?.type };
   }
-  try {
-    return JSON.parse(trimmed.slice(prefix.length)) as OpenCodeServerEvent;
-  } catch {
-    return null;
-  }
+  return out;
 }
 
 /**
@@ -95,37 +120,14 @@ export function buildIsolationEnv(agentDir: string): Record<string, string> {
   };
 }
 
-/** Create per-agent XDG dirs before spawning `opencode serve` (required for session storage). */
-export function ensureIsolationDirs(agentDir: string, dataDir?: string): Record<string, string> {
+/** Create per-agent XDG dirs before spawning `opencode serve` (v2 bootstraps its DB in ms). */
+export function ensureIsolationDirs(agentDir: string): Record<string, string> {
   const env = buildIsolationEnv(agentDir);
   for (const dir of Object.values(env)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  seedOpenCodeDataFromTemplate(env.XDG_DATA_HOME, dataDir ?? getServerEnv().dataDir);
   return env;
 }
-
-/** Copy pre-migrated OpenCode data tree from container template (see entrypoint.sh). */
-export function seedOpenCodeDataFromTemplate(xdgDataHome: string, dataDir: string): boolean {
-  const templateDir = path.join(dataDir, 'opencode-template', 'share-opencode');
-  const targetDir = path.join(xdgDataHome, 'opencode');
-  if (fs.existsSync(targetDir)) {
-    try {
-      if (fs.readdirSync(targetDir).length > 0) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-  }
-  if (!fs.existsSync(templateDir)) {
-    return false;
-  }
-  fs.cpSync(templateDir, targetDir, { recursive: true });
-  return true;
-}
-
-type OpenCodeServerPhase = 'spawned' | 'migrating' | 'listening' | 'ready';
 
 export async function findFreePort(basePort = 4100, maxAttempts = 100): Promise<number> {
   for (let i = 0; i < maxAttempts; i++) {
@@ -163,13 +165,17 @@ export function isSessionIdle(
   return status.type !== 'busy' && status.type !== 'retry';
 }
 
-/** Batch turn done after task prompt was busy; idle sessions are omitted from GET /session/status. */
+/** Batch turn done after task prompt was busy; idle sessions are omitted from the status map. */
 export function isBatchTurnComplete(
   statusMap: Record<string, { type?: string } | undefined>,
   sessionId: string,
   taskPromptBusySeen: boolean,
 ): boolean {
   return taskPromptBusySeen && isSessionIdle(statusMap, sessionId);
+}
+
+function sameModel(a: OpenCodeModelRef | null | undefined, b: OpenCodeModelRef | null | undefined): boolean {
+  return a?.providerID === b?.providerID && a?.modelID === b?.modelID;
 }
 
 export function createOpenCodeSessionRunner(options: {
@@ -181,10 +187,16 @@ export function createOpenCodeSessionRunner(options: {
   onServerOutput?: (chunk: string) => void;
   onDebugLog?: (line: string) => void;
   portBase?: number;
+  /** Override for tests; a random per-run password is generated otherwise. */
+  password?: string;
+  fetch?: typeof fetch;
 }): OpenCodeSessionRunner {
   const spawnImpl = options.spawn || spawn;
+  const fetchImpl = options.fetch || fetch;
   const opencodeBin = options.opencodeBin || getOpencodeBin();
   const isolationEnv = ensureIsolationDirs(options.agentDir);
+  const password = options.password || generateServerPassword();
+  const authHeader = buildBasicAuthHeader(password);
   let port = options.port || 0;
   let baseUrl = '';
   let child: ChildProcess | null = null;
@@ -192,44 +204,39 @@ export function createOpenCodeSessionRunner(options: {
   let ssePromise: Promise<void> | null = null;
   const serverOutputTail: string[] = [];
   const SERVER_OUTPUT_TAIL_LINES = 40;
-  let serverPhase: OpenCodeServerPhase = 'spawned';
-  let migrationLogged = false;
-  let dataSeededFromTemplate = false;
+  /** Model/agent currently selected on each session, to switch only when a prompt changes them. */
+  const sessionSelection = new Map<string, { model?: OpenCodeModelRef | null; agent?: string }>();
 
-  function updateServerPhaseFromLine(line: string): void {
-    const lower = line.toLowerCase();
-    if (
-      lower.includes('database migration') ||
-      lower.includes('sqlite-migration') ||
-      lower.includes('performing one time')
-    ) {
-      if (serverPhase === 'spawned') {
-        serverPhase = 'migrating';
-      }
-      if (!migrationLogged) {
-        migrationLogged = true;
-        debugLog(
-          'OpenCode serve phase=migrating (first-run SQLite migration in isolated data dir; may take several minutes)',
-        );
-      }
+  function api(pathname: string, init: RequestInit = {}): Promise<Response> {
+    return fetchImpl(`${baseUrl}${pathname}`, {
+      ...init,
+      headers: {
+        Authorization: authHeader,
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.headers as Record<string, string> | undefined),
+      },
+    });
+  }
+
+  async function apiOrThrow(label: string, pathname: string, init: RequestInit = {}): Promise<Response> {
+    const res = await api(pathname, init);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      debugLog(`OpenCode ${label} failed status=${res.status} body=${text.slice(0, 500)}`);
+      throw new Error(`OpenCode ${label} failed (${res.status}): ${text.slice(0, 300)}`);
     }
-    if (lower.includes('database migration complete')) {
-      debugLog('OpenCode serve: database migration finished (waiting for HTTP endpoints)');
-    }
-    if (lower.includes('server listening on')) {
-      serverPhase = 'listening';
-      debugLog(`OpenCode serve phase=listening line=${line.trim()}`);
-    }
+    return res;
   }
 
   function recordServerOutput(chunk: string): void {
-    options.onServerOutput?.(chunk);
-    for (const line of chunk.split(/\r?\n/)) {
+    // Never surface the server password if OpenCode echoes it.
+    const safe = chunk.split(password).join('***');
+    options.onServerOutput?.(safe);
+    for (const line of safe.split(/\r?\n/)) {
       const trimmed = line.trimEnd();
       if (!trimmed) {
         continue;
       }
-      updateServerPhaseFromLine(trimmed);
       serverOutputTail.push(trimmed);
       if (serverOutputTail.length > SERVER_OUTPUT_TAIL_LINES) {
         serverOutputTail.shift();
@@ -265,12 +272,7 @@ export function createOpenCodeSessionRunner(options: {
     const resolvedPort = await resolvePort();
     baseUrl = `http://127.0.0.1:${resolvedPort}`;
     const serveArgs = ['serve', '--hostname', '127.0.0.1', '--port', String(resolvedPort)];
-
-    const templateDir = path.join(getServerEnv().dataDir, 'opencode-template', 'share-opencode');
-    dataSeededFromTemplate = fs.existsSync(path.join(isolationEnv.XDG_DATA_HOME, 'opencode'));
-    debugLog(
-      `OpenCode template available=${fs.existsSync(templateDir)} dataSeeded=${dataSeededFromTemplate} xdgDataHome=${isolationEnv.XDG_DATA_HOME}`,
-    );
+    const serverEnv = { ...process.env, ...isolationEnv, OPENCODE_PASSWORD: password };
 
     for (const [key, value] of Object.entries(isolationEnv)) {
       debugLog(
@@ -280,7 +282,7 @@ export function createOpenCodeSessionRunner(options: {
 
     try {
       const versionProc = spawnImpl(opencodeBin, ['--version'], {
-        env: { ...process.env, ...isolationEnv },
+        env: serverEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       const version = await new Promise<string>((resolve) => {
@@ -308,7 +310,7 @@ export function createOpenCodeSessionRunner(options: {
     await new Promise<void>((resolve, reject) => {
       child = spawnImpl(opencodeBin, serveArgs, {
         cwd: options.cwd,
-        env: { ...process.env, ...isolationEnv },
+        env: serverEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -343,142 +345,142 @@ export function createOpenCodeSessionRunner(options: {
 
   async function waitForServerReady(timeoutMs?: number): Promise<void> {
     const envTimeout = getServerEnv().opencodeStartupTimeoutMs;
-    let deadline = Date.now() + (timeoutMs ?? envTimeout);
+    const deadline = Date.now() + (timeoutMs ?? envTimeout);
+    const startedAt = Date.now();
     let attempts = 0;
     let lastError = 'unknown';
-    let lastHealth: string | undefined;
-    const startedAt = Date.now();
 
-    debugLog(
-      `OpenCode waiting for server ready via GET /path url=${baseUrl}/path timeoutMs=${timeoutMs ?? envTimeout} seeded=${dataSeededFromTemplate}`,
-    );
+    debugLog(`OpenCode waiting for server ready via GET ${baseUrl}/api/info`);
 
     while (Date.now() < deadline) {
       attempts += 1;
-      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
-
-      if (serverPhase === 'migrating' && deadline - Date.now() < 120_000) {
-        deadline += 300_000;
-        debugLog(
-          `OpenCode extending startup timeout by 300s (DB migration still in progress, elapsed=${elapsedSec}s)`,
-        );
-      }
-
       try {
-        const pathRes = await fetch(`${baseUrl}/path`);
-        const pathText = await pathRes.text();
-        if (pathRes.ok) {
-          serverPhase = 'ready';
+        // Unauthenticated routes (`/path`, `/global/health`) are served by the web UI and
+        // return 200 HTML even before the API is up — only an authed API call proves readiness.
+        const res = await api('/api/info');
+        if (res.ok) {
+          const info = (await res.json()) as { version?: string };
           debugLog(
-            `OpenCode server ready after ${attempts} attempt(s) elapsed=${elapsedSec}s phase=${serverPhase} path=${pathText.slice(0, 400)}`,
+            `OpenCode server ready after ${attempts} attempt(s) elapsed=${Math.round((Date.now() - startedAt) / 1000)}s version=${info.version ?? 'unknown'}`,
           );
           return;
         }
-        lastError = `GET /path HTTP ${pathRes.status} body=${pathText.slice(0, 200)}`;
+        lastError = `GET /api/info HTTP ${res.status}`;
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
       }
-
-      try {
-        const healthRes = await fetch(`${baseUrl}/global/health`);
-        if (healthRes.ok) {
-          const body = (await healthRes.json()) as { healthy?: boolean; version?: string };
-          lastHealth = `healthy=${String(body.healthy)} version=${body.version ?? 'unknown'}`;
-        } else {
-          lastHealth = `HTTP ${healthRes.status}`;
-        }
-      } catch (err) {
-        lastHealth = err instanceof Error ? err.message : String(err);
+      if (attempts === 1 || attempts % 20 === 0) {
+        debugLog(`OpenCode server ready pending: attempt=${attempts} lastError=${lastError}`);
       }
-
-      const shouldLog =
-        attempts === 1 ||
-        attempts % 10 === 0 ||
-        (serverPhase === 'migrating' && attempts % 20 === 0);
-      if (shouldLog) {
-        debugLog(
-          `OpenCode server ready pending: attempt=${attempts} elapsed=${elapsedSec}s phase=${serverPhase} lastPathError=${lastError} health=${lastHealth ?? 'unknown'}`,
-        );
-      }
-
-      await sleep(serverPhase === 'migrating' ? 2000 : 500);
+      await sleep(250);
     }
 
-    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
-    debugLog(
-      `OpenCode server ready failed after ${attempts} attempt(s) elapsed=${elapsedSec}s phase=${serverPhase} lastError=${lastError}`,
-    );
     dumpServerOutput('server ready failed');
     throw new Error(
-      `OpenCode server did not become ready within ${Math.round((deadline - startedAt) / 1000)}s (phase=${serverPhase}, last error: ${lastError})`,
+      `OpenCode server did not become ready within ${Math.round((deadline - startedAt) / 1000)}s (last error: ${lastError})`,
     );
   }
 
-  async function createSession(title?: string): Promise<OpenCodeSession> {
-    debugLog(`OpenCode creating session title=${title ?? '(none)'} url=${baseUrl}/session`);
-    const res = await fetch(`${baseUrl}/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(title ? { title } : {}),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      debugLog(`OpenCode create session failed status=${res.status} body=${text.slice(0, 500)}`);
-      dumpServerOutput(`create session failed (${res.status})`);
-      throw new Error(`Failed to create OpenCode session (${res.status}): ${text}`);
+  async function createSession(
+    title?: string,
+    sessionOptions: { model?: OpenCodeModelRef | null; agent?: string } = {},
+  ): Promise<OpenCodeSession> {
+    debugLog(`OpenCode creating session title=${title ?? '(none)'} directory=${options.cwd}`);
+    let res: Response;
+    try {
+      res = await apiOrThrow('create session', '/api/session', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(title ? { title } : {}),
+          location: { directory: path.resolve(options.cwd) },
+          ...(sessionOptions.model ? { model: toV2ModelRef(sessionOptions.model) } : {}),
+          ...(sessionOptions.agent ? { agent: sessionOptions.agent } : {}),
+        }),
+      });
+    } catch (err) {
+      dumpServerOutput('create session failed');
+      throw err;
     }
-    const session = (await res.json()) as OpenCodeSession;
+    const session = ((await res.json()) as { data: OpenCodeSession }).data;
+    sessionSelection.set(session.id, { model: sessionOptions.model, agent: sessionOptions.agent });
     debugLog(
-      `OpenCode session ready id=${session.id} directory=${session.directory} version=${session.version}`,
+      `OpenCode session ready id=${session.id} directory=${session.location?.directory ?? '(unknown)'} agent=${session.agent ?? '(default)'} model=${session.model ? `${session.model.providerID}/${session.model.id}` : '(default)'}`,
     );
     return session;
   }
 
+  /** v2 prompts carry no model/agent — switch the session first when a prompt asks for another. */
+  async function applySelection(sessionId: string, body: OpenCodePromptBody): Promise<void> {
+    const current = sessionSelection.get(sessionId) ?? {};
+    const sid = encodeURIComponent(sessionId);
+    if (body.model && !sameModel(body.model, current.model)) {
+      await apiOrThrow('switch model', `/api/session/${sid}/model`, {
+        method: 'POST',
+        body: JSON.stringify({ model: toV2ModelRef(body.model) }),
+      });
+      debugLog(`OpenCode session model switched to ${body.model.providerID}/${body.model.modelID}`);
+      current.model = body.model;
+    }
+    if (body.agent && body.agent !== current.agent) {
+      await apiOrThrow('switch agent', `/api/session/${sid}/agent`, {
+        method: 'POST',
+        body: JSON.stringify({ agent: body.agent }),
+      });
+      debugLog(`OpenCode session agent switched to ${body.agent}`);
+      current.agent = body.agent;
+    }
+    sessionSelection.set(sessionId, current);
+  }
+
   async function sendPromptAsync(sessionId: string, body: OpenCodePromptBody): Promise<void> {
-    const textPart = body.parts.find((part) => part.type === 'text');
-    const preview = textPart?.text?.slice(0, 80) ?? '';
+    const text = body.parts.map((part) => part.text).join('\n\n');
+    const preview = text.slice(0, 80);
     debugLog(
-      `OpenCode prompt_async session=${sessionId} agent=${body.agent ?? '(default)'} model=${
+      `OpenCode prompt session=${sessionId} agent=${body.agent ?? '(default)'} model=${
         body.model ? `${body.model.providerID}/${body.model.modelID}` : '(default)'
       } textPreview=${preview}${preview.length >= 80 ? '…' : ''}`,
     );
-    const res = await fetch(`${baseUrl}/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+    await applySelection(sessionId, body);
+    // Returns immediately with the queued user message; the turn streams over SSE.
+    const res = await apiOrThrow('prompt', `/api/session/${encodeURIComponent(sessionId)}/prompt`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ text, ...(body.messageID ? { id: body.messageID } : {}) }),
     });
-    if (res.status !== 204 && !res.ok) {
-      const text = await res.text();
-      debugLog(`OpenCode prompt_async failed status=${res.status} body=${text.slice(0, 500)}`);
-      throw new Error(`Failed to send prompt (${res.status}): ${text}`);
-    }
-    debugLog(`OpenCode prompt_async accepted session=${sessionId} status=${res.status}`);
+    debugLog(`OpenCode prompt accepted session=${sessionId} status=${res.status}`);
   }
 
   async function replyPermission(
+    sessionId: string,
     requestId: string,
-    reply: 'once' | 'always' | 'reject' = 'once',
+    reply: OpenCodePermissionReply = 'once',
   ): Promise<void> {
-    const res = await fetch(`${baseUrl}/permission/${encodeURIComponent(requestId)}/reply`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reply }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      debugLog(
-        `OpenCode permission reply failed requestId=${requestId} status=${res.status} body=${text.slice(0, 500)}`,
-      );
-      throw new Error(`Failed to reply to permission (${res.status}): ${text}`);
-    }
-    debugLog(`OpenCode permission replied requestId=${requestId} reply=${reply}`);
+    await apiOrThrow(
+      'permission reply',
+      `/api/session/${encodeURIComponent(sessionId)}/permission/${encodeURIComponent(requestId)}/reply`,
+      { method: 'POST', body: JSON.stringify({ decision: reply }) },
+    );
+    debugLog(`OpenCode permission replied requestId=${requestId} decision=${reply}`);
+  }
+
+  async function cancelForm(sessionId: string, formId: string, message?: string): Promise<void> {
+    const query = message ? `?message=${encodeURIComponent(message)}` : '';
+    await apiOrThrow(
+      'form cancel',
+      `/api/session/${encodeURIComponent(sessionId)}/form/${encodeURIComponent(formId)}${query}`,
+      { method: 'DELETE' },
+    );
+    debugLog(`OpenCode form cancelled formId=${formId}`);
+  }
+
+  async function getSessionStatusMap(): Promise<Record<string, { type?: string }>> {
+    const res = await apiOrThrow('active sessions', '/api/session/active');
+    const body = (await res.json()) as { data?: Record<string, { type?: string }> };
+    return toSessionStatusMap(body.data ?? {});
   }
 
   async function abort(sessionId: string): Promise<void> {
     try {
-      await fetch(`${baseUrl}/session/${encodeURIComponent(sessionId)}/abort`, {
-        method: 'POST',
-      });
+      await api(`/api/session/${encodeURIComponent(sessionId)}/interrupt`, { method: 'POST' });
     } catch {
       // best effort
     }
@@ -487,6 +489,7 @@ export function createOpenCodeSessionRunner(options: {
   function subscribeEvents(onEvent: (event: OpenCodeServerEvent) => void): OpenCodeEventSubscription {
     sseAbort = new AbortController();
     const signal = sseAbort.signal;
+    const adapter = createOpenCodeV2EventAdapter();
     let resolveReady: (() => void) | undefined;
     let rejectReady: ((err: Error) => void) | undefined;
 
@@ -496,16 +499,14 @@ export function createOpenCodeSessionRunner(options: {
     });
 
     ssePromise = (async () => {
-      debugLog(`OpenCode SSE connecting url=${baseUrl}/event`);
-      const res = await fetch(`${baseUrl}/event`, {
+      debugLog(`OpenCode SSE connecting url=${baseUrl}/api/event`);
+      const res = await api('/api/event', {
         headers: { Accept: 'text/event-stream' },
         signal,
       });
       if (!res.ok || !res.body) {
         const body = await res.text().catch(() => '');
-        debugLog(
-          `OpenCode SSE connection failed status=${res.status} body=${body.slice(0, 500)}`,
-        );
+        debugLog(`OpenCode SSE connection failed status=${res.status} body=${body.slice(0, 500)}`);
         dumpServerOutput(`SSE connection failed (${res.status})`);
         const err = new Error(
           body
@@ -516,7 +517,7 @@ export function createOpenCodeSessionRunner(options: {
         throw err;
       }
 
-      debugLog(`OpenCode SSE connected url=${baseUrl}/event`);
+      debugLog(`OpenCode SSE connected url=${baseUrl}/api/event`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -532,14 +533,17 @@ export function createOpenCodeSessionRunner(options: {
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
         for (const line of lines) {
-          const parsed = parseSseDataLine(line);
-          if (parsed) {
-            if (!connected && parsed.type === 'server.connected') {
+          const parsed = parseV2SseDataLine(line);
+          if (!parsed) {
+            continue;
+          }
+          for (const event of adapter.translate(parsed)) {
+            if (!connected && event.type === 'server.connected') {
               connected = true;
               debugLog('OpenCode SSE received server.connected');
               resolveReady?.();
             }
-            onEvent(parsed);
+            onEvent(event);
           }
         }
       }
@@ -548,6 +552,10 @@ export function createOpenCodeSessionRunner(options: {
         const err = new Error('SSE stream ended before server.connected');
         rejectReady?.(err);
         throw err;
+      }
+      if (!signal.aborted) {
+        // v2's event stream is volatile: events published while disconnected are lost.
+        debugLog('OpenCode SSE stream ended unexpectedly');
       }
     })().catch((err) => {
       if (!signal.aborted) {
@@ -603,6 +611,8 @@ export function createOpenCodeSessionRunner(options: {
     createSession,
     sendPromptAsync,
     replyPermission,
+    cancelForm,
+    getSessionStatusMap,
     abort,
     subscribeEvents,
     dispose,

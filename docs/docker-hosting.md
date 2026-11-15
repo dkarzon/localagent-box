@@ -38,7 +38,7 @@ docker run -d \
 
 Open [http://localhost:8080](http://localhost:8080). Enter the same `API_TOKEN` in the UI (Settings → API Access).
 
-**First container start** may take several minutes while OpenCode’s SQLite database is pre-migrated into the data volume. Later starts reuse that template and boot much faster. Watch logs with `docker logs -f localagent-box`.
+The container starts in seconds; OpenCode v2 creates each agent's database on demand. Watch logs with `docker logs -f localagent-box`.
 
 Next: [set up a GitHub App](./github-app-setup.md) so agents can clone, commit, and open PRs. Optional: enable [automatic PR reviews](./code-review.md) with Open Code Review.
 

@@ -220,11 +220,41 @@ Output: a v2 OpenAPI snapshot, event fixtures, and answers to the unknowns, appe
 - `provider` block stays in v1 form. The spike confirmed v2 loads it and keeps `limit`, `reasoningEffort` and `extraBody`, now `body`. Moving to native is optional; the mapping is in Spike results row 6.
 - CLAUDE.md `instructions` fallback. Absolute paths work, so this needs only the workspace path passed into `buildOpenCodeConfig`.
 
-**Next (Phase 1 remainder, then Phases 2–3), now unblocked:**
-- Per-agent `OPENCODE_PASSWORD` plus Basic auth on every request in `session-runner.ts`.
-- Readiness via `GET /api/info`. Delete the template pre-warm (`entrypoint.sh`, `seedOpenCodeDataFromTemplate`).
-- Model and agent set at session create, `/model` on model switch (loop verb models). `system` moves to instruction entries or config.
-- `v2-event-adapter.ts` driven by the fixture. Turn completion via `session.execution.*`, with a fallback poll of `/api/session/active`.
+**Phases 1–3 (done, uncommitted):**
+- [x] `session-runner.ts` rewritten for the v2 API:
+  - Per-run random `OPENCODE_PASSWORD` plus HTTP Basic on every call. The password is redacted from forwarded serve output.
+  - Readiness via authenticated `GET /api/info`.
+  - `createSession(title, {model, agent})` binds `location.directory`.
+  - `sendPromptAsync` switches model or agent through `/model` and `/agent` only when they change, then calls `/prompt`.
+  - Permission reply moves to the session route (`{decision}`). `abort` becomes `/interrupt`.
+  - New `cancelForm` and `getSessionStatusMap` (`/api/session/active`, with `running` mapped to `busy`).
+- [x] Template pre-warm removed: `entrypoint.sh` now just deletes any old template, and `seedOpenCodeDataFromTemplate` is gone.
+- [x] `v2-event-adapter.ts` translates v2 events into the existing internal `{type, properties}` events, so `event-mapper.ts`, the UI and stored transcripts are unchanged.
+  - Text and reasoning deltas plus snapshots share a stable part ID.
+  - Tool names are carried from `tool.input.started`.
+  - `step.ended` becomes a completed `message.updated` with tokens and cost.
+  - `execution.*` becomes busy, idle or error. `retry.scheduled` becomes retry status.
+- [x] Orchestrator: one shared `handleUnattendedRequest` (permission auto-approve plus form cancel) for batch and loop. Status polling goes through the runner. Sessions are created with their model and agent.
+- [x] Tests: adapter (11, including the captured fixture and an adapter → mapper end-to-end check), runner with fake fetch/spawn (15), and unattended handler (3). The full suite has the same 29 Windows failures as `main`.
+- [x] Live check against the real 2.2.7 binary: ready in about 0.9 s, authenticated, session created with model, model switch, prompt accepted, and live events flowing through adapter and mapper (busy → error → idle). There was no model provider, so the turn failed, as expected.
+
+**Real run (2026-11-15):** Docker, batch mode, strata (openai-compatible), `qwen3.8-flash-next-iq2_xs`, on ScaleBop.
+- Completed in 13 minutes, pushed, and opened ScaleBop#483 (a docs page plus a sidebar entry; the docs build and typecheck passed in the run).
+- 59 tool calls (`shell`, `read`, `grep`, `glob`, `edit`, `write`, and `execute`, which is v2 "code mode" wrapping codegraph MCP). One `grep` failed on the model's own unsupported regex.
+- Token usage was recorded: 74.7k input, 19k output, 2.09M cache read.
+- Bug found and fixed: the adapter put reasoning parts on the step's assistant message, so `conversation.jsonl` recorded the model's thinking as assistant replies. Now only reply text goes there, matching v1.
+
+**Real run 2 (2026-11-15):** Docker with a rebuilt image, batch mode, Ollama provider (`glm-5.3-flash:cloud` through a LAN Ollama), same prompt.
+- Completed in 5 minutes, pushed, and opened ScaleBop#484. 40 tool calls. One `read` error, from the model probing a non-existent `apps/docs/AGENTS.md`.
+- Tokens: 67.9k input, 20.3k output, 917k cache read.
+- **Reasoning fix confirmed:** `conversation.jsonl` now holds 15 short reply-text entries ending in the final summary, where the previous run held 34 entries of reasoning.
+- Generated config verified in the volume: absolute `instructions` path, `permissions` array (`* allow`, `question deny`), `mcp.servers.codegraph`, and the v1-form `ollama` provider.
+
+**Remaining:**
+- Exercise the other modes: interactive (follow-up messages, permission card with auto-approve off, Finish), loop (per-step model switch via `/model`, session rotation), cancel mid-run (`/interrupt`), and review/autofix.
+- Interactive mode: forms (questions) aren't surfaced in the UI. This matches v1, where `question.asked` was also unhandled.
+- `config/opencode-tool-instructions.md` still tells models to use the `bash` tool; v2 calls it `shell`.
+- Optional: emit the native v2 `providers` shape, and add the CLAUDE.md `instructions` fallback.
 - `config/opencode-tool-instructions.md` still refers to the `bash` tool. v2 renames it to `shell`, so update it after the spike confirms tool names and whether `description` is still required.
 - `skills.paths` in `.opencode/opencode.json` isn't confirmed for v2.
 - Phases 0, 2 and 3 (spike, API client, event adapter) are blocked on running v2 locally. Installing it here was refused by the permission policy, so it needs user approval or a manual run.

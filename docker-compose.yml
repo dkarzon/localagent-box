@@ -11,7 +11,7 @@ services:
     environment:
       PORT: "8080"
       DATA_DIR: "/data"
-      MAX_CONCURRENT_AGENTS: "3"
+      MAX_CONCURRENT_AGENTS: "1"
       AGENT_TIMEOUT: "3600"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       API_TOKEN: ${API_TOKEN:-localagent-box}
