@@ -86,6 +86,9 @@ export async function createManualFix(
   );
 }
 
+/** Most findings one manual fix agent accepts; mirrors the server's `MAX_BATCH_SIZE`. */
+export const MAX_MANUAL_FIX_SELECTION = 20;
+
 export interface ManualFixBatchResponse {
   agentId: string;
   findingIds: string[];

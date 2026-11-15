@@ -109,7 +109,7 @@ const handleManualFixBatch = withErrorHandling(async (req, res, ctx, agentId) =>
   const result = await ctx.agentManager.createManualFixBatch(agentId, findingIds);
   sendJson(res, 201, {
     agentId,
-    findingIds,
+    findingIds: result.findings.map((finding) => finding.id),
     agent: result.agent,
     findings: result.findings,
     staleReview: result.staleReview,

@@ -815,6 +815,21 @@ describe('createManualFixBatch', () => {
     ]);
 
     assert.equal(result.staleReview, true);
+    // The headline SHA must not claim the whole selection was reviewed against
+    // the first finding's SHA; per-finding SHAs remain in the payload.
+    const prompt = ctx.calls.created[0]!.prompt as string;
+    assert.doesNotMatch(prompt, /The review ran against sha-/);
+    assert.match(prompt, /reviewed snapshot SHA is unknown/);
+    assert.match(prompt, /"reviewedSha": "sha-old"/);
+  });
+
+  it('names the shared reviewed SHA when the whole selection agrees', async () => {
+    const ctx = setup({ findings: [availableFinding(0), availableFinding(1)] });
+    ctx.branches = ['feature'];
+
+    await ctx.service.createManualFixBatch('review1', ['review1:finding:0', 'review1:finding:1']);
+
+    assert.match(ctx.calls.created[0]!.prompt as string, /The review ran against sha-old\./);
   });
 });
 

@@ -11,6 +11,7 @@ import type { RepoService } from '../repos/repo.service';
 import type { GithubAppService } from '../../services/github-app';
 import { getLogger } from '../../lib/logger';
 import { buildFixAgentPrompt } from '../../lib/review-autofix-prompt';
+import { MAX_BATCH_SIZE } from '../../lib/review-findings';
 import { allFindingsCleared, checkOutputForComplete } from '../../lib/review-github-check';
 import { getAgentMode } from './agent.types';
 import { appendLog } from './worker/agent-state-writer';
@@ -53,8 +54,8 @@ export interface ManualFixBatchResult {
   staleReview: boolean;
 }
 
-/** Largest manual-fix request; matches the upper bound of `maxFindingsPerBatch`. */
-const MAX_MANUAL_FIX_FINDINGS = 20;
+/** Largest manual-fix request; reuses the shared batch-size upper bound. */
+const MAX_MANUAL_FIX_FINDINGS = MAX_BATCH_SIZE;
 
 export interface ReviewAutofixService {
   /**
@@ -298,33 +299,39 @@ export function createReviewAutofixService({
     if (!recheckedFindings) {
       throw new CodedError('Structured findings are not available for this review', 'NOT_FOUND');
     }
-    const currentFindings = selectedIds.map((findingId) =>
-      recheckedFindings.find((entry) => entry.id === findingId),
-    );
-    const claimed = currentFindings.filter(
-      (entry) => !entry || !MANUALLY_ACTIONABLE_STATUSES.has(entry.fixStatus),
-    );
-    if (claimed.length > 0) {
+    const currentFindings = selectedIds.map((findingId) => ({
+      findingId,
+      entry: recheckedFindings.find((candidate) => candidate.id === findingId),
+    }));
+    const vanishedIds = currentFindings
+      .filter(({ entry }) => !entry)
+      .map(({ findingId }) => findingId);
+    if (vanishedIds.length > 0) {
+      throw new CodedError(`Finding not found: ${vanishedIds.join(', ')}`, 'NOT_FOUND');
+    }
+    const selected = currentFindings.map(({ entry }) => entry!);
+    const claimedIds = selected
+      .filter((entry) => !MANUALLY_ACTIONABLE_STATUSES.has(entry.fixStatus))
+      .map((entry) => entry.id);
+    if (claimedIds.length > 0) {
       throw new CodedError(
-        `Finding was claimed by another fix request: ${claimed
-          .map((entry) => entry?.id ?? 'unknown')
-          .join(', ')}`,
+        `Finding was claimed by another fix request: ${claimedIds.join(', ')}`,
         'DUPLICATE',
       );
     }
-    const selected = currentFindings.filter(
-      (entry): entry is ReviewFindingRecord => Boolean(entry),
-    );
 
     const headSha = agent.review?.headSha;
     const staleReview =
       typeof headSha === 'string' &&
       selected.some((entry) => Boolean(entry.reviewedSha) && entry.reviewedSha !== headSha);
 
-    const prompt = buildFixAgentPrompt(selected, {
-      headBranch,
-      reviewedSha: selected[0]!.reviewedSha,
-    });
+    // Only name a headline SHA when the whole selection was reviewed against it;
+    // each finding still carries its own `reviewedSha` in the prompt payload.
+    const firstReviewedSha = selected[0]!.reviewedSha;
+    const sharedReviewedSha = selected.every((entry) => entry.reviewedSha === firstReviewedSha)
+      ? firstReviewedSha
+      : null;
+    const prompt = buildFixAgentPrompt(selected, { headBranch, reviewedSha: sharedReviewedSha });
 
     let fixAgent: Agent;
     try {
