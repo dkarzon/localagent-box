@@ -1499,6 +1499,48 @@ describe('createAgentService (shared-branch queue)', () => {
     assert.equal(hasStartedWorker(ctx, second.agentId), false);
   });
 
+  it('retry moves the agent to a fresh workspace and removes the old one', () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    const oldWorkspaceDir = ctx.repository.getWorkspaceDir(agent.workspaceId);
+    fs.writeFileSync(path.join(oldWorkspaceDir, 'leftover.txt'), 'x', 'utf8');
+
+    ctx.repository.update(agent.agentId, { status: 'failed', error: 'boom' });
+    ctx.spawned[0].emitExit(1);
+
+    const retried = ctx.service.retryAgent(agent.agentId);
+    assert.notEqual(retried.workspaceId, agent.workspaceId);
+    assert.equal(fs.existsSync(oldWorkspaceDir), false);
+    assert.equal(fs.existsSync(ctx.repository.getWorkspaceDir(retried.workspaceId)), true);
+    const job = JSON.parse(
+      fs.readFileSync(path.join(ctx.repository.getAgentDir(agent.agentId), 'job.json'), 'utf8'),
+    );
+    assert.equal(job.workspaceDir, ctx.repository.getWorkspaceDir(retried.workspaceId));
+  });
+
+  it('does not start a retry until the cancelled worker has actually exited', () => {
+    const ctx = createTestContext();
+    const agent = ctx.service.createAgent({
+      repoId: testRepo.repoId,
+      prompt: 'Chunk 1',
+      agentBranch: 'feature/project',
+    });
+    assert.equal(ctx.spawned.length, 1);
+
+    ctx.service.cancelAgent(agent.agentId);
+    const retried = ctx.service.retryAgent(agent.agentId);
+    assert.equal(retried.status, 'queued');
+    assert.equal(ctx.spawned.length, 1, 'old worker is still exiting');
+
+    ctx.spawned[0].emitExit(null, 'SIGTERM');
+    assert.equal(ctx.spawned.length, 2);
+    assert.equal(ctx.service.getAgent(agent.agentId).status, 'queued');
+  });
+
   it('rejects retry unless the session is failed or cancelled', () => {
     const ctx = createTestContext();
     const agent = ctx.service.createAgent({

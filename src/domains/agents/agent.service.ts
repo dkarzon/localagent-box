@@ -303,9 +303,21 @@ export function createAgentService(options: {
       });
   }
 
-  function handleWorkerExit(agentId: string, code: number | null, signal: NodeJS.Signals | null): void {
+  function handleWorkerExit(
+    agentId: string,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    info: { terminated: boolean } = { terminated: false },
+  ): void {
     let current = repository.findById(agentId);
     if (!current) {
+      return;
+    }
+
+    // A killed worker finished tearing down after the agent was retried:
+    // the new attempt is queued, so just let the queue start it now.
+    if (info.terminated && current.status === 'queued') {
+      queue.process();
       return;
     }
 
@@ -459,7 +471,11 @@ export function createAgentService(options: {
     maxConcurrent,
     getActiveWorkerCount: () => spawner.activeCount(),
     decide: (agentId) =>
-      decideQueueAction(repository.findById(agentId), repository.findAll(), (id) => spawner.has(id)),
+      // Never start a new worker while this agent's killed worker is still
+      // exiting; handleWorkerExit re-processes the queue once it is gone.
+      spawner.isTerminating(agentId)
+        ? 'defer'
+        : decideQueueAction(repository.findById(agentId), repository.findAll(), (id) => spawner.has(id)),
     onStartAgent: (agentId) => {
       const agent = repository.findById(agentId);
       if (agent) {
@@ -836,7 +852,15 @@ export function createAgentService(options: {
     );
     const push = mode !== 'review' && branchOccupied ? true : agent.push;
 
+    // Each attempt gets a fresh workspace: a process left over from the failed
+    // attempt may still be writing into the old directory, which makes the
+    // clone fail with "destination path already exists".
+    const previousWorkspaceDir = repository.getWorkspaceDir(agent.workspaceId);
+    const workspaceId = crypto.randomUUID();
+    fsImpl.mkdirSync(repository.getWorkspaceDir(workspaceId), { recursive: true });
+
     const patch: Partial<Agent> = {
+      workspaceId,
       status: 'queued',
       error: null,
       finishedAt: null,
@@ -877,9 +901,26 @@ export function createAgentService(options: {
     }
 
     repository.update(agentId, patch);
+    removePreviousWorkspace(agentId, previousWorkspaceDir);
     appendLog(repository.getLogPath(agentId), 'Retry requested — re-queued');
     queue.enqueue(agentId);
     return present(repository.getAgent(agentId));
+  }
+
+  /**
+   * Best-effort removal of a retried agent's old workspace. Skipped while its
+   * killed worker is still exiting; cleanupOldWorkspaces removes it later as
+   * an orphan if this fails or is skipped.
+   */
+  function removePreviousWorkspace(agentId: string, workspaceDir: string): void {
+    if (spawner.isTerminating(agentId)) {
+      return;
+    }
+    try {
+      fsImpl.rmSync(workspaceDir, { recursive: true, force: true });
+    } catch (err) {
+      getLogger().warn({ err, agentId, workspaceDir }, 'Could not remove previous workspace on retry');
+    }
   }
 
   function allowSuccessors(agentId: string): { agent: Agent; warning: string | null } {

@@ -6,6 +6,7 @@ import type { ChildProcess } from 'child_process';
 import type { SpawnFn } from '../../types';
 import { collectOpenCodeSpawnDebug, getOpencodeBin, type OpenCodeModelRef } from './runner';
 import { getServerEnv } from '../../config/env';
+import { registerChildCleanup } from '../../lib/child-cleanup';
 
 /** OpenCode 1.0.218 — minimal types; refine against GET /doc OpenAPI when bumped */
 
@@ -180,6 +181,7 @@ export function createOpenCodeSessionRunner(options: {
   let port = options.port || 0;
   let baseUrl = '';
   let child: ChildProcess | null = null;
+  let unregisterCleanup: (() => void) | null = null;
   let sseAbort: AbortController | null = null;
   let ssePromise: Promise<void> | null = null;
   const serverOutputTail: string[] = [];
@@ -313,6 +315,8 @@ export function createOpenCodeSessionRunner(options: {
 
       child.on('spawn', () => {
         debugLog(`OpenCode serve process spawned pid=${child?.pid ?? 'unknown'}`);
+        unregisterCleanup?.();
+        unregisterCleanup = registerChildCleanup(dispose);
         resolve();
       });
 
@@ -565,19 +569,26 @@ export function createOpenCodeSessionRunner(options: {
       await ssePromise.catch(() => undefined);
     }
 
-    if (child && !child.killed) {
-      child.kill('SIGTERM');
+    unregisterCleanup?.();
+    unregisterCleanup = null;
+
+    // `child.killed` only means a signal was sent, not that the process
+    // exited — use exitCode/signalCode so the SIGKILL fallback actually fires.
+    const proc = child;
+    const hasExited = (p: ChildProcess) => p.exitCode != null || p.signalCode != null;
+    if (proc && !hasExited(proc)) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          if (child && !child.killed) {
-            child.kill('SIGKILL');
+          if (!hasExited(proc)) {
+            proc.kill('SIGKILL');
           }
           resolve();
         }, 5000);
-        child?.once('exit', () => {
+        proc.once('exit', () => {
           clearTimeout(timer);
           resolve();
         });
+        proc.kill('SIGTERM');
       });
     }
     child = null;
