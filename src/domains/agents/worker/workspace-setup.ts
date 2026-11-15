@@ -134,6 +134,17 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
 
   await checkoutJobBranch(gitService, job, { shallow: !isReview, logPath });
 
+  // Remember where this run started so finalizeGitChanges can detect commits
+  // the agent made itself (e.g. `git commit` via its shell tool).
+  try {
+    await gitService.markRunStart(job.workspaceDir);
+  } catch (err) {
+    appendLog(
+      logPath,
+      `Could not record run start commit — agent-made commits will not be detected (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+
   ensureLocalagentBoxIgnored(job.workspaceDir);
 
   if (isReview && config.ocrSkipWorkspaceBootstrap === true) {
@@ -286,16 +297,40 @@ export async function finalizeGitChanges({
   }
 
   const porcelain = await gitService.getPorcelainStatus(job.workspaceDir);
-  const filesChanged = gitService.countChangedFiles(porcelain);
+  const uncommittedFiles = gitService.countChangedFiles(porcelain);
+  // Commits the agent created itself since the run started (null when the
+  // start marker is missing, e.g. workspaces prepared before this existed).
+  const agentCommits = await gitService.getCommitsSinceRunStart(job.workspaceDir);
+  // Commits whose net diff is empty (e.g. commit + revert) don't count.
+  const hasAgentCommits = (agentCommits?.commits ?? 0) > 0 && (agentCommits?.filesChanged ?? 0) > 0;
 
-  if (filesChanged === 0) {
+  if (uncommittedFiles === 0 && !hasAgentCommits) {
     appendLog(logPath, 'No file changes detected after OpenCode run');
     return { commitSha: null, pushed: false, filesChanged: 0 };
   }
 
-  appendLog(logPath, `Committing ${filesChanged} changed file(s)…`);
-  const commitSha = await gitService.commitAll(job.workspaceDir, job.commitMessage);
-  appendLog(logPath, `Created commit ${commitSha}`);
+  if (hasAgentCommits) {
+    appendLog(
+      logPath,
+      `Agent created ${agentCommits!.commits} commit(s) itself (${agentCommits!.filesChanged} file(s) changed)`,
+    );
+  }
+
+  let commitSha: string | null;
+  if (uncommittedFiles > 0) {
+    appendLog(logPath, `Committing ${uncommittedFiles} changed file(s)…`);
+    commitSha = await gitService.commitAll(job.workspaceDir, job.commitMessage);
+    appendLog(logPath, `Created commit ${commitSha}`);
+  } else {
+    commitSha = await gitService.getHeadSha(job.workspaceDir);
+    appendLog(logPath, `No uncommitted changes; using agent commit ${commitSha ?? '(unknown)'}`);
+  }
+
+  // Files changed across the whole run (agent commits + our commit); fall
+  // back to the uncommitted count when the start marker is unavailable.
+  const filesChanged = hasAgentCommits
+    ? ((await gitService.getCommitsSinceRunStart(job.workspaceDir))?.filesChanged ?? uncommittedFiles)
+    : uncommittedFiles;
 
   let pushed = false;
   if (job.push) {

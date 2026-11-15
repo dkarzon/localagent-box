@@ -49,7 +49,23 @@ export interface GitService {
     commitSha: string,
     options?: { maxPatchChars?: number },
   ) => Promise<{ stat: string; patch: string } | null>;
+  /**
+   * Record the current HEAD as the run's starting point (local-only ref
+   * `refs/localagent-box/start`, never pushed).
+   */
+  markRunStart: (targetDir: string) => Promise<void>;
+  /** Current HEAD sha, or null when it cannot be resolved. */
+  getHeadSha: (targetDir: string) => Promise<string | null>;
+  /**
+   * Commits on HEAD since `markRunStart`, e.g. ones the agent made itself via
+   * shell. Null when no start marker exists (or git fails).
+   */
+  getCommitsSinceRunStart: (
+    targetDir: string,
+  ) => Promise<{ commits: number; filesChanged: number } | null>;
 }
+
+export const RUN_START_REF = 'refs/localagent-box/start';
 
 type FsLike = Pick<typeof fs, 'mkdirSync' | 'existsSync' | 'rmSync'>;
 type ExecFileAsync = (
@@ -355,6 +371,58 @@ export function createGitService(options: {
     }
   }
 
+  function gitEnv(): NodeJS.ProcessEnv {
+    return { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  }
+
+  async function markRunStart(targetDir: string): Promise<void> {
+    await execFileAsyncImpl('git', ['update-ref', RUN_START_REF, 'HEAD'], {
+      cwd: targetDir,
+      timeout: 60000,
+      env: gitEnv(),
+    });
+  }
+
+  async function getHeadSha(targetDir: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFileAsyncImpl('git', ['rev-parse', 'HEAD'], {
+        cwd: targetDir,
+        timeout: 60000,
+        env: gitEnv(),
+      });
+      return stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function getCommitsSinceRunStart(
+    targetDir: string,
+  ): Promise<{ commits: number; filesChanged: number } | null> {
+    try {
+      const { stdout: count } = await execFileAsyncImpl(
+        'git',
+        ['rev-list', '--count', `${RUN_START_REF}..HEAD`],
+        { cwd: targetDir, timeout: 60000, env: gitEnv() },
+      );
+      const commits = Number.parseInt(count.trim(), 10) || 0;
+      if (commits === 0) {
+        return { commits: 0, filesChanged: 0 };
+      }
+      const { stdout: names } = await execFileAsyncImpl(
+        'git',
+        ['diff', '--name-only', RUN_START_REF, 'HEAD'],
+        { cwd: targetDir, timeout: 60000, env: gitEnv() },
+      );
+      const filesChanged = names
+        .split('\n')
+        .filter((line) => line.trim()).length;
+      return { commits, filesChanged };
+    } catch {
+      return null;
+    }
+  }
+
   async function pushBranch(
     targetDir: string,
     branchName: string,
@@ -436,6 +504,9 @@ export function createGitService(options: {
     parsePorcelainStatus,
     countChangedFiles,
     commitAll,
+    markRunStart,
+    getHeadSha,
+    getCommitsSinceRunStart,
     pushBranch,
     getCommitDiff,
   };
