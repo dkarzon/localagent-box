@@ -13,6 +13,45 @@ export function getOpencodeBin(): string {
   return getServerEnv().opencodeBin;
 }
 
+/** npm packages whose global `.cmd` shim wraps a real opencode.exe (v2 first). */
+const NPM_OPENCODE_EXES = [
+  ['@opencode', 'cli', 'bin', 'opencode.exe'],
+  ['opencode-ai', 'bin', 'opencode.exe'],
+];
+
+/**
+ * Node's `spawn` (no shell) can't run npm's Windows `.cmd` / `.ps1` shims by bare name,
+ * so `spawn('opencode')` fails with ENOENT. Resolve a bare name to a real `.exe`: one on
+ * PATH, or the package exe behind an npm shim. Paths and non-Windows hosts pass through.
+ */
+export function resolveOpencodeExecutable(
+  bin: string,
+  options: {
+    platform?: NodeJS.Platform;
+    pathEnv?: string;
+    exists?: (p: string) => boolean;
+  } = {},
+): string {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'win32' || bin.includes('/') || bin.includes('\\') || /\.(exe|cmd|bat)$/i.test(bin)) {
+    return bin;
+  }
+  const exists = options.exists ?? ((p: string) => fs.existsSync(p));
+  const dirs = (options.pathEnv ?? process.env.PATH ?? '').split(';').filter(Boolean);
+  for (const dir of dirs) {
+    const exe = path.win32.join(dir, `${bin}.exe`);
+    if (exists(exe)) return exe;
+  }
+  for (const dir of dirs) {
+    if (!exists(path.win32.join(dir, `${bin}.cmd`))) continue;
+    for (const segments of NPM_OPENCODE_EXES) {
+      const exe = path.win32.join(dir, 'node_modules', ...segments);
+      if (exists(exe)) return exe;
+    }
+  }
+  return bin;
+}
+
 export function generateOpenCodeMessageId(): string {
   return `msg_${crypto.randomUUID()}`;
 }
@@ -44,7 +83,7 @@ export function collectOpenCodeSpawnDebug(options: {
   if (process.platform === 'win32' && !hasPathSep) {
     const npmRoot = path.join(process.env.APPDATA || '', 'npm');
     const candidates = [
-      path.join(npmRoot, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe'),
+      path.join(npmRoot, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe'),
       path.join(npmRoot, 'opencode.cmd'),
       path.join(npmRoot, 'opencode'),
     ];

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
   formatBootstrapSummaryBlock,
   isAgentRunTimedOut,
   parseTimeoutMs,
   resolveAgentRunStartedAtMs,
+  resolveOpencodeExecutable,
 } from './runner';
 
 describe('parseTimeoutMs', () => {
@@ -107,5 +109,34 @@ describe('isAgentRunTimedOut', () => {
     const startedAtMs = Date.parse('2026-08-17T01:00:00.000Z');
     const nowMs = Date.parse('2026-08-17T02:00:01.000Z');
     assert.equal(isAgentRunTimedOut(startedAtMs, timeoutMs, nowMs), true);
+  });
+});
+
+describe('resolveOpencodeExecutable', () => {
+  const j = path.win32.join;
+  const npm = j('C:', 'Users', 'me', 'AppData', 'Roaming', 'npm');
+  const tools = j('C:', 'tools');
+  const shim = j(npm, 'opencode.cmd');
+  const v2Exe = j(npm, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+  const win = (files: string[], pathEnv = `${j('C:', 'Windows')};${npm}`) => ({
+    platform: 'win32' as const,
+    pathEnv,
+    exists: (p: string) => files.includes(p),
+  });
+
+  it('resolves an npm .cmd shim to the v2 package exe on Windows', () => {
+    assert.equal(resolveOpencodeExecutable('opencode', win([shim, v2Exe])), v2Exe);
+  });
+
+  it('prefers a real opencode.exe on PATH', () => {
+    const onPath = j(tools, 'opencode.exe');
+    assert.equal(resolveOpencodeExecutable('opencode', win([onPath, shim, v2Exe], `${tools};${npm}`)), onPath);
+  });
+
+  it('leaves explicit paths, unresolvable names and non-Windows hosts alone', () => {
+    const explicit = j('D:', 'oc', 'opencode.exe');
+    assert.equal(resolveOpencodeExecutable(explicit, win([])), explicit);
+    assert.equal(resolveOpencodeExecutable('opencode', win([])), 'opencode');
+    assert.equal(resolveOpencodeExecutable('opencode', { platform: 'linux', exists: () => true }), 'opencode');
   });
 });

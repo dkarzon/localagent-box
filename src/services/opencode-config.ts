@@ -66,25 +66,33 @@ export interface OpenCodeModelConfig {
   };
 }
 
+/** OpenCode v2 local MCP server (`mcp.servers.<name>`). */
 export interface OpenCodeMcpLocalServer {
   type: 'local';
   command: string[];
-  enabled: boolean;
-  timeout?: number;
+  disabled: boolean;
+  timeout?: { catalog?: number; execution?: number };
 }
 
-export type OpenCodePermissionAction = 'ask' | 'allow' | 'deny';
+export type OpenCodePermissionEffect = 'ask' | 'allow' | 'deny';
 
-/** OpenCode permission rules: wildcard maps or per-tool actions like `question: deny`. */
-export type OpenCodePermissionRule = OpenCodePermissionAction | Record<string, string>;
+/** OpenCode v2 permission rule; rules are ordered and the last match wins (no match = ask). */
+export interface OpenCodePermissionRule {
+  action: string;
+  resource: string;
+  effect: OpenCodePermissionEffect;
+}
 
 export interface OpenCodeConfigFile {
   $schema: string;
   model: string;
   instructions?: string[];
-  tools?: Record<string, boolean>;
-  permission?: Record<string, OpenCodePermissionRule>;
-  mcp?: Record<string, OpenCodeMcpLocalServer>;
+  permissions?: OpenCodePermissionRule[];
+  mcp?: { servers: Record<string, OpenCodeMcpLocalServer> };
+  /**
+   * v1-format provider block — still accepted by v2. Kept until v2 model support for
+   * `limit` / `options.extraBody` is verified (v2 requires a provider's models in one format).
+   */
   provider: Record<
     string,
     {
@@ -101,7 +109,7 @@ export interface OpenCodeConfigBuildOptions {
   job?: AgentJob;
   /** When true, inject the codegraph MCP server into opencode.json. */
   codegraph?: boolean;
-  /** When true, set `tools.question: false` so unattended runs cannot block on user input. */
+  /** When true, deny the `question` permission so unattended runs cannot block on user input. */
   disableQuestionTool?: boolean;
   /** Context windows by model id (see `resolveModelContextLengths`); adds `limit` to matching models. */
   modelContextLengths?: Record<string, number>;
@@ -116,9 +124,27 @@ export function buildCodegraphMcpServer(): OpenCodeMcpLocalServer {
   return {
     type: 'local',
     command: [CODEGRAPH_BIN, 'serve', '--mcp'],
-    enabled: true,
-    timeout: CODEGRAPH_MCP_TIMEOUT_MS,
+    disabled: false,
+    timeout: { catalog: CODEGRAPH_MCP_TIMEOUT_MS },
   };
+}
+
+/**
+ * Ordered v2 permission rules (last match wins). Without auto-approve, keep v1's `ask` for
+ * `external_directory` — v2 allows it by default, which would let agents leave their clone.
+ */
+export function buildPermissionRules(options: {
+  autoApprovePermissions?: boolean;
+  disableQuestionTool?: boolean;
+}): OpenCodePermissionRule[] {
+  const rules: OpenCodePermissionRule[] = options.autoApprovePermissions
+    ? [{ action: '*', resource: '*', effect: 'allow' }]
+    : [{ action: 'external_directory', resource: '*', effect: 'ask' }];
+  if (options.disableQuestionTool) {
+    // Must follow the wildcard allow so last-match evaluation keeps the deny.
+    rules.push({ action: 'question', resource: '*', effect: 'deny' });
+  }
+  return rules;
 }
 
 /** Gemma 4 streams thinking in a non-standard `reasoning` field that OpenCode's AI SDK ignores. */
@@ -237,24 +263,13 @@ export function buildOpenCodeConfig(
     },
   };
 
-  if (options?.autoApprovePermissions) {
-    file.permission = { '*': { '*': 'allow' } };
-  }
-
-  if (options?.disableQuestionTool) {
-    file.tools = { question: false };
-    // Explicit deny must follow wildcard allow — OpenCode merges legacy `tools` into
-    // permissions and last-match evaluation lets `* allow` override tools-derived deny.
-    file.permission = {
-      ...(file.permission ?? {}),
-      question: 'deny',
-    };
-  }
+  file.permissions = buildPermissionRules({
+    autoApprovePermissions: options?.autoApprovePermissions,
+    disableQuestionTool: options?.disableQuestionTool,
+  });
 
   if (options?.codegraph) {
-    file.mcp = {
-      codegraph: buildCodegraphMcpServer(),
-    };
+    file.mcp = { servers: { codegraph: buildCodegraphMcpServer() } };
   }
 
   return file;
@@ -336,6 +351,8 @@ export function createOpenCodeConfigService(options: {
     if (instructionsContent) {
       const instructionsPath = pathImpl.join(configDir, LOCALAGENT_INSTRUCTIONS_FILE);
       fsImpl.writeFileSync(instructionsPath, `${instructionsContent}\n`, 'utf8');
+      // OpenCode v2 does not resolve relative `instructions` against the config dir.
+      opencodeConfig.instructions = [instructionsPath];
     }
 
     // May embed a provider API key — keep it owner-only (mode applies on create; chmod

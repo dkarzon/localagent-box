@@ -50,6 +50,7 @@ import {
 } from './runner';
 import {
   createOpenCodeSessionRunner,
+  getAgentOpenCodeConfigDir,
   isBatchTurnComplete,
   type OpenCodeServerEvent,
   type OpenCodeSessionRunner,
@@ -114,6 +115,49 @@ function extractMessageTokenUsage(payload: Record<string, unknown>): {
   };
 }
 
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Unattended runs (batch / loop) have no one to answer OpenCode: auto-approve permission
+ * requests when enabled, and cancel forms (v2's question tool) so the turn never blocks.
+ */
+export function handleUnattendedRequest(
+  ocEvent: OpenCodeServerEvent,
+  runner: Pick<OpenCodeSessionRunner, 'replyPermission' | 'cancelForm'>,
+  logPath: string,
+  autoApprovePermissions: boolean,
+): void {
+  const props = ocEvent.properties;
+  if (ocEvent.type === 'permission.asked' && autoApprovePermissions) {
+    const requestId = typeof props.id === 'string' ? props.id : undefined;
+    const sessionID = typeof props.sessionID === 'string' ? props.sessionID : undefined;
+    if (requestId && sessionID) {
+      void runner
+        .replyPermission(sessionID, requestId, 'once')
+        .then(() => appendLog(logPath, `OpenCode permission auto-approved: ${requestId}`))
+        .catch((err) =>
+          appendLog(logPath, `OpenCode permission auto-approve failed (${describeError(err)})`),
+        );
+    }
+    return;
+  }
+  if (ocEvent.type === 'form.created') {
+    const form = props.form as { id?: string; sessionID?: string; title?: string } | undefined;
+    if (form?.id && form.sessionID) {
+      void runner
+        .cancelForm(
+          form.sessionID,
+          form.id,
+          'Unattended run: no user is available to answer. Make a reasonable assumption and continue.',
+        )
+        .then(() => appendLog(logPath, `OpenCode form cancelled (unattended): ${form.title ?? form.id}`))
+        .catch((err) => appendLog(logPath, `OpenCode form cancel failed (${describeError(err)})`));
+    }
+  }
+}
+
 function isCodegraphEnabled(): boolean {
   return getServerEnv().enableCodegraph;
 }
@@ -155,7 +199,7 @@ export async function runSessionOrchestrator(
   const codegraph = isCodegraphEnabled();
 
   const perAgentConfig = createOpenCodeConfigService({
-    configDir: path.join(agentDir, 'opencode-config'),
+    configDir: getAgentOpenCodeConfigDir(agentDir),
   });
   const disableQuestionTool = mode === 'batch';
   perAgentConfig.writeOpenCodeConfig(runConfig, {
@@ -164,7 +208,7 @@ export async function runSessionOrchestrator(
     disableQuestionTool,
     modelContextLengths: await resolveContextLengthsForRun(runConfig, logPath),
   });
-  const opencodeConfigPath = path.join(agentDir, 'opencode-config', 'opencode.json');
+  const opencodeConfigPath = path.join(getAgentOpenCodeConfigDir(agentDir), 'opencode.json');
   appendLog(logPath, `OpenCode config written: ${opencodeConfigPath}`);
   if (codegraph) {
     logCodegraphEnabled(logPath);
@@ -267,24 +311,8 @@ export async function runSessionOrchestrator(
   ]);
 
   const handleOpenCodeEvent = (ocEvent: OpenCodeServerEvent) => {
-    if (
-      mode === 'batch' &&
-      autoApprovePermissions &&
-      (ocEvent.type === 'permission.asked' || ocEvent.type === 'permission.updated')
-    ) {
-      const requestId =
-        typeof ocEvent.properties.id === 'string' ? ocEvent.properties.id : undefined;
-      if (requestId) {
-        void sessionRunner
-          .replyPermission(requestId, 'once')
-          .then(() => appendLog(logPath, `OpenCode permission auto-approved: ${requestId}`))
-          .catch((err) =>
-            appendLog(
-              logPath,
-              `OpenCode permission auto-approve failed (${err instanceof Error ? err.message : String(err)})`,
-            ),
-          );
-      }
+    if (mode === 'batch') {
+      handleUnattendedRequest(ocEvent, sessionRunner, logPath, autoApprovePermissions);
     }
 
     if (ocEvent.type === 'message.part.delta') {
@@ -563,7 +591,7 @@ export async function runSessionOrchestrator(
       if (pollFinishBeforeStart?.()) {
         requestFinish();
       } else {
-        const session = await sessionRunner.createSession(`agent-${job.agentId}`);
+        const session = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
         sessionId = session.id;
         appendLog(logPath, `OpenCode session created: ${sessionId}`);
 
@@ -631,22 +659,19 @@ export async function runSessionOrchestrator(
 
       if (mode === 'batch' && sessionId) {
         try {
-          const res = await fetch(`${sessionRunner.baseUrl}/session/status`);
-          if (res.ok) {
-            const statusMap = (await res.json()) as Record<string, { type?: string } | undefined>;
-            const status = statusMap[sessionId];
-            if (status?.type === 'busy' || status?.type === 'retry') {
-              batchPromptBusySeen = true;
-            }
-            const batchBusySeen = batchPromptBusySeen || seenBusySinceProcessing;
-            if (isBatchTurnComplete(statusMap, sessionId, batchBusySeen)) {
-              appendLog(logPath, 'OpenCode session idle after task prompt — batch turn complete');
-              appendLog(
-                logPath,
-                `OpenCode text stream final: textDeltaEvents=${textDeltaEventCount} textDeltaEmitted=${textDeltaEmittedCount} textUpdatedEvents=${textUpdatedEventCount} reasoningDeltaEvents=${reasoningDeltaEventCount} reasoningDeltaEmitted=${reasoningDeltaEmittedCount} reasoningUpdatedEvents=${reasoningUpdatedEventCount}`,
-              );
-              return { outcome: 'turn_complete', sessionId };
-            }
+          const statusMap = await sessionRunner.getSessionStatusMap();
+          const status = statusMap[sessionId];
+          if (status?.type === 'busy' || status?.type === 'retry') {
+            batchPromptBusySeen = true;
+          }
+          const batchBusySeen = batchPromptBusySeen || seenBusySinceProcessing;
+          if (isBatchTurnComplete(statusMap, sessionId, batchBusySeen)) {
+            appendLog(logPath, 'OpenCode session idle after task prompt — batch turn complete');
+            appendLog(
+              logPath,
+              `OpenCode text stream final: textDeltaEvents=${textDeltaEventCount} textDeltaEmitted=${textDeltaEmittedCount} textUpdatedEvents=${textUpdatedEventCount} reasoningDeltaEvents=${reasoningDeltaEventCount} reasoningDeltaEmitted=${reasoningDeltaEmittedCount} reasoningUpdatedEvents=${reasoningUpdatedEventCount}`,
+            );
+            return { outcome: 'turn_complete', sessionId };
           }
         } catch {
           /* transient status poll failure */
@@ -782,7 +807,7 @@ export async function startOpenCodeLoopSession(options: {
   const codegraph = isCodegraphEnabled();
 
   const perAgentConfig = createOpenCodeConfigService({
-    configDir: path.join(agentDir, 'opencode-config'),
+    configDir: getAgentOpenCodeConfigDir(agentDir),
   });
   perAgentConfig.writeOpenCodeConfig(runConfig, {
     autoApprovePermissions,
@@ -861,24 +886,7 @@ export async function startOpenCodeLoopSession(options: {
   };
 
   const handleOpenCodeEvent = (ocEvent: OpenCodeServerEvent) => {
-    if (
-      autoApprovePermissions &&
-      (ocEvent.type === 'permission.asked' || ocEvent.type === 'permission.updated')
-    ) {
-      const requestId =
-        typeof ocEvent.properties.id === 'string' ? ocEvent.properties.id : undefined;
-      if (requestId) {
-        void sessionRunner
-          .replyPermission(requestId, 'once')
-          .then(() => appendLog(logPath, `OpenCode permission auto-approved: ${requestId}`))
-          .catch((err) =>
-            appendLog(
-              logPath,
-              `OpenCode permission auto-approve failed (${err instanceof Error ? err.message : String(err)})`,
-            ),
-          );
-      }
-    }
+    handleUnattendedRequest(ocEvent, sessionRunner, logPath, autoApprovePermissions);
 
     const { event: mapped } = eventMapper.map(ocEvent, sessionId, loopMode);
     if (!mapped) {
@@ -974,7 +982,7 @@ export async function startOpenCodeLoopSession(options: {
   await eventSubscription.ready;
   appendLog(logPath, 'OpenCode SSE connected');
 
-  const session = await sessionRunner.createSession(`agent-${job.agentId}`);
+  const session = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
   sessionId = session.id;
   appendLog(logPath, `OpenCode session created: ${sessionId}`);
 
@@ -1044,21 +1052,18 @@ export async function startOpenCodeLoopSession(options: {
       }
 
       try {
-        const res = await fetch(`${sessionRunner.baseUrl}/session/status`);
-        if (res.ok) {
-          const statusMap = (await res.json()) as Record<string, { type?: string } | undefined>;
-          const status = statusMap[sessionId];
-          if (status?.type === 'busy' || status?.type === 'retry') {
-            turnState.batchPromptBusySeen = true;
-          }
-          const batchBusySeen = turnState.batchPromptBusySeen || turnState.seenBusySinceProcessing;
-          if (isBatchTurnComplete(statusMap, sessionId, batchBusySeen)) {
-            appendLog(logPath, 'OpenCode session idle — loop step complete');
-            return finishTurn({
-              outcome: 'turn_complete',
-              assistantText: resolveTurnAssistantText(turnState),
-            });
-          }
+        const statusMap = await sessionRunner.getSessionStatusMap();
+        const status = statusMap[sessionId];
+        if (status?.type === 'busy' || status?.type === 'retry') {
+          turnState.batchPromptBusySeen = true;
+        }
+        const batchBusySeen = turnState.batchPromptBusySeen || turnState.seenBusySinceProcessing;
+        if (isBatchTurnComplete(statusMap, sessionId, batchBusySeen)) {
+          appendLog(logPath, 'OpenCode session idle — loop step complete');
+          return finishTurn({
+            outcome: 'turn_complete',
+            assistantText: resolveTurnAssistantText(turnState),
+          });
         }
       } catch {
         /* transient status poll failure */
@@ -1086,7 +1091,7 @@ export async function startOpenCodeLoopSession(options: {
   }
 
   async function rotateSession(): Promise<void> {
-    const newSess = await sessionRunner.createSession(`agent-${job.agentId}`);
+    const newSess = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
     sessionId = newSess.id;
     turnState.seenBusySinceProcessing = false;
     turnState.batchPromptBusySeen = false;

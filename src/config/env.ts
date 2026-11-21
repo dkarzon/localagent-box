@@ -71,7 +71,7 @@ function resolveDepCacheRoot(vars: Record<string, string>, dataDir: string): str
   return path.join(dataDir, 'dep-cache');
 }
 
-function loadDotenv(): Record<string, string> {
+export function loadDotenv(): Record<string, string> {
   const result: Record<string, string> = {};
   try {
     const dotfile = path.join(process.cwd(), '.env');
