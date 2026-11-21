@@ -252,6 +252,78 @@ describe('runReviewJob findings persistence', () => {
     assert.deepEqual(persisted, []);
   });
 
+  it('drops exact duplicates before persisting and reports the deduped findings count', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    const duplicate = {
+      content: 'Missing cap.',
+      severity: 'high',
+      path: 'a.ts',
+      start_line: 3,
+      end_line: 4,
+      suggestion_code: 'if (items.length > 20) trim();',
+    };
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      summary: { files_reviewed: 1, comments: 2 },
+      comments: [duplicate, { ...duplicate, severity: 'low' }],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    await runReviewJob(harness.ctx);
+
+    const persistedResult = JSON.parse(
+      fs.readFileSync(path.join(harness.agentDir, 'review-result.json'), 'utf8'),
+    ) as { comments: unknown[]; summary: { comments: number } };
+    assert.equal(persistedResult.comments.length, 1);
+    assert.equal(persistedResult.summary.comments, 1);
+
+    const findings = JSON.parse(
+      fs.readFileSync(path.join(harness.agentDir, 'review-findings.json'), 'utf8'),
+    ) as Array<{ id: string; severity: string }>;
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].id, 'rev1:finding:0');
+    assert.equal(findings[0].severity, 'high');
+
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(log.includes('Dropped 1 exact duplicate comment(s)'));
+    assert.ok(log.includes('Persisted 1 structured finding(s)'));
+  });
+
+  it('keeps duplicates that propose different suggestions', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    const base = { content: 'Missing cap.', path: 'a.ts', start_line: 3, end_line: 4 };
+    writeOcrStub(stubDir, {
+      status: 'ok',
+      summary: { comments: 2 },
+      comments: [
+        { ...base, suggestion_code: 'if (items.length > 20) trim();' },
+        { ...base, suggestion_code: 'return items.slice(0, 20);' },
+      ],
+    });
+
+    const harness = makeFlowHarness(root, null);
+    await runReviewJob(harness.ctx);
+
+    const persistedResult = JSON.parse(
+      fs.readFileSync(path.join(harness.agentDir, 'review-result.json'), 'utf8'),
+    ) as { comments: unknown[]; summary: { comments: number } };
+    assert.equal(persistedResult.comments.length, 2);
+    assert.equal(persistedResult.summary.comments, 2);
+
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(!log.includes('Dropped'));
+  });
+
   it('captures line and file comment IDs and maps them onto findings', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
     cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));

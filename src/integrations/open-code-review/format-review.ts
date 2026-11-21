@@ -345,18 +345,6 @@ function appendFindingBody(lines: string[], comment: OcrComment): void {
   } else if (comment.existing_code?.trim()) {
     lines.push('', '**Referenced code:**', '```', comment.existing_code.trim(), '```');
   }
-
-  if (comment.thinking?.trim()) {
-    lines.push(
-      '',
-      '<details>',
-      '<summary>Reasoning</summary>',
-      '',
-      comment.thinking.trim(),
-      '',
-      '</details>',
-    );
-  }
 }
 
 function appendFinding(lines: string[], comment: OcrComment): void {
