@@ -7,7 +7,8 @@ import {
   resolveOpenCodeProvider,
   resolveProviderHost,
 } from '../lib/llm-provider';
-import type { AgentJob, AppConfig, LlmProviderId } from '../types';
+import { hasModelTokenCost, resolveModelTokenCost } from '../lib/model-cost';
+import type { AgentJob, AppConfig, LlmProviderId, ModelTokenCost } from '../types';
 import { collectLoopModels } from '../domains/agents/worker/loop-model';
 
 /** Legacy workspace filename — excluded from agent commits if still present. */
@@ -60,6 +61,8 @@ export interface OpenCodeModelConfig {
   name: string;
   /** Lets OpenCode compact before overflowing; only set when the server reports a context window. */
   limit?: { context: number; output: number };
+  /** Per-million-token rates in USD; emitted only when the model has configured costs. */
+  cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
   options?: {
     reasoningEffort?: string;
     extraBody?: Record<string, unknown>;
@@ -172,10 +175,30 @@ export function buildModelLimit(contextLength: number): { context: number; outpu
   return { context: contextLength, output };
 }
 
-export function buildModelConfig(modelId: string, contextLength?: number): OpenCodeModelConfig {
+/** OpenCode v1 model `cost` shape (USD per million tokens); null when no rates are configured. */
+export function buildModelCost(cost: ModelTokenCost | null): OpenCodeModelConfig['cost'] | null {
+  if (!hasModelTokenCost(cost)) return null;
+  const rate = (value?: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  return {
+    input: rate(cost?.input),
+    output: rate(cost?.output),
+    ...(typeof cost?.cacheRead === 'number' ? { cache_read: cost.cacheRead } : {}),
+    ...(typeof cost?.cacheWrite === 'number' ? { cache_write: cost.cacheWrite } : {}),
+  };
+}
+
+export function buildModelConfig(
+  modelId: string,
+  contextLength?: number,
+  modelCost?: ModelTokenCost | null,
+): OpenCodeModelConfig {
   const entry: OpenCodeModelConfig = { name: modelId };
   if (contextLength && contextLength > 0) {
     entry.limit = buildModelLimit(contextLength);
+  }
+  const cost = buildModelCost(modelCost ?? null);
+  if (cost) {
+    entry.cost = cost;
   }
   if (isGemmaThinkingModel(modelId)) {
     entry.options = buildGemmaReasoningWorkaroundOptions();
@@ -234,7 +257,10 @@ function buildProviderEntry(
     name,
     options: providerOptions,
     models: Object.fromEntries(
-      registeredModelIds.map((id) => [id, buildModelConfig(id, modelContextLengths[id])]),
+      registeredModelIds.map((id) => [
+        id,
+        buildModelConfig(id, modelContextLengths[id], resolveModelTokenCost(config.modelTokenCosts ?? {}, id)),
+      ]),
     ),
   };
 }

@@ -8,6 +8,7 @@ import {
   type HealthResponse,
   type LoopVerbModels,
   type LlmProviderId,
+  type ModelTokenCosts,
   type StatusVariant,
 } from '../api/types';
 import { useApiToken } from '../hooks/useApiToken';
@@ -65,6 +66,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
     ACT: '',
     REFLECT: '',
   });
+  const [modelTokenCosts, setModelTokenCosts] = useState<ModelTokenCosts>({});
 
   const [githubStatus, setGithubStatus] = useState('');
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -100,6 +102,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
     setInteractiveAgentTimeoutSeconds(next.interactiveAgentTimeoutSeconds ?? 3600);
     setLoopAgentTimeoutSeconds(next.loopAgentTimeoutSeconds ?? 3600);
     setLoopVerbModels(mergeLoopVerbModels(next.loopVerbModels));
+    setModelTokenCosts(next.modelTokenCosts ?? {});
   }, []);
 
   const loadHealth = useCallback(async () => {
@@ -164,6 +167,7 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
           ollamaCloudBaseUrl: ollamaCloudBaseUrl.trim(),
           openaiCompatibleBaseUrl: openaiCompatibleBaseUrl.trim(),
           openaiCompatibleApiKey: openaiCompatibleApiKey.trim(),
+          modelTokenCosts,
         };
       case 'github':
         return {
@@ -297,6 +301,8 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
             setOpenaiCompatibleBaseUrl={setOpenaiCompatibleBaseUrl}
             openaiCompatibleApiKey={openaiCompatibleApiKey}
             setOpenaiCompatibleApiKey={setOpenaiCompatibleApiKey}
+            modelTokenCosts={modelTokenCosts}
+            setModelTokenCosts={setModelTokenCosts}
             onRefreshLocal={refreshHealth}
             onRefreshCloud={refreshHealth}
             searchQuery={searchQuery}

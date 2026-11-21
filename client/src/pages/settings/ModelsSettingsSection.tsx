@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
-import type { AppConfig, OllamaStatus } from '../../api/types';
+import { useMemo, useState } from 'react';
+import type { AppConfig, ModelTokenCost, ModelTokenCosts, OllamaStatus } from '../../api/types';
 import { IconRefresh } from '../../components/icons';
 import { SectionCard } from '../../components/ui/Card';
-import { Button, Field, TextInput } from '../../components/ui/Form';
+import { Button, Field, Select, TextInput } from '../../components/ui/Form';
 import { formatFileSize, formatModelUpdated } from '../../lib/format';
 import { StatusMessage } from '../../components/ui/StatusMessage';
 import {
@@ -10,6 +10,7 @@ import {
   describeProviderStatus,
   fieldMatchesSearch,
   makeShowSection,
+  modelOptions,
 } from './helpers';
 
 interface ModelsSettingsSectionProps {
@@ -29,6 +30,8 @@ interface ModelsSettingsSectionProps {
   setOpenaiCompatibleBaseUrl: (value: string) => void;
   openaiCompatibleApiKey: string;
   setOpenaiCompatibleApiKey: (value: string) => void;
+  modelTokenCosts: ModelTokenCosts;
+  setModelTokenCosts: React.Dispatch<React.SetStateAction<ModelTokenCosts>>;
   onRefreshLocal: () => void;
   onRefreshCloud: () => void;
   searchQuery: string;
@@ -80,6 +83,58 @@ function ModelList({
   );
 }
 
+const RATE_FIELDS = [
+  ['input', 'Input'],
+  ['output', 'Output'],
+  ['cacheRead', 'Cache read'],
+  ['cacheWrite', 'Cache write'],
+] as const;
+
+type RateField = (typeof RATE_FIELDS)[number][0];
+
+function TokenCostRow({
+  title,
+  cost,
+  onRate,
+  onRemove,
+}: {
+  title: string;
+  cost: ModelTokenCost;
+  onRate: (field: RateField, raw: string) => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className="rounded border border-outline-variant p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="code-md text-on-surface-variant">{title}</span>
+        {onRemove ? (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs text-muted hover:text-error cursor-pointer"
+          >
+            Remove
+          </button>
+        ) : null}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        {RATE_FIELDS.map(([field, label]) => (
+          <Field key={field} label={label}>
+            <TextInput
+              type="number"
+              min="0"
+              step="any"
+              placeholder="0"
+              value={cost[field] === undefined ? '' : String(cost[field])}
+              onChange={(e) => onRate(field, e.target.value)}
+            />
+          </Field>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ModelsSettingsSection({
   config,
   ollamaLocal,
@@ -97,12 +152,55 @@ export function ModelsSettingsSection({
   setOpenaiCompatibleBaseUrl,
   openaiCompatibleApiKey,
   setOpenaiCompatibleApiKey,
+  modelTokenCosts,
+  setModelTokenCosts,
   onRefreshLocal,
   onRefreshCloud,
   searchQuery,
 }: ModelsSettingsSectionProps) {
   const query = searchQuery.trim().toLowerCase();
   const showSection = makeShowSection(searchQuery);
+
+  const costCatalog = useMemo(() => {
+    const names = new Set<string>();
+    for (const status of [ollamaLocal, ollamaCloud, openaiCompatible]) {
+      for (const model of status?.models ?? []) names.add(model.name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [ollamaLocal, ollamaCloud, openaiCompatible]);
+
+  const [newCostModel, setNewCostModel] = useState('');
+
+  const costEntries = useMemo(
+    () =>
+      Object.entries(modelTokenCosts)
+        .filter(([model]) => model !== '*')
+        .sort(([a], [b]) => a.localeCompare(b)),
+    [modelTokenCosts],
+  );
+
+  const updateCost = (model: string, field: 'input' | 'output' | 'cacheRead' | 'cacheWrite', raw: string) => {
+    const value = raw === '' ? undefined : Number(raw);
+    setModelTokenCosts((prev) => ({
+      ...prev,
+      [model]: { ...prev[model], [field]: Number.isFinite(value) ? value : undefined },
+    }));
+  };
+
+  const addCostEntry = () => {
+    const key = newCostModel.trim();
+    if (!key) return;
+    setModelTokenCosts((prev) => ({ ...prev, [key]: prev[key] ?? {} }));
+    setNewCostModel('');
+  };
+
+  const removeCostEntry = (model: string) => {
+    setModelTokenCosts((prev) => {
+      const next = { ...prev };
+      delete next[model];
+      return next;
+    });
+  };
 
   const localInfo = describeProviderStatus(ollamaLocal, 'Ollama');
   const cloudInfo = describeProviderStatus(ollamaCloud, 'Ollama Cloud');
@@ -254,6 +352,44 @@ export function ModelsSettingsSection({
           </div>
           <div className="mt-4">
             <ModelList models={openaiCompatible?.models} query={query} />
+          </div>
+        </SectionCard>
+      ) : null}
+
+      {showSection(SETTINGS_SEARCH_KEYWORDS.models.costs) ? (
+        <SectionCard title="Token costs (USD per 1M tokens)" icon={<span className="size-2 rounded-full bg-secondary" />}>
+          <p className="mb-4 text-xs text-muted">
+            Ollama reports no cost amounts, so session cost is computed from token usage using
+            these rates. A cost reported by the provider always wins when present. `*` is the
+            default entry for models without their own row; model rows can be keyed by model id
+            or <code>provider/model</code>.
+          </p>
+          <div className="grid gap-3">
+            <TokenCostRow title="Default (*)" cost={modelTokenCosts['*'] ?? {}} onRate={(f, raw) => updateCost('*', f, raw)} />
+            {costEntries.map(([model, cost]) => (
+              <TokenCostRow
+                key={model}
+                title={model}
+                cost={cost}
+                onRate={(f, raw) => updateCost(model, f, raw)}
+                onRemove={() => removeCostEntry(model)}
+              />
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <Field label="Add model entry" className="flex-1 min-w-[220px]">
+              <Select value={newCostModel} onChange={(e) => setNewCostModel(e.target.value)}>
+                <option value="">Choose model…</option>
+                {modelOptions(costCatalog, newCostModel).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button type="button" variant="secondary" onClick={addCostEntry}>
+              Add
+            </Button>
           </div>
         </SectionCard>
       ) : null}
