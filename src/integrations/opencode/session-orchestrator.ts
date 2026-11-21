@@ -8,6 +8,7 @@ import {
 } from '../../services/opencode-config';
 import { resolveModelContextLengths } from '../../services/ollama-probe';
 import type { NormalizedTool } from '../../lib/tool-event';
+import { computeModelCost, hasModelTokenCost, resolveModelTokenCost } from '../../lib/model-cost';
 import {
   extractAssistantTextFromPayload,
   mergeAssistantText,
@@ -37,6 +38,7 @@ import type {
   AgentTokenUsage,
   AppConfig,
   LoopVerb,
+  ModelTokenCosts,
 } from '../../types';
 import { createOpenCodeEventMapper, type AgentRunMode } from './event-mapper';
 import {
@@ -90,14 +92,19 @@ interface MessageTokenInfo {
 
 /**
  * Extract token counts and cost from an assistant.message payload's `info` field.
- * Returns null if no token data is present.
+ * Providers that report no cost (e.g. Ollama) fall back to the configured per-model
+ * rates. Returns null if no token data is present.
  */
-function extractMessageTokenUsage(payload: Record<string, unknown>): {
+export function extractMessageTokenUsage(
+  payload: Record<string, unknown>,
+  modelTokenCosts: ModelTokenCosts,
+): {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  estimatedCost: boolean;
   model: string;
 } | null {
   const msgInfo = payload.info as MessageTokenInfo | undefined;
@@ -105,13 +112,21 @@ function extractMessageTokenUsage(payload: Record<string, unknown>): {
   if (!tokens) {
     return null;
   }
-  return {
+  const usage = {
     input: typeof tokens.input === 'number' ? tokens.input : 0,
     output: typeof tokens.output === 'number' ? tokens.output : 0,
     cacheRead: typeof tokens.cache_read === 'number' ? tokens.cache_read : 0,
     cacheWrite: typeof tokens.cache_write === 'number' ? tokens.cache_write : 0,
-    cost: typeof msgInfo?.cost === 'number' ? msgInfo.cost : 0,
-    model: typeof msgInfo?.model === 'string' ? msgInfo.model : '(unknown)',
+  };
+  const reportedCost = typeof msgInfo?.cost === 'number' ? msgInfo.cost : 0;
+  const model = typeof msgInfo?.model === 'string' ? msgInfo.model : '(unknown)';
+  const rates = resolveModelTokenCost(modelTokenCosts, model);
+  const estimated = reportedCost === 0 && hasModelTokenCost(rates);
+  return {
+    ...usage,
+    cost: estimated ? computeModelCost(rates!, usage) : reportedCost,
+    estimatedCost: estimated,
+    model,
   };
 }
 
@@ -453,7 +468,7 @@ export async function runSessionOrchestrator(
       accumulatedStreamedText = '';
 
       // Extract and accumulate token usage from this message
-      const msgTokens = extractMessageTokenUsage(mapped.payload);
+      const msgTokens = extractMessageTokenUsage(mapped.payload, runConfig.modelTokenCosts ?? {});
       if (msgTokens) {
         totalInputTokens += msgTokens.input;
         totalOutputTokens += msgTokens.output;
@@ -462,7 +477,7 @@ export async function runSessionOrchestrator(
         totalCost += msgTokens.cost;
         hasTokenUsage = true;
         logOpenCodeSseEvent(
-          `token usage model=${msgTokens.model} input=${msgTokens.input} output=${msgTokens.output} cacheRead=${msgTokens.cacheRead} cost=$${msgTokens.cost.toFixed(6)} | session total: input=${totalInputTokens} output=${totalOutputTokens} cost=$${totalCost.toFixed(6)}`,
+          `token usage model=${msgTokens.model} input=${msgTokens.input} output=${msgTokens.output} cacheRead=${msgTokens.cacheRead} cost=$${msgTokens.cost.toFixed(6)}${msgTokens.estimatedCost ? ' (estimated from configured rates)' : ''} | session total: input=${totalInputTokens} output=${totalOutputTokens} cost=$${totalCost.toFixed(6)}`,
         );
         const usage: AgentTokenUsage = {
           inputTokens: totalInputTokens,
@@ -910,7 +925,7 @@ export async function startOpenCodeLoopSession(options: {
         turnState.lastAssistantText = text;
       }
 
-      const msgTokens = extractMessageTokenUsage(mapped.payload);
+      const msgTokens = extractMessageTokenUsage(mapped.payload, runConfig.modelTokenCosts ?? {});
       if (msgTokens) {
         totalInputTokens += msgTokens.input;
         totalOutputTokens += msgTokens.output;
@@ -920,7 +935,7 @@ export async function startOpenCodeLoopSession(options: {
         hasTokenUsage = true;
         appendLog(
           logPath,
-          `OpenCode SSE: token usage model=${msgTokens.model} input=${msgTokens.input} output=${msgTokens.output} cacheRead=${msgTokens.cacheRead} cost=$${msgTokens.cost.toFixed(6)} | session total: input=${totalInputTokens} output=${totalOutputTokens} cost=$${totalCost.toFixed(6)}`,
+          `OpenCode SSE: token usage model=${msgTokens.model} input=${msgTokens.input} output=${msgTokens.output} cacheRead=${msgTokens.cacheRead} cost=$${msgTokens.cost.toFixed(6)}${msgTokens.estimatedCost ? ' (estimated from configured rates)' : ''} | session total: input=${totalInputTokens} output=${totalOutputTokens} cost=$${totalCost.toFixed(6)}`,
         );
         const usage: AgentTokenUsage = {
           inputTokens: totalInputTokens,

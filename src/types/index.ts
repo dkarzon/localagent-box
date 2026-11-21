@@ -61,6 +61,12 @@ export interface AppConfig {
   /** Per-verb model overrides for loop mode. Empty string = use fallback. */
   loopVerbModels: LoopVerbModels;
   /**
+   * Token costs per model in USD per 1,000,000 tokens. Keys are model ids
+   * (`llama3.2` or `ollama/llama3.2`); `*` is the fallback. Ollama reports no
+   * cost amounts, so session cost is computed from usage using these rates.
+   */
+  modelTokenCosts?: ModelTokenCosts;
+  /**
    * Workspace bootstrap run from the worker process (P2-T4). These keys may be
    * set in `config.json`; in a worker sandbox that file rarely exists, so
    * `bootstrapAutoDetect` and `globalSetupTimeoutMs` are additionally hydrated
@@ -108,6 +114,7 @@ export interface PublicConfig {
   interactiveAgentTimeoutSeconds: number;
   loopAgentTimeoutSeconds: number;
   loopVerbModels: LoopVerbModels;
+  modelTokenCosts?: ModelTokenCosts;
   /** Bundled server default from config/loop.default.json */
   loopDefaultMaxIterations: number;
 }
@@ -395,6 +402,17 @@ export interface AgentTokenUsage {
   cacheWriteTokens?: number;
   cost?: number;
 }
+
+/** Per-category token rates in USD per 1,000,000 tokens. Missing categories cost nothing. */
+export interface ModelTokenCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+/** Model id (or `provider/model`) → token rates. `*` matches any model as a fallback. */
+export type ModelTokenCosts = Record<string, ModelTokenCost>;
 
 /** `setup` block of the repo's .localagent-box/environment.json */
 export interface RepoEnvironmentSetupConfig {

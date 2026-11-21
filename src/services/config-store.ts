@@ -34,6 +34,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     ACT: '',
     REFLECT: '',
   },
+  modelTokenCosts: {},
 };
 
 export function getLoopVerbModelsDefault(): LoopVerbModels {
@@ -128,6 +129,7 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       reviewModel: config.reviewModel || '',
       ocrSkipWorkspaceBootstrap: config.ocrSkipWorkspaceBootstrap === true,
       loopVerbModels: config.loopVerbModels,
+      modelTokenCosts: config.modelTokenCosts ?? {},
       loopDefaultMaxIterations: loadServerDefaultLoopConfig().maxIterations,
     };
   }
