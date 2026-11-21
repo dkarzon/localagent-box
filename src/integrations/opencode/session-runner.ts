@@ -5,7 +5,12 @@ import net from 'net';
 import path from 'path';
 import type { ChildProcess } from 'child_process';
 import type { SpawnFn } from '../../types';
-import { collectOpenCodeSpawnDebug, getOpencodeBin, type OpenCodeModelRef } from './runner';
+import {
+  collectOpenCodeSpawnDebug,
+  getOpencodeBin,
+  resolveOpencodeExecutable,
+  type OpenCodeModelRef,
+} from './runner';
 import { getServerEnv } from '../../config/env';
 import { registerChildCleanup } from '../../lib/child-cleanup';
 import { createOpenCodeV2EventAdapter, parseV2SseDataLine } from './v2-event-adapter';
@@ -194,7 +199,7 @@ export function createOpenCodeSessionRunner(options: {
 }): OpenCodeSessionRunner {
   const spawnImpl = options.spawn || spawn;
   const fetchImpl = options.fetch || fetch;
-  const opencodeBin = options.opencodeBin || getOpencodeBin();
+  const opencodeBin = resolveOpencodeExecutable(options.opencodeBin || getOpencodeBin());
   const isolationEnv = ensureIsolationDirs(options.agentDir);
   const password = options.password || generateServerPassword();
   const authHeader = buildBasicAuthHeader(password);
@@ -271,6 +276,7 @@ export function createOpenCodeSessionRunner(options: {
   }
 
   async function startServer(): Promise<void> {
+    assertOpencodeBinIsNotDirectory(opencodeBin);
     const resolvedPort = await resolvePort();
     baseUrl = `http://127.0.0.1:${resolvedPort}`;
     const serveArgs = ['serve', '--hostname', '127.0.0.1', '--port', String(resolvedPort)];
@@ -628,6 +634,22 @@ export function createOpenCodeSessionRunner(options: {
     subscribeEvents,
     dispose,
   };
+}
+
+/** `spawn(<directory>)` only reports ENOENT; name the real problem (usually OPENCODE_BIN). */
+export function assertOpencodeBinIsNotDirectory(bin: string, fsImpl: Pick<typeof fs, 'statSync'> = fs): void {
+  let isDirectory = false;
+  try {
+    isDirectory = fsImpl.statSync(bin).isDirectory();
+  } catch {
+    return; // not a path on disk (e.g. a bare command on PATH) — let spawn resolve it
+  }
+  if (isDirectory) {
+    const exe = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
+    throw new Error(
+      `OpenCode binary "${bin}" is a directory, not an executable — point OPENCODE_BIN at the ${exe} file (or unset it to use "opencode" from PATH)`,
+    );
+  }
 }
 
 function dirWritable(dirPath: string): boolean {

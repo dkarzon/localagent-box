@@ -143,7 +143,7 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `OCR_REVIEW_TIMEOUT` | `30` | Per-file OCR review deadline in minutes (`0` disables). OCR's own default is 10. |
 | `OCR_LLM_TIMEOUT` | `600` | Per-request OCR LLM HTTP timeout in seconds. OCR's own default is 300. |
 | `OCR_REVIEW_CONCURRENCY` | `8` | Max file groups reviewed in parallel. Lower for local LLMs (e.g. Ollama). |
-| `OPENCODE_BIN` | `opencode` | OpenCode CLI binary |
+| `OPENCODE_BIN` | `opencode` | OpenCode CLI binary (must be the executable, not its folder). On Windows a bare `opencode` is resolved to the real `opencode.exe` behind npm's `.cmd` shim, so it usually needs no setting |
 | `OPENCODE_PORT_BASE` | `4100` | Base port for per-agent `opencode serve` |
 | `OPENCODE_STARTUP_TIMEOUT_MS` | `900000` | Max wait for `opencode serve` to become ready |
 
@@ -156,6 +156,29 @@ docker run -it --rm -p 8080:8080 -v localagent-data:/data 'localagent-box'
 | `npm run build` | Compile `src/` → `dist/` |
 | `npm run build:ui` | Build UI into `public/` |
 | `npm start` | Run compiled API (`dist/server.js`) |
+| `npm run smoke` | Smoke-test the OpenCode harness end to end (see below) |
+| `npm run smoke:docker` | Build the image and run the smoke test inside a container |
+
+### Harness smoke test
+
+Runs one real OpenCode turn through the same path agent runs use: generated `opencode.json` → `opencode serve` → authenticated readiness → event stream → session → a prompt that must write `SMOKE.txt` with a tool call. Each stage prints ✔ / ✖ / ! (warning). It uses the provider and model from Settings (`DATA_DIR/config.json`), plus any `OLLAMA_*` / `OPENAI_COMPATIBLE_*` / `OPENCODE_MODEL` / `OPENCODE_PROVIDER` values from the environment or `.env` that the server would seed on startup (applied in memory, never saved). It runs in a throwaway workspace and never touches agents, repos or GitHub. If no model is set anywhere, pass `--model`.
+
+```bash
+npm run smoke                                   # local, from source
+npm run smoke -- --model qwen3-coder:30b        # override the Settings model
+npm run smoke -- --server-only                  # no model call: config, server, auth, events, session
+docker exec localagent-box node /app/dist/entrypoints/smoke.js   # inside the container
+```
+
+To test what ships, `npm run smoke:docker` builds the image from your checkout (tagged `localagent-box:smoke`, so a running `localagent-box` container is untouched) and runs the smoke test in a throwaway container. Provider settings (`OPENCODE_*`, `OLLAMA_*`, `OPENAI_COMPATIBLE_*`) are passed in from your shell or `.env` by name, so secrets stay off the command line. It warns if a provider URL uses `localhost`, which inside the container means the container itself (use `host.docker.internal` or a LAN address).
+
+```bash
+npm run smoke:docker -- --model qwen3-coder:30b            # build + run (smoke options are forwarded)
+npm run smoke:docker -- --no-build --data agent-data       # reuse the image; read Settings from the compose volume
+npm run smoke:docker -- --container localagent-box         # run inside an existing container, with its Settings
+```
+
+Options: `--provider <id>`, `--timeout <sec>` (default 300), `--codegraph`, `--keep` (keep the temp workspace), `--json`. Exit code `0` = passed (warnings allowed), `1` = a check failed, `2` = bad usage. On failure the temp workspace and a `debug.log` are kept and their path is printed.
 
 ## GitHub App setup
 
@@ -185,6 +208,7 @@ Read [SECURITY.md](./SECURITY.md) before deploying anywhere beyond a local trial
 | Review completes but nothing on GitHub | No PR exists for `headBranch`, or GitHub App lacks pull request write — check logs for "No matching PR" or GitHub warnings |
 | The `localagent-box / review` check is missing on PRs | The installation hasn't accepted the **Checks: Read and write** permission — update the app's permissions and re-approve the installation (GitHub notifies the owner); reviews still complete without it |
 | The `localagent-box / review` check is stuck `in_progress` | The server was restarted mid-review — startup reconciliation cancels interrupted reviews' checks; if one remains, retry the review (a new check run replaces it) |
+| Agents fail early or hang and you're not sure if it's the model or the harness | Run the [harness smoke test](#harness-smoke-test); the first ✖ shows which stage broke, with the provider's own error message |
 | `npm install` hangs or loops | Use `npm install --ignore-scripts` at the repo root, then `npm install --prefix client` separately (see [Install dependencies](#install-dependencies)) |
 
 For anything else, check `GET /agents/:id/logs` and `GET /agents/:id/events` for the failing session, and [SECURITY.md](./SECURITY.md) if the question is auth/network-related.

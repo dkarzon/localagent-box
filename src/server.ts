@@ -16,8 +16,8 @@ import { createOllamaChat } from './services/ollama-client';
 import { createGithubAppService } from './services/github-app';
 import { createGitService } from './services/git-service';
 import { maybePopulateBotGitIdentity } from './lib/github-bot-identity';
-import { isLlmProviderId, providerNotConfiguredMessage } from './lib/llm-provider';
-import { isValidHttpUrl } from './lib/validation';
+import { providerNotConfiguredMessage } from './lib/llm-provider';
+import { buildEnvConfigDefaults } from './domains/config/env-config-defaults';
 import { createRepoService } from './domains/repos/repo.service';
 import { createAgentService } from './domains/agents/agent.service';
 import healthRoute from './routes/health';
@@ -41,51 +41,9 @@ function bootstrapConfig(
 ) {
   const current = configRepository.load();
 
-  const partial: import('./types').ConfigPartial = {};
-
-  if (env.ollamaBaseUrl && !current.ollamaBaseUrl) {
-    partial.ollamaBaseUrl = env.ollamaBaseUrl;
-    partial.opencodeModel = env.opencodeModel || current.opencodeModel;
-    if (env.opencodeProvider && !isLlmProviderId(env.opencodeProvider)) {
-      getLogger().warn(
-        { opencodeProvider: env.opencodeProvider },
-        'Ignoring invalid OPENCODE_PROVIDER env value',
-      );
-    }
-    partial.opencodeProvider = isLlmProviderId(env.opencodeProvider)
-      ? env.opencodeProvider
-      : current.opencodeProvider;
-  }
-  if (env.ollamaCloudApiKey && !current.ollamaCloudApiKey) {
-    partial.ollamaCloudApiKey = env.ollamaCloudApiKey;
-  }
-  if (env.ollamaCloudBaseUrl && !current.ollamaCloudBaseUrl) {
-    if (isValidHttpUrl(env.ollamaCloudBaseUrl)) {
-      partial.ollamaCloudBaseUrl = env.ollamaCloudBaseUrl;
-    } else {
-      getLogger().warn(
-        { ollamaCloudBaseUrl: env.ollamaCloudBaseUrl },
-        'Ignoring invalid OLLAMA_CLOUD_BASE_URL env value (must be an http(s) URL)',
-      );
-    }
-  }
-  if (env.openaiCompatibleBaseUrl && !current.openaiCompatibleBaseUrl) {
-    if (isValidHttpUrl(env.openaiCompatibleBaseUrl)) {
-      partial.openaiCompatibleBaseUrl = env.openaiCompatibleBaseUrl;
-      if (env.opencodeProvider === 'openai-compatible') {
-        partial.opencodeProvider = 'openai-compatible';
-        partial.opencodeModel = env.opencodeModel || current.opencodeModel;
-      }
-    } else {
-      getLogger().warn(
-        { openaiCompatibleBaseUrl: env.openaiCompatibleBaseUrl },
-        'Ignoring invalid OPENAI_COMPATIBLE_BASE_URL env value (must be an http(s) URL)',
-      );
-    }
-  }
-  if (env.openaiCompatibleApiKey && !current.openaiCompatibleApiKey) {
-    partial.openaiCompatibleApiKey = env.openaiCompatibleApiKey;
-  }
+  const partial = buildEnvConfigDefaults(current, env, (fields, message) =>
+    getLogger().warn(fields, message),
+  );
 
   if (Object.keys(partial).length > 0) {
     return configRepository.save(partial);

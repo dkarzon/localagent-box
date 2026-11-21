@@ -6,6 +6,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import type { SpawnFn } from '../../types';
 import {
+  assertOpencodeBinIsNotDirectory,
   buildBasicAuthHeader,
   createOpenCodeSessionRunner,
   getAgentOpenCodeConfigDir,
@@ -257,6 +258,7 @@ describe('createOpenCodeSessionRunner (v2 API)', () => {
       agentDir,
       port: 4556,
       spawn: spawnImpl,
+      opencodeBin: 'opencode',
       password: 'secret-pw',
       onServerOutput: (chunk) => output.push(chunk),
       fetch: (async () => new Response(null, { status: 204 })) as unknown as typeof fetch,
@@ -265,5 +267,20 @@ describe('createOpenCodeSessionRunner (v2 API)', () => {
     serveChild?.stdout.emit('data', Buffer.from('server password secret-pw\n'));
     assert.equal(output.join(''), 'server password ***\n');
     await runner.dispose();
+  });
+});
+
+describe('assertOpencodeBinIsNotDirectory', () => {
+  it('rejects a directory with a message naming OPENCODE_BIN', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-bin-'));
+    assert.throws(() => assertOpencodeBinIsNotDirectory(dir), /is a directory.*OPENCODE_BIN/);
+  });
+
+  it('allows files and bare command names', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-bin-'));
+    const file = path.join(dir, 'opencode');
+    fs.writeFileSync(file, '');
+    assert.doesNotThrow(() => assertOpencodeBinIsNotDirectory(file));
+    assert.doesNotThrow(() => assertOpencodeBinIsNotDirectory('opencode'));
   });
 });

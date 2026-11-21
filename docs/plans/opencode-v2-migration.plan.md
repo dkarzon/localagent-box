@@ -250,14 +250,18 @@ Output: a v2 OpenAPI snapshot, event fixtures, and answers to the unknowns, appe
 - **Reasoning fix confirmed:** `conversation.jsonl` now holds 15 short reply-text entries ending in the final summary, where the previous run held 34 entries of reasoning.
 - Generated config verified in the volume: absolute `instructions` path, `permissions` array (`* allow`, `question deny`), `mcp.servers.codegraph`, and the v1-form `ollama` provider.
 
+**Harness smoke test (2026-11-21, uncommitted):** `npm run smoke`, or `node dist/entrypoints/smoke.js` in Docker (`src/entrypoints/smoke.ts` and `src/integrations/opencode/smoke-test.ts`).
+- Runs the real agent path in throwaway dirs with the Settings provider and model: config → serve → auth → events → session → one turn that must write `SMOKE.txt` with a tool call.
+- Exit codes: 0 pass, 1 fail, 2 bad usage. `--server-only` needs no provider.
+- Verified locally against LAN Ollama `glm-5.3-flash:cloud`: 11/11 checks pass, 4 s turn. A missing model fails with the provider's message and exit 1, keeping a debug log with no secrets.
+- Unit tests: 7.
+
 **Remaining:**
 - Exercise the other modes: interactive (follow-up messages, permission card with auto-approve off, Finish), loop (per-step model switch via `/model`, session rotation), cancel mid-run (`/interrupt`), and review/autofix.
 - Interactive mode: forms (questions) aren't surfaced in the UI. This matches v1, where `question.asked` was also unhandled.
 - `config/opencode-tool-instructions.md` still tells models to use the `bash` tool; v2 calls it `shell`.
-- Optional: emit the native v2 `providers` shape, and add the CLAUDE.md `instructions` fallback.
-- `config/opencode-tool-instructions.md` still refers to the `bash` tool. v2 renames it to `shell`, so update it after the spike confirms tool names and whether `description` is still required.
 - `skills.paths` in `.opencode/opencode.json` isn't confirmed for v2.
-- Phases 0, 2 and 3 (spike, API client, event adapter) are blocked on running v2 locally. Installing it here was refused by the permission policy, so it needs user approval or a manual run.
+- Optional: emit the native v2 `providers` shape, and add the CLAUDE.md `instructions` fallback.
 
 ---
 
