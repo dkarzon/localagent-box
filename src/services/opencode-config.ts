@@ -7,7 +7,7 @@ import {
   resolveOpenCodeProvider,
   resolveProviderHost,
 } from '../lib/llm-provider';
-import { hasModelTokenCost, resolveModelTokenCost } from '../lib/model-cost';
+import { hasModelTokenCost, normalizeRate, resolveModelTokenCost } from '../lib/model-cost';
 import type { AgentJob, AppConfig, LlmProviderId, ModelTokenCost } from '../types';
 import { collectLoopModels } from '../domains/agents/worker/loop-model';
 
@@ -177,13 +177,12 @@ export function buildModelLimit(contextLength: number): { context: number; outpu
 
 /** OpenCode v1 model `cost` shape (USD per million tokens); null when no rates are configured. */
 export function buildModelCost(cost: ModelTokenCost | null): OpenCodeModelConfig['cost'] | null {
-  if (!hasModelTokenCost(cost)) return null;
-  const rate = (value?: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  if (!cost || !hasModelTokenCost(cost)) return null;
   return {
-    input: rate(cost?.input),
-    output: rate(cost?.output),
-    ...(typeof cost?.cacheRead === 'number' ? { cache_read: cost.cacheRead } : {}),
-    ...(typeof cost?.cacheWrite === 'number' ? { cache_write: cost.cacheWrite } : {}),
+    input: normalizeRate(cost.input),
+    output: normalizeRate(cost.output),
+    ...(cost.cacheRead !== undefined ? { cache_read: normalizeRate(cost.cacheRead) } : {}),
+    ...(cost.cacheWrite !== undefined ? { cache_write: normalizeRate(cost.cacheWrite) } : {}),
   };
 }
 

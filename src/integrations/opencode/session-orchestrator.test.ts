@@ -85,13 +85,32 @@ describe('extractMessageTokenUsage', () => {
     assert.equal(usage.cacheRead, 200_000);
   });
 
-  it('falls back to the wildcard rate when the model has no entry', () => {
+  it('bills reasoning tokens at the output rate', () => {
     const usage = extractMessageTokenUsage(
-      payload({ model: 'mistral', tokens: { input: 1_000_000 } }),
-      { '*': { input: 0.1, output: 0.3 } },
+      payload({ model: 'ollama/qwen3', tokens: { input: 0, output: 100_000, reasoning: 400_000 } }),
+      { qwen3: { output: 1 } },
     );
     assert.ok(usage);
-    assert.ok(Math.abs(usage.cost - 0.1) < 1e-9);
+    assert.ok(Math.abs(usage.cost - 0.5) < 1e-9);
+  });
+
+  it('costs zero for models without their own entry (no wildcard fallback)', () => {
+    const usage = extractMessageTokenUsage(
+      payload({ model: 'mistral', tokens: { input: 1_000_000 } }),
+      { '*': { input: 0.1, output: 0.3 }, 'llama3.2': { input: 1 } },
+    );
+    assert.ok(usage);
+    assert.equal(usage.cost, 0);
+    assert.equal(usage.estimatedCost, false);
+  });
+
+  it('costs zero for a model whose entry has no rates', () => {
+    const usage = extractMessageTokenUsage(payload({ model: 'llama3.2', tokens: { input: 1_000_000 } }), {
+      'llama3.2': {},
+    });
+    assert.ok(usage);
+    assert.equal(usage.cost, 0);
+    assert.equal(usage.estimatedCost, false);
   });
 
   it('stays at zero cost when no rates are configured', () => {
@@ -102,6 +121,6 @@ describe('extractMessageTokenUsage', () => {
   });
 
   it('returns null when no token data is present', () => {
-    assert.equal(extractMessageTokenUsage({ info: { model: 'llama3.2' } }, { '*': { input: 1 } }), null);
+    assert.equal(extractMessageTokenUsage({ info: { model: 'llama3.2' } }, { 'llama3.2': { input: 1 } }), null);
   });
 });

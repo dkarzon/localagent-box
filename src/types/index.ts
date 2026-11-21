@@ -62,8 +62,8 @@ export interface AppConfig {
   loopVerbModels: LoopVerbModels;
   /**
    * Token costs per model in USD per 1,000,000 tokens. Keys are model ids
-   * (`llama3.2` or `ollama/llama3.2`); `*` is the fallback. Ollama reports no
-   * cost amounts, so session cost is computed from usage using these rates.
+   * (`llama3.2` or `ollama/llama3.2`). Ollama reports no cost amounts, so session
+   * cost is computed from usage using these rates; models without an entry cost 0.
    */
   modelTokenCosts?: ModelTokenCosts;
   /**
@@ -401,6 +401,8 @@ export interface AgentTokenUsage {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   cost?: number;
+  /** True when any part of `cost` was computed from configured `modelTokenCosts` rates rather than reported by the provider. */
+  costEstimated?: boolean;
 }
 
 /** Per-category token rates in USD per 1,000,000 tokens. Missing categories cost nothing. */
@@ -411,7 +413,7 @@ export interface ModelTokenCost {
   cacheWrite?: number;
 }
 
-/** Model id (or `provider/model`) → token rates. `*` matches any model as a fallback. */
+/** Model id (or `provider/model`) → token rates. Models without an entry cost 0. */
 export type ModelTokenCosts = Record<string, ModelTokenCost>;
 
 /** `setup` block of the repo's .localagent-box/environment.json */

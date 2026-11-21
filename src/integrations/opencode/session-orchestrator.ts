@@ -85,15 +85,22 @@ function sleep(ms: number): Promise<void> {
 }
 
 interface MessageTokenInfo {
-  tokens?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  tokens?: {
+    input?: number;
+    output?: number;
+    reasoning?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
   cost?: number;
   model?: string;
 }
 
 /**
  * Extract token counts and cost from an assistant.message payload's `info` field.
- * Providers that report no cost (e.g. Ollama) fall back to the configured per-model
- * rates. Returns null if no token data is present.
+ * A positive provider-reported cost wins. Otherwise (e.g. Ollama reports 0) the cost
+ * is computed from the rates configured for that exact model; models without an
+ * entry cost 0. Returns null if no token data is present.
  */
 export function extractMessageTokenUsage(
   payload: Record<string, unknown>,
@@ -118,13 +125,14 @@ export function extractMessageTokenUsage(
     cacheRead: typeof tokens.cache_read === 'number' ? tokens.cache_read : 0,
     cacheWrite: typeof tokens.cache_write === 'number' ? tokens.cache_write : 0,
   };
-  const reportedCost = typeof msgInfo?.cost === 'number' ? msgInfo.cost : 0;
+  const reasoning = typeof tokens.reasoning === 'number' ? tokens.reasoning : 0;
+  const reportedCost = typeof msgInfo?.cost === 'number' && msgInfo.cost > 0 ? msgInfo.cost : 0;
   const model = typeof msgInfo?.model === 'string' ? msgInfo.model : '(unknown)';
   const rates = resolveModelTokenCost(modelTokenCosts, model);
-  const estimated = reportedCost === 0 && hasModelTokenCost(rates);
+  const estimated = reportedCost === 0 && rates !== null && hasModelTokenCost(rates);
   return {
     ...usage,
-    cost: estimated ? computeModelCost(rates!, usage) : reportedCost,
+    cost: estimated && rates ? computeModelCost(rates, { ...usage, reasoning }) : reportedCost,
     estimatedCost: estimated,
     model,
   };
@@ -293,6 +301,7 @@ export async function runSessionOrchestrator(
   let totalCacheReadTokens = 0;
   let totalCacheWriteTokens = 0;
   let totalCost = 0;
+  let costEstimated = false;
   let hasTokenUsage = false;
 
   const TEXT_DEBUG_LOG_TYPES = new Set([
@@ -475,6 +484,7 @@ export async function runSessionOrchestrator(
         totalCacheReadTokens += msgTokens.cacheRead;
         totalCacheWriteTokens += msgTokens.cacheWrite;
         totalCost += msgTokens.cost;
+        costEstimated ||= msgTokens.estimatedCost;
         hasTokenUsage = true;
         logOpenCodeSseEvent(
           `token usage model=${msgTokens.model} input=${msgTokens.input} output=${msgTokens.output} cacheRead=${msgTokens.cacheRead} cost=$${msgTokens.cost.toFixed(6)}${msgTokens.estimatedCost ? ' (estimated from configured rates)' : ''} | session total: input=${totalInputTokens} output=${totalOutputTokens} cost=$${totalCost.toFixed(6)}`,
@@ -485,6 +495,7 @@ export async function runSessionOrchestrator(
           ...(totalCacheReadTokens > 0 ? { cacheReadTokens: totalCacheReadTokens } : {}),
           ...(totalCacheWriteTokens > 0 ? { cacheWriteTokens: totalCacheWriteTokens } : {}),
           cost: totalCost,
+          ...(costEstimated ? { costEstimated: true } : {}),
         };
         updateAgentRecord(agentsStore, job.agentId, { tokenUsage: usage });
       }
@@ -883,6 +894,7 @@ export async function startOpenCodeLoopSession(options: {
   let totalCacheReadTokens = 0;
   let totalCacheWriteTokens = 0;
   let totalCost = 0;
+  let costEstimated = false;
   let hasTokenUsage = false;
 
   const sseLockedStatuses = new Set<AgentStatus>([
@@ -932,6 +944,7 @@ export async function startOpenCodeLoopSession(options: {
         totalCacheReadTokens += msgTokens.cacheRead;
         totalCacheWriteTokens += msgTokens.cacheWrite;
         totalCost += msgTokens.cost;
+        costEstimated ||= msgTokens.estimatedCost;
         hasTokenUsage = true;
         appendLog(
           logPath,
@@ -943,6 +956,7 @@ export async function startOpenCodeLoopSession(options: {
           ...(totalCacheReadTokens > 0 ? { cacheReadTokens: totalCacheReadTokens } : {}),
           ...(totalCacheWriteTokens > 0 ? { cacheWriteTokens: totalCacheWriteTokens } : {}),
           cost: totalCost,
+          ...(costEstimated ? { costEstimated: true } : {}),
         };
         updateAgentRecord(agentsStore, job.agentId, { tokenUsage: usage });
       }

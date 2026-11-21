@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { AppConfig, ModelTokenCost, ModelTokenCosts, OllamaStatus } from '../../api/types';
 import { IconRefresh } from '../../components/icons';
 import { SectionCard } from '../../components/ui/Card';
-import { Button, Field, Select, TextInput } from '../../components/ui/Form';
+import { Button, Field, TextInput } from '../../components/ui/Form';
 import { formatFileSize, formatModelUpdated } from '../../lib/format';
 import { StatusMessage } from '../../components/ui/StatusMessage';
 import {
@@ -10,7 +10,6 @@ import {
   describeProviderStatus,
   fieldMatchesSearch,
   makeShowSection,
-  modelOptions,
 } from './helpers';
 
 interface ModelsSettingsSectionProps {
@@ -161,35 +160,40 @@ export function ModelsSettingsSection({
   const query = searchQuery.trim().toLowerCase();
   const showSection = makeShowSection(searchQuery);
 
-  const costCatalog = useMemo(() => {
-    const names = new Set<string>();
-    for (const status of [ollamaLocal, ollamaCloud, openaiCompatible]) {
-      for (const model of status?.models ?? []) names.add(model.name);
-    }
-    return [...names].sort((a, b) => a.localeCompare(b));
-  }, [ollamaLocal, ollamaCloud, openaiCompatible]);
-
-  const [newCostModel, setNewCostModel] = useState('');
-
   const costEntries = useMemo(
-    () =>
-      Object.entries(modelTokenCosts)
-        .filter(([model]) => model !== '*')
-        .sort(([a], [b]) => a.localeCompare(b)),
+    () => Object.entries(modelTokenCosts).sort(([a], [b]) => a.localeCompare(b)),
     [modelTokenCosts],
   );
 
-  const updateCost = (model: string, field: 'input' | 'output' | 'cacheRead' | 'cacheWrite', raw: string) => {
+  /** Discovered models that don't have a cost row yet (suggestions for the add input). */
+  const costCatalog = useMemo(() => {
+    const names = new Set<string>();
+    for (const status of [ollamaLocal, ollamaCloud, openaiCompatible]) {
+      for (const model of status?.models ?? []) {
+        if (!(model.name in modelTokenCosts)) names.add(model.name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [ollamaLocal, ollamaCloud, openaiCompatible, modelTokenCosts]);
+
+  const [newCostModel, setNewCostModel] = useState('');
+  const newCostKey = newCostModel.trim();
+  const canAddCostEntry = newCostKey !== '' && !(newCostKey in modelTokenCosts);
+
+  const updateCost = (model: string, field: RateField, raw: string) => {
     const value = raw === '' ? undefined : Number(raw);
     setModelTokenCosts((prev) => ({
       ...prev,
-      [model]: { ...prev[model], [field]: Number.isFinite(value) ? value : undefined },
+      [model]: {
+        ...prev[model],
+        [field]: value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined,
+      },
     }));
   };
 
   const addCostEntry = () => {
-    const key = newCostModel.trim();
-    if (!key) return;
+    const key = newCostKey;
+    if (!canAddCostEntry) return;
     setModelTokenCosts((prev) => ({ ...prev, [key]: prev[key] ?? {} }));
     setNewCostModel('');
   };
@@ -360,12 +364,13 @@ export function ModelsSettingsSection({
         <SectionCard title="Token costs (USD per 1M tokens)" icon={<span className="size-2 rounded-full bg-secondary" />}>
           <p className="mb-4 text-xs text-muted">
             Ollama reports no cost amounts, so session cost is computed from token usage using
-            these rates. A cost reported by the provider always wins when present. `*` is the
-            default entry for models without their own row; model rows can be keyed by model id
-            or <code>provider/model</code>.
+            these rates. A non-zero cost reported by the provider always wins. Models without a
+            row cost nothing. Rows can be keyed by model id or <code>provider/model</code>.
           </p>
           <div className="grid gap-3">
-            <TokenCostRow title="Default (*)" cost={modelTokenCosts['*'] ?? {}} onRate={(f, raw) => updateCost('*', f, raw)} />
+            {costEntries.length === 0 ? (
+              <p className="text-xs text-muted">No model costs configured — all sessions cost $0.</p>
+            ) : null}
             {costEntries.map(([model, cost]) => (
               <TokenCostRow
                 key={model}
@@ -378,16 +383,25 @@ export function ModelsSettingsSection({
           </div>
           <div className="mt-4 flex flex-wrap items-end gap-3">
             <Field label="Add model entry" className="flex-1 min-w-[220px]">
-              <Select value={newCostModel} onChange={(e) => setNewCostModel(e.target.value)}>
-                <option value="">Choose model…</option>
-                {modelOptions(costCatalog, newCostModel).map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
+              <TextInput
+                list="token-cost-models"
+                placeholder="Model id or provider/model"
+                value={newCostModel}
+                onChange={(e) => setNewCostModel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addCostEntry();
+                  }
+                }}
+              />
+              <datalist id="token-cost-models">
+                {costCatalog.map((name) => (
+                  <option key={name} value={name} />
                 ))}
-              </Select>
+              </datalist>
             </Field>
-            <Button type="button" variant="secondary" onClick={addCostEntry}>
+            <Button type="button" variant="secondary" onClick={addCostEntry} disabled={!canAddCostEntry}>
               Add
             </Button>
           </div>
