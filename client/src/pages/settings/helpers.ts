@@ -19,6 +19,7 @@ export const SETTINGS_SEARCH_KEYWORDS = {
     local: ['ollama', 'local', 'model'],
     cloud: ['cloud', 'ollama cloud', 'api key'],
     openaiCompatible: ['openai', 'compatible', 'strata', 'lm studio', 'vllm', 'llama.cpp', 'api key'],
+    costs: ['token cost', 'cost', 'pricing', 'price', 'usd', 'session cost'],
   },
   github: {
     app: ['github', 'git', 'app', 'private key'],

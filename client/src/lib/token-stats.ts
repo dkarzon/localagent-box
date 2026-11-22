@@ -34,6 +34,7 @@ function addUsage(acc: AgentTokenUsage, usage: AgentTokenUsage): AgentTokenUsage
     cacheReadTokens: (acc.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0),
     cacheWriteTokens: (acc.cacheWriteTokens ?? 0) + (usage.cacheWriteTokens ?? 0),
     cost: (acc.cost ?? 0) + (usage.cost ?? 0),
+    ...(acc.costEstimated || usage.costEstimated ? { costEstimated: true } : {}),
   };
 }
 

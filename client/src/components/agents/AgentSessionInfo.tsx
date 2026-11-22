@@ -260,7 +260,12 @@ export function AgentSessionInfo({
                 ) : null}
                 {tokenUsage.cost != null ? (
                   <div className="flex justify-between gap-4 border-t border-surface-low pt-1.5">
-                    <dt className="text-on-surface-variant">Cost</dt>
+                    <dt
+                      className="text-on-surface-variant"
+                      title={tokenUsage.costEstimated ? 'Computed from configured token rates' : undefined}
+                    >
+                      {tokenUsage.costEstimated ? 'Cost (est.)' : 'Cost'}
+                    </dt>
                     <dd className="code-md text-on-surface">{formatCost(tokenUsage.cost)}</dd>
                   </div>
                 ) : null}
