@@ -1,6 +1,7 @@
 import { CodedError } from '../../types';
 import type {
   Agent,
+  AppConfig,
   AutofixBatchPlan,
   ReviewAutofixPlan,
   ReviewFindingRecord,
@@ -717,30 +718,13 @@ export function createReviewAutofixService({
     };
 
     try {
-      let threadId = finding.github.threadId;
-
       // Thread lookup needs the PR; resolution with a cached thread ID does not.
+      if (!finding.github.threadId && typeof (agent.review?.prNumber ?? null) !== 'number') {
+        throw new Error('Review is not linked to a pull request; thread lookup is unavailable');
+      }
+      const threadId = await lookupFindingThreadId(agent, finding, config);
       if (!threadId) {
-        if (typeof finding.github.commentId !== 'number') {
-          throw new Error('Finding has no resolvable GitHub thread');
-        }
-        const prNumber = agent.review?.prNumber ?? null;
-        if (typeof prNumber !== 'number') {
-          throw new Error('Review is not linked to a pull request; thread lookup is unavailable');
-        }
-        const repo = repoManager.getRepo(agent.repoId);
-        const lookup = await githubApp.findReviewThreadIdForComment(
-          config,
-          repo.owner,
-          repo.name,
-          prNumber,
-          finding.github.commentId,
-        );
-        if (!lookup) {
-          throw new Error('Could not find the GitHub review thread for this comment');
-        }
-        threadId = lookup.threadId;
-        finding.github.threadId = threadId;
+        throw new Error('Finding has no resolvable GitHub thread');
       }
 
       await githubApp.resolvePullRequestReviewThread(config, threadId);
@@ -1305,6 +1289,72 @@ export function createReviewAutofixService({
    * coding outcome. Mirrors retryFindingResolution validation, but tolerates
    * findings without a linked comment/thread (resolution stays not_applicable).
    */
+  /**
+   * Finds (and caches on the finding) the GitHub review thread for a finding:
+   * the cached thread id, else the thread holding its linked comment, else —
+   * for findings whose comment id was never captured at review time — the
+   * thread the same PR review opened at the finding's file/line range.
+   *
+   * Returns null when the finding has nothing on GitHub to resolve (no PR,
+   * no linked comment, and no unambiguous thread at its location). Throws
+   * when a linked comment's thread cannot be found.
+   */
+  async function lookupFindingThreadId(
+    reviewAgent: Agent,
+    finding: ReviewFindingRecord,
+    config: AppConfig,
+  ): Promise<string | null> {
+    if (finding.github.threadId) {
+      return finding.github.threadId;
+    }
+    const prNumber = reviewAgent.review?.prNumber ?? null;
+    if (typeof prNumber !== 'number') {
+      return null;
+    }
+    const repo = repoManager.getRepo(reviewAgent.repoId);
+
+    if (typeof finding.github.commentId === 'number') {
+      const lookup = await githubApp.findReviewThreadIdForComment(
+        config,
+        repo.owner,
+        repo.name,
+        prNumber,
+        finding.github.commentId,
+      );
+      if (!lookup) {
+        throw new Error('Could not find the GitHub review thread for this comment');
+      }
+      finding.github.threadId = lookup.threadId;
+      return lookup.threadId;
+    }
+
+    // Same placement rule the review uses when posting line comments.
+    const reviewId = finding.github.reviewId ?? reviewAgent.review?.githubReviewId ?? null;
+    const line = finding.endLine ?? finding.startLine;
+    if (!reviewId || !finding.path || typeof line !== 'number' || line <= 0) {
+      return null;
+    }
+    const startLine =
+      typeof finding.startLine === 'number' && finding.startLine > 0 && finding.startLine < line
+        ? finding.startLine
+        : null;
+    const located = await githubApp.findReviewThreadForLocation(config, repo.owner, repo.name, prNumber, {
+      reviewId,
+      path: finding.path,
+      line,
+      startLine,
+    });
+    if (!located) {
+      return null;
+    }
+    finding.github.reviewId = reviewId;
+    finding.github.threadId = located.threadId;
+    if (located.commentId !== null) {
+      finding.github.commentId = located.commentId;
+    }
+    return located.threadId;
+  }
+
   async function resolveFindingThreadAfterFix(
     reviewAgentId: string,
     finding: ReviewFindingRecord,
@@ -1314,31 +1364,15 @@ export function createReviewAutofixService({
       if (finding.github.resolutionStatus === 'resolved') {
         return;
       }
-      let threadId = finding.github.threadId;
+      const threadId = await lookupFindingThreadId(repository.getAgent(reviewAgentId), finding, config);
       if (!threadId) {
-        if (typeof finding.github.commentId !== 'number') {
-          return;
-        }
-        const reviewAgent = repository.getAgent(reviewAgentId);
-        const prNumber = reviewAgent.review?.prNumber ?? null;
-        if (typeof prNumber !== 'number') {
+        // A linked comment with no PR to look it up in has nothing resolvable;
+        // an unlinked finding keeps its status.
+        if (typeof finding.github.commentId === 'number') {
           finding.github.resolutionStatus = 'not_applicable';
           finding.github.resolutionError = null;
-          return;
         }
-        const repo = repoManager.getRepo(reviewAgent.repoId);
-        const lookup = await githubApp.findReviewThreadIdForComment(
-          config,
-          repo.owner,
-          repo.name,
-          prNumber,
-          finding.github.commentId,
-        );
-        if (!lookup) {
-          throw new Error('Could not find the GitHub review thread for this comment');
-        }
-        threadId = lookup.threadId;
-        finding.github.threadId = threadId;
+        return;
       }
       await githubApp.resolvePullRequestReviewThread(config, threadId);
       finding.github.resolutionStatus = 'resolved';
@@ -1348,6 +1382,38 @@ export function createReviewAutofixService({
       const message = err instanceof Error ? err.message : String(err);
       finding.github.resolutionStatus = 'failed';
       finding.github.resolutionError = message;
+    }
+  }
+
+  /**
+   * Records in the review log what happened to each fixed finding's GitHub
+   * thread, so a comment left open is explained rather than silent.
+   */
+  function logThreadResolutionOutcome(
+    reviewAgentId: string,
+    fixAgentId: string,
+    fixedFindings: ReviewFindingRecord[],
+  ): void {
+    const logPath = repository.getLogPath(reviewAgentId);
+    const resolved = fixedFindings.filter((entry) => entry.github.resolutionStatus === 'resolved');
+    const unlinked = fixedFindings.filter(
+      (entry) => entry.github.resolutionStatus !== 'resolved' && entry.github.resolutionStatus !== 'failed',
+    );
+    const failed = fixedFindings.filter((entry) => entry.github.resolutionStatus === 'failed');
+    if (resolved.length > 0) {
+      appendLog(logPath, `Fix agent ${fixAgentId}: resolved ${resolved.length} GitHub comment thread(s)`);
+    }
+    if (unlinked.length > 0) {
+      appendLog(
+        logPath,
+        `Fix agent ${fixAgentId}: ${unlinked.length} fixed finding(s) have no linked GitHub comment; nothing to resolve (${unlinked.map((entry) => entry.id).join(', ')})`,
+      );
+    }
+    for (const finding of failed) {
+      appendLog(
+        logPath,
+        `Warning: fix agent ${fixAgentId}: resolving the GitHub comment for ${finding.id} failed — ${finding.github.resolutionError ?? 'unknown error'}`,
+      );
     }
   }
 
@@ -1401,6 +1467,7 @@ export function createReviewAutofixService({
         await resolveFindingThreadAfterFix(reviewAgentId, finding);
       }
       repository.writeReviewFindings(reviewAgentId, findings);
+      logThreadResolutionOutcome(reviewAgentId, fixAgentId, assignedFindings);
       await maybeSucceedReviewCheck(reviewAgentId);
     } else {
       for (const finding of assignedFindings) {

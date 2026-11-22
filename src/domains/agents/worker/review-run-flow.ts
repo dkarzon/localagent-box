@@ -6,7 +6,9 @@ import {
   formatReviewMarkdown,
   formatReviewSummaryMarkdown,
   partitionReviewComments,
+  type GithubLineReviewComment,
 } from '../../../integrations/open-code-review/format-review';
+import type { PullRequestReviewCommentSummary } from '../../../services/github-app';
 import { dedupeOcrComments } from '../../../integrations/open-code-review/dedupe-comments';
 import { resolveReviewProvider } from '../../../lib/llm-provider';
 import {
@@ -54,6 +56,33 @@ export const REVIEW_SUMMARY_COMMENT_MARKER = '<!-- localagent-box:review-summary
 /** Body of the PR review that carries this run's inline findings. */
 const REVIEW_LINE_COMMENTS_BODY =
   'Inline findings from the localagent-box code review. See the **Code Review** summary comment on this PR for the run summary.';
+
+/**
+ * Pairs each submitted line comment with the comment GitHub created for it.
+ * Each one takes the first not-yet-used posted comment at the same path and
+ * line range. GitHub's listing order is not guaranteed to match submission
+ * order, so a strict forward cursor would let one out-of-order comment leave
+ * every later finding unlinked — and its thread unresolvable after a fix.
+ * Comments at duplicate locations still pair up in listing order.
+ */
+export function matchPostedReviewComments(
+  lineComments: Array<Pick<GithubLineReviewComment, 'path' | 'line' | 'start_line'>>,
+  postedComments: PullRequestReviewCommentSummary[],
+): Array<PullRequestReviewCommentSummary | null> {
+  const used = new Set<number>();
+  return lineComments.map((lineComment) => {
+    const matchIndex = postedComments.findIndex((candidate, index) => {
+      if (used.has(index) || candidate.path !== lineComment.path) return false;
+      if (candidate.line === null || candidate.line !== lineComment.line) return false;
+      return typeof lineComment.start_line === 'number'
+        ? candidate.start_line === lineComment.start_line
+        : candidate.start_line === null || candidate.start_line === candidate.line;
+    });
+    if (matchIndex < 0) return null;
+    used.add(matchIndex);
+    return postedComments[matchIndex];
+  });
+}
 
 export function resolveReviewRunConfig(config: AppConfig, job: AgentJob): AppConfig {
   if (job.model) {
@@ -664,8 +693,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       );
 
       // Map line comments created inside the submitted review back onto
-      // findings. Submission order is authoritative but each match is
-      // validated against path/line; ambiguous mappings stay unlinked.
+      // findings, validated against path/line; unmatched ones stay unlinked.
       if (githubReviewId && lineComments.length > 0 && typeof foundPrNumber === 'number') {
         try {
           const postedComments = await githubApp.listPullRequestReviewComments(
@@ -677,27 +705,10 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           );
           reviewCommentsListed = postedComments.length >= lineComments.length;
           if (reviewCommentsListed) {
-            let cursor = 0;
+            const matches = matchPostedReviewComments(lineComments, postedComments);
             let mapped = 0;
-            for (const lineComment of lineComments) {
-              let matched: (typeof postedComments)[number] | null = null;
-              while (cursor < postedComments.length) {
-                const candidate = postedComments[cursor];
-                cursor += 1;
-                const startMatch =
-                  typeof lineComment.start_line === 'number'
-                    ? candidate.start_line === lineComment.start_line
-                    : candidate.start_line === null;
-                if (
-                  candidate.path === lineComment.path &&
-                  candidate.line !== null &&
-                  candidate.line === lineComment.line &&
-                  startMatch
-                ) {
-                  matched = candidate;
-                  break;
-                }
-              }
+            for (const [index, lineComment] of lineComments.entries()) {
+              const matched = matches[index];
               if (!matched) {
                 appendLog(
                   logPath,

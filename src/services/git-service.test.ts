@@ -33,6 +33,7 @@ const stubGithubApp: GithubAppService = {
   upsertStickyIssueComment: async () => ({ id: 3, html_url: 'https://example.com/comment/3', created: true }),
   listPullRequestReviewComments: async () => [],
   findReviewThreadIdForComment: async () => null,
+  findReviewThreadForLocation: async () => null,
   resolvePullRequestReviewThread: async (_config, threadId) => ({
     threadId,
     isResolved: true,

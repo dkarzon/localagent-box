@@ -27,6 +27,10 @@ interface TestContext {
   service: ReturnType<typeof createReviewAutofixService>;
   calls: { lookups: number[]; resolved: string[]; created: Array<Record<string, unknown>> };
   lookupResult: { threadId: string; isResolved: boolean } | null;
+  /** Result of the location-based thread lookup (unlinked findings). */
+  locationResult: { threadId: string; isResolved: boolean; commentId: number | null } | null;
+  /** Locations passed to findReviewThreadForLocation. */
+  locationLookups: Array<Record<string, unknown>>;
   resolveError: Error | null;
   createAgentError: Error | null;
   branches: string[] | null;
@@ -143,6 +147,8 @@ function setup(options: {
     service: null as unknown as ReturnType<typeof createReviewAutofixService>,
     calls,
     lookupResult: null,
+    locationResult: null,
+    locationLookups: [],
     resolveError: null,
     createAgentError: null,
     branches: null,
@@ -194,6 +200,16 @@ function setup(options: {
         throw new Error('thread lookup failed');
       }
       return ctx.lookupResult;
+    },
+    findReviewThreadForLocation: async (
+      _config: unknown,
+      _owner: string,
+      _repo: string,
+      _prNumber: number,
+      location: Record<string, unknown>,
+    ) => {
+      ctx.locationLookups.push(location);
+      return ctx.locationResult;
     },
     resolvePullRequestReviewThread: async (_config: unknown, threadId: string) => {
       if (ctx.resolveError) {
@@ -1502,6 +1518,80 @@ describe('handleFixAgentStarted / handleFixAgentFinished', () => {
     assert.equal(persisted?.[0].fixStatus, 'fixed');
     assert.equal(persisted?.[0].github.resolutionStatus, 'resolved');
     assert.deepEqual(ctx.calls.resolved, ['thread-1']);
+  });
+
+  /** A finding whose line comment was posted but never mapped to its comment id. */
+  function unlinkedFinding(): ReviewFindingRecord {
+    return automaticFinding(0, {
+      path: 'src/a.ts',
+      startLine: 3,
+      endLine: 5,
+      github: {
+        reviewId: '1',
+        commentId: null,
+        commentUrl: null,
+        threadId: null,
+        resolutionStatus: 'not_applicable',
+        resolutionError: null,
+        resolvedAt: null,
+      },
+    });
+  }
+
+  it('a manual fix resolves an unlinked finding by finding its thread at the posted location', async () => {
+    const ctx = setup({ findings: [unlinkedFinding()] });
+    ctx.branches = ['feature'];
+    ctx.locationResult = { threadId: 'thread-loc', isResolved: false, commentId: 901 };
+    const result = await ctx.service.createManualFix('review1', 'review1:finding:0');
+    ctx.service.handleFixAgentStarted(result.agent.agentId);
+
+    setTerminalStatus(ctx.repository, result.agent.agentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    assert.deepEqual(ctx.locationLookups, [{ reviewId: '1', path: 'src/a.ts', line: 5, startLine: 3 }]);
+    assert.deepEqual(ctx.calls.lookups, []);
+    assert.deepEqual(ctx.calls.resolved, ['thread-loc']);
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].github.resolutionStatus, 'resolved');
+    assert.equal(persisted?.[0].github.threadId, 'thread-loc');
+    assert.equal(persisted?.[0].github.commentId, 901);
+    const log = fs.readFileSync(ctx.repository.getLogPath('review1'), 'utf8');
+    assert.ok(log.includes('resolved 1 GitHub comment thread(s)'));
+  });
+
+  it('a manual fix on an unlinked finding with no thread at its location logs why nothing was resolved', async () => {
+    const ctx = setup({ findings: [unlinkedFinding()] });
+    ctx.branches = ['feature'];
+    ctx.locationResult = null;
+    const result = await ctx.service.createManualFix('review1', 'review1:finding:0');
+    ctx.service.handleFixAgentStarted(result.agent.agentId);
+
+    setTerminalStatus(ctx.repository, result.agent.agentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    assert.deepEqual(ctx.calls.resolved, []);
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].fixStatus, 'fixed');
+    assert.equal(persisted?.[0].github.resolutionStatus, 'not_applicable');
+    const log = fs.readFileSync(ctx.repository.getLogPath('review1'), 'utf8');
+    assert.ok(log.includes('have no linked GitHub comment; nothing to resolve (review1:finding:0)'));
+  });
+
+  it('a manual fix logs a failed thread resolution in the review log', async () => {
+    const ctx = setup({ findings: [automaticFinding(0)] });
+    ctx.branches = ['feature'];
+    ctx.lookupResult = { threadId: 'thread-1', isResolved: false };
+    ctx.resolveError = new Error('Resource not accessible by integration');
+    const result = await ctx.service.createManualFix('review1', 'review1:finding:0');
+    ctx.service.handleFixAgentStarted(result.agent.agentId);
+
+    setTerminalStatus(ctx.repository, result.agent.agentId, { status: 'completed', pushed: true });
+    await ctx.service.handleFixAgentFinished(result.agent.agentId);
+
+    const persisted = ctx.repository.readReviewFindings('review1');
+    assert.equal(persisted?.[0].github.resolutionStatus, 'failed');
+    const log = fs.readFileSync(ctx.repository.getLogPath('review1'), 'utf8');
+    assert.ok(log.includes('resolving the GitHub comment for review1:finding:0 failed — Resource not accessible by integration'));
   });
 
   it('a successful manual fix on the last uncleared finding flips the check run to success', async () => {

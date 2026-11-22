@@ -267,7 +267,7 @@ describe('createGithubAppService', () => {
           } as Response;
         }
 
-        if (path.endsWith('/reviews/99/comments')) {
+        if (path.endsWith('/reviews/99/comments?per_page=100&page=1')) {
           return {
             ok: true,
             json: async () => [
@@ -306,6 +306,38 @@ describe('createGithubAppService', () => {
         line: null,
         start_line: null,
       },
+    ]);
+  });
+
+  it('reads every page of a review with more comments than one page', async () => {
+    const requested: string[] = [];
+    const githubApp = createGithubAppService({
+      fetchImpl: async (url) => {
+        const path = String(url).replace('https://api.github.com', '');
+        if (path.includes('/access_tokens')) {
+          return {
+            ok: true,
+            json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+          } as Response;
+        }
+        requested.push(path);
+        const page = Number(new URL(`https://x${path}`).searchParams.get('page'));
+        const count = page === 1 ? 100 : page === 2 ? 5 : 0;
+        const offset = (page - 1) * 100;
+        return {
+          ok: true,
+          json: async () =>
+            Array.from({ length: count }, (_, i) => ({ id: offset + i + 1, path: 'src/a.ts', line: offset + i + 1 })),
+        } as Response;
+      },
+    });
+
+    const comments = await githubApp.listPullRequestReviewComments(config, 'owner', 'repo', 1, '99');
+    assert.equal(comments.length, 105);
+    assert.equal(comments[104].id, 105);
+    assert.deepEqual(requested, [
+      '/repos/owner/repo/pulls/1/reviews/99/comments?per_page=100&page=1',
+      '/repos/owner/repo/pulls/1/reviews/99/comments?per_page=100&page=2',
     ]);
   });
 
@@ -363,6 +395,91 @@ describe('createGithubAppService', () => {
     assert.equal(bodies.length, 1);
     const firstBody = bodies[0] as { variables: { cursor: string | null } };
     assert.equal(firstBody.variables.cursor, null);
+  });
+
+  describe('findReviewThreadForLocation', () => {
+    const thread = (
+      id: string,
+      reviewId: number,
+      filePath: string,
+      originalLine: number,
+      originalStartLine: number | null,
+      commentId = 900,
+    ) => ({
+      id,
+      isResolved: false,
+      path: filePath,
+      originalLine,
+      originalStartLine,
+      comments: { nodes: [{ databaseId: commentId, pullRequestReview: { databaseId: reviewId } }] },
+    });
+
+    const serviceWithThreads = (pages: Array<Array<ReturnType<typeof thread>>>) => {
+      let page = 0;
+      return createGithubAppService({
+        fetchImpl: async (url) => {
+          const path = String(url).replace('https://api.github.com', '');
+          if (path.includes('/access_tokens')) {
+            return {
+              ok: true,
+              json: async () => ({ token: 'ghs_test', expires_at: new Date(Date.now() + 3600000).toISOString() }),
+            } as Response;
+          }
+          const nodes = pages[page] ?? [];
+          page += 1;
+          return {
+            ok: true,
+            json: async () => ({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviewThreads: {
+                      pageInfo: { hasNextPage: page < pages.length, endCursor: `c${page}` },
+                      nodes,
+                    },
+                  },
+                },
+              },
+            }),
+          } as Response;
+        },
+      });
+    };
+
+    it('finds the thread a review opened at the original path and line range, across pages', async () => {
+      const githubApp = serviceWithThreads([
+        [thread('other-review', 2, 'src/a.ts', 5, 3), thread('other-line', 1, 'src/a.ts', 6, 3)],
+        [thread('match', 1, 'src/a.ts', 5, 3, 777)],
+      ]);
+      const result = await githubApp.findReviewThreadForLocation(config, 'o', 'r', 1, {
+        reviewId: '1',
+        path: 'src/a.ts',
+        line: 5,
+        startLine: 3,
+      });
+      assert.deepEqual(result, { threadId: 'match', isResolved: false, commentId: 777 });
+    });
+
+    it('treats a start line equal to the line as a single-line thread', async () => {
+      const githubApp = serviceWithThreads([[thread('single', 1, 'src/a.ts', 5, 5)]]);
+      const result = await githubApp.findReviewThreadForLocation(config, 'o', 'r', 1, {
+        reviewId: '1',
+        path: 'src/a.ts',
+        line: 5,
+        startLine: null,
+      });
+      assert.equal(result?.threadId, 'single');
+    });
+
+    it('returns null when the location is ambiguous or missing', async () => {
+      const ambiguous = serviceWithThreads([
+        [thread('t1', 1, 'src/a.ts', 5, null), thread('t2', 1, 'src/a.ts', 5, null)],
+      ]);
+      const location = { reviewId: '1', path: 'src/a.ts', line: 5, startLine: null };
+      assert.equal(await ambiguous.findReviewThreadForLocation(config, 'o', 'r', 1, location), null);
+      const none = serviceWithThreads([[thread('t1', 1, 'src/b.ts', 5, null)]]);
+      assert.equal(await none.findReviewThreadForLocation(config, 'o', 'r', 1, location), null);
+    });
   });
 
   it('paginates review threads until the matching comment is found', async () => {

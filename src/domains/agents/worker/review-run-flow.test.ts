@@ -8,10 +8,68 @@ import { createJsonStore } from '../../../lib/json-store';
 import {
   REVIEW_SUMMARY_COMMENT_MARKER,
   completeReviewCheck,
+  matchPostedReviewComments,
   resolveReviewRunConfig,
   runReviewJob,
 } from './review-run-flow';
 import type { WorkerContext } from './worker-context';
+
+describe('matchPostedReviewComments', () => {
+  const posted = (id: number, filePath: string, line: number | null, startLine: number | null = null) => ({
+    id,
+    html_url: `https://github.com/o/n/pull/7#discussion_r${id}`,
+    path: filePath,
+    line,
+    start_line: startLine,
+  });
+
+  it('matches comments listed in a different order than they were submitted', () => {
+    const matches = matchPostedReviewComments(
+      [
+        { path: 'a.ts', line: 4, start_line: 3 },
+        { path: 'b.ts', line: 10 },
+        { path: 'c.ts', line: 1 },
+      ],
+      [posted(3, 'c.ts', 1), posted(1, 'a.ts', 4, 3), posted(2, 'b.ts', 10)],
+    );
+    assert.deepEqual(
+      matches.map((entry) => entry?.id ?? null),
+      [1, 2, 3],
+    );
+  });
+
+  it('pairs comments at the same location in listing order and never reuses one', () => {
+    const matches = matchPostedReviewComments(
+      [
+        { path: 'a.ts', line: 4 },
+        { path: 'a.ts', line: 4 },
+        { path: 'a.ts', line: 4 },
+      ],
+      [posted(1, 'a.ts', 4), posted(2, 'a.ts', 4)],
+    );
+    assert.deepEqual(
+      matches.map((entry) => entry?.id ?? null),
+      [1, 2, null],
+    );
+  });
+
+  it('requires the range start to match for multi-line comments', () => {
+    const matches = matchPostedReviewComments(
+      [{ path: 'a.ts', line: 4, start_line: 2 }, { path: 'a.ts', line: 4 }],
+      [posted(1, 'a.ts', 4, 3), posted(2, 'a.ts', 4, 4)],
+    );
+    // A single-line comment may come back with start_line equal to its line.
+    assert.deepEqual(
+      matches.map((entry) => entry?.id ?? null),
+      [null, 2],
+    );
+  });
+
+  it('leaves a finding unmatched when GitHub reports no line', () => {
+    const matches = matchPostedReviewComments([{ path: 'a.ts', line: 4 }], [posted(1, 'a.ts', null)]);
+    assert.deepEqual(matches, [null]);
+  });
+});
 
 describe('resolveReviewRunConfig', () => {
   const baseConfig = {

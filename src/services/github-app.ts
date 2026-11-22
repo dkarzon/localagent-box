@@ -178,6 +178,45 @@ interface ReviewThreadsQueryData {
   };
 }
 
+/** Where a review comment was placed when it was posted. */
+export interface ReviewThreadLocation {
+  /** REST id of the PR review the comment was submitted in. */
+  reviewId: string;
+  path: string;
+  /** Last line of the commented range (GitHub's `line`). */
+  line: number;
+  /** First line of a multi-line range; null for a single line. */
+  startLine: number | null;
+}
+
+export interface ReviewThreadLocationResult extends ReviewThreadLookupResult {
+  /** Database id of the thread's first comment (the one the review posted). */
+  commentId: number | null;
+}
+
+interface ReviewThreadLocationQueryData {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        nodes: Array<{
+          id: string;
+          isResolved: boolean;
+          path: string | null;
+          originalLine: number | null;
+          originalStartLine: number | null;
+          comments: {
+            nodes: Array<{
+              databaseId: number | null;
+              pullRequestReview: { databaseId: number | null } | null;
+            }>;
+          };
+        }>;
+      };
+    };
+  };
+}
+
 interface ResolveReviewThreadMutationData {
   resolveReviewThread: {
     thread: { id: string; isResolved: boolean };
@@ -260,6 +299,19 @@ export interface GithubAppService {
     prNumber: number,
     commentId: number,
   ) => Promise<ReviewThreadLookupResult | null>;
+  /**
+   * Finds the thread a given PR review opened at a file/line range, for
+   * findings whose comment id was never captured. Matches the original (as
+   * posted) position so threads made outdated by a fix still match. Returns
+   * null when no thread or more than one thread matches.
+   */
+  findReviewThreadForLocation: (
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    location: ReviewThreadLocation,
+  ) => Promise<ReviewThreadLocationResult | null>;
   /** Idempotently resolves a review thread; an already-resolved thread is success. */
   resolvePullRequestReviewThread: (
     config: AppConfig,
@@ -764,10 +816,21 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     prNumber: number,
     reviewId: string,
   ): Promise<PullRequestReviewCommentSummary[]> {
-    const comments = await githubApiRequest<Array<Record<string, unknown>>>(
-      config,
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/reviews/${encodeURIComponent(reviewId)}/comments`,
-    );
+    // GitHub pages this endpoint (30 per page by default); a review with more
+    // line comments than one page must be read in full or none get mapped.
+    const perPage = 100;
+    const comments: Array<Record<string, unknown>> = [];
+    // Bounded scan: 50 pages = 5,000 comments, far beyond any real review.
+    for (let page = 1; page <= 50; page += 1) {
+      const pageComments = await githubApiRequest<Array<Record<string, unknown>>>(
+        config,
+        `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/reviews/${encodeURIComponent(reviewId)}/comments?per_page=${perPage}&page=${page}`,
+      );
+      comments.push(...pageComments);
+      if (pageComments.length < perPage) {
+        break;
+      }
+    }
     return comments
       .filter((comment) => typeof comment.id === 'number')
       .map((comment) => ({
@@ -841,6 +904,79 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     return null;
   }
 
+  async function findReviewThreadForLocation(
+    config: AppConfig,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    location: ReviewThreadLocation,
+  ): Promise<ReviewThreadLocationResult | null> {
+    const query = `
+      query ReviewThreadLocations($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100, after: $cursor) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              nodes {
+                id
+                isResolved
+                path
+                originalLine
+                originalStartLine
+                comments(first: 1) {
+                  nodes {
+                    databaseId
+                    pullRequestReview {
+                      databaseId
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const matches: ReviewThreadLocationResult[] = [];
+    let cursor: string | null = null;
+    let hasNextPage = true;
+    while (hasNextPage) {
+      const data: ReviewThreadLocationQueryData =
+        await githubGraphQLRequest<ReviewThreadLocationQueryData>(config, query, {
+          owner,
+          name: repo,
+          number: prNumber,
+          cursor,
+        });
+
+      for (const thread of data.repository.pullRequest.reviewThreads.nodes) {
+        const first = thread.comments.nodes[0];
+        const reviewDatabaseId = first?.pullRequestReview?.databaseId;
+        if (reviewDatabaseId == null || String(reviewDatabaseId) !== location.reviewId) continue;
+        if (thread.path !== location.path || thread.originalLine !== location.line) continue;
+        // GitHub reports a single-line thread's start as null (or equal to its line).
+        const threadStart =
+          thread.originalStartLine === thread.originalLine ? null : thread.originalStartLine;
+        if (threadStart !== location.startLine) continue;
+        matches.push({
+          threadId: thread.id,
+          isResolved: thread.isResolved,
+          commentId: first?.databaseId != null ? Number(first.databaseId) : null,
+        });
+      }
+
+      hasNextPage = data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage;
+      cursor = data.repository.pullRequest.reviewThreads.pageInfo.endCursor;
+    }
+
+    // Two comments at the same place in one review can't be told apart.
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   async function resolvePullRequestReviewThread(
     config: AppConfig,
     threadId: string,
@@ -889,6 +1025,7 @@ export function createGithubAppService(options: { fetchImpl?: typeof fetch } = {
     upsertStickyIssueComment,
     listPullRequestReviewComments,
     findReviewThreadIdForComment,
+    findReviewThreadForLocation,
     resolvePullRequestReviewThread,
     findPullRequestByHead,
     createCheckRun,
