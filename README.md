@@ -303,6 +303,21 @@ Example — global default `llama3.2`, ACT on a coder model, others blank:
 
 ORIENT, REFLECT, and INITIAL_PLAN use `llama3.2`; ACT uses `qwen3-coder:30b`.
 
+#### Per-model token costs (`modelTokenCosts`)
+
+Ollama reports no cost amounts, so each session's cost is computed from its token usage using the per-model rates in `modelTokenCosts` — USD per 1,000,000 tokens per category (`input`, `output`, `cacheRead`, `cacheWrite`; reasoning tokens are billed at the `output` rate). Keys are model ids (`llama3.2` or `ollama/llama3.2`). Models without an entry cost $0 — there is no wildcard fallback. A non-zero cost reported by the provider always wins. Rates must be non-negative numbers; anything else is dropped on save. Costs computed from these rates are shown as "(est.)" in the UI. Edit via **Settings → Models → Token costs** or `PUT /api/v1/config`:
+
+```json
+{
+  "modelTokenCosts": {
+    "llama3.2": { "input": 0.1, "output": 0.3, "cacheRead": 0.05, "cacheWrite": 0.1 },
+    "qwen3-coder:30b": { "input": 0.2, "output": 0.6 }
+  }
+}
+```
+
+The same rates are written into the generated `opencode.json` model entries (`cost`), so OpenCode's own cost figures match.
+
 ### Examples
 
 ```bash

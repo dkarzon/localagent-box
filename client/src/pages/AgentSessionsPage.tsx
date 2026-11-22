@@ -743,7 +743,9 @@ export function AgentSessionsPage({
                         {agent.tokenUsage ? (
                           <p className="mt-0.5 text-xs text-muted">
                             {formatTokenCount(agent.tokenUsage.inputTokens + agent.tokenUsage.outputTokens)} tokens
-                            {agent.tokenUsage.cost != null ? ` · ${formatCost(agent.tokenUsage.cost)}` : ''}
+                            {agent.tokenUsage.cost != null
+                              ? ` · ${formatCost(agent.tokenUsage.cost)}${agent.tokenUsage.costEstimated ? ' (est.)' : ''}`
+                              : ''}
                           </p>
                         ) : null}
                       </td>

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildCodegraphMcpServer,
   buildGemmaReasoningWorkaroundOptions,
+  buildModelCost,
   buildModelConfig,
   buildModelLimit,
   buildOpenCodeConfig,
@@ -36,6 +37,18 @@ describe('buildModelConfig', () => {
       limit: { context: 65536, output: 16384 },
     });
   });
+
+  it('adds configured token costs in the OpenCode v1 cost shape', () => {
+    assert.deepEqual(buildModelConfig('llama3.2', undefined, { input: 0.2, output: 0.6, cacheRead: 0.05 }), {
+      name: 'llama3.2',
+      cost: { input: 0.2, output: 0.6, cache_read: 0.05 },
+    });
+  });
+
+  it('omits cost when no rates are configured', () => {
+    assert.deepEqual(buildModelConfig('llama3.2', undefined, { input: 0 }), { name: 'llama3.2' });
+    assert.equal(buildModelCost(null), null);
+  });
 });
 
 describe('buildModelLimit', () => {
@@ -58,6 +71,26 @@ describe('buildOpenCodeConfig', () => {
       reasoningEffort: 'none',
       extraBody: { reasoning_effort: 'none' },
     });
+  });
+
+  it('writes configured token costs only for models with their own entry', () => {
+    const config = {
+      ollamaBaseUrl: 'http://localhost:11434',
+      opencodeProvider: 'ollama',
+      opencodeModel: 'llama3.2',
+      modelTokenCosts: {
+        'llama3.2': { input: 0.2, output: 0.6, cacheRead: 0.05 },
+        '*': { input: 0.1, output: 0.3 },
+      },
+    } as unknown as AppConfig;
+    const job = { model: 'mistral' } as AgentJob;
+    const file = buildOpenCodeConfig(config, { job });
+    assert.deepEqual(file.provider.ollama?.models['llama3.2']?.cost, {
+      input: 0.2,
+      output: 0.6,
+      cache_read: 0.05,
+    });
+    assert.equal(file.provider.ollama?.models.mistral?.cost, undefined);
   });
 
   it('registers all distinct loop verb and job models', () => {

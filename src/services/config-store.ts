@@ -1,6 +1,7 @@
 import type { AppConfig, ConfigPartial, LoopVerbModels, PublicConfig } from '../types';
 import { loadServerDefaultLoopConfig } from '../domains/agents/worker/loop-config';
 import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
+import { sanitizeModelTokenCosts } from '../lib/model-cost';
 import { resolveOpenCodeProvider } from '../lib/llm-provider';
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -34,6 +35,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     ACT: '',
     REFLECT: '',
   },
+  modelTokenCosts: {},
 };
 
 export function getLoopVerbModelsDefault(): LoopVerbModels {
@@ -68,6 +70,7 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
         ...getLoopVerbModelsDefault(),
         ...normalizeLoopVerbModels(parsed.loopVerbModels),
       };
+      parsed.modelTokenCosts = sanitizeModelTokenCosts(parsed.modelTokenCosts);
       return parsed;
     } catch (err) {
       if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT') {
@@ -128,6 +131,7 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       reviewModel: config.reviewModel || '',
       ocrSkipWorkspaceBootstrap: config.ocrSkipWorkspaceBootstrap === true,
       loopVerbModels: config.loopVerbModels,
+      modelTokenCosts: config.modelTokenCosts ?? {},
       loopDefaultMaxIterations: loadServerDefaultLoopConfig().maxIterations,
     };
   }

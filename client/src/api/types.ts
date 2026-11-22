@@ -157,6 +157,8 @@ export interface AppConfig {
   loopAgentTimeoutSeconds?: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback chain. */
   loopVerbModels?: LoopVerbModels;
+  /** Per-model token rates in USD per 1,000,000 tokens. Models without an entry cost 0. */
+  modelTokenCosts?: ModelTokenCosts;
   /** Bundled server default from config/loop.default.json */
   loopDefaultMaxIterations?: number;
   /** When true (default), auto-create a PR once an agent completes and pushes. Per-agent create request can override. */
@@ -320,9 +322,20 @@ export interface AgentTokenUsage {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   cost?: number;
+  /** True when any part of `cost` was computed from configured token rates rather than reported by the provider. */
+  costEstimated?: boolean;
 }
 
 export interface OverallTokenUsage extends AgentTokenUsage {}
+
+export interface ModelTokenCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+export type ModelTokenCosts = Record<string, ModelTokenCost>;
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
 
