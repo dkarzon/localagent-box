@@ -192,12 +192,20 @@ export function runOcrSessionShow(options: {
   });
 }
 
+export function getOcrBackgroundPath(workspaceDir: string): string {
+  return path.join(workspaceDir, '.ocr', 'review-background.md');
+}
+
 export function runOcrReview(options: {
   config: AppConfig;
   workspaceDir: string;
   baseBranch: string;
   headBranch: string;
   background?: string;
+  /** Gitignore-style patterns passed to `--exclude`. */
+  exclude?: string[];
+  /** OCR `--effort` preset. */
+  effort?: string;
   spawnFn?: SpawnFn;
 }): Promise<OcrReviewResult> {
   const ocrBin = getOcrBinary();
@@ -215,7 +223,18 @@ export function runOcrReview(options: {
   ];
 
   if (options.background) {
-    args.push('-b', options.background);
+    // A file keeps a long background (rules, risk areas, parent transcript)
+    // off the command line.
+    const backgroundPath = getOcrBackgroundPath(options.workspaceDir);
+    fs.mkdirSync(path.dirname(backgroundPath), { recursive: true });
+    fs.writeFileSync(backgroundPath, options.background, 'utf8');
+    args.push('--background-file', backgroundPath);
+  }
+  if (options.exclude && options.exclude.length > 0) {
+    args.push('--exclude', options.exclude.join(','));
+  }
+  if (options.effort) {
+    args.push('--effort', options.effort);
   }
 
   const ocrLlmEnv = buildOcrLlmEnv(options.config);

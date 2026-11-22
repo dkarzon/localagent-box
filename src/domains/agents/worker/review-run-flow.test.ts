@@ -507,6 +507,71 @@ describe('runReviewJob findings persistence', () => {
     assert.ok(log.includes('could not map a GitHub comment to finding ordinal 0'));
   });
 
+  it('runs OCR with review config from the base branch, not the head branch', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
+    cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const stubDir = path.join(root, 'bin');
+    fs.mkdirSync(stubDir, { recursive: true });
+    process.env.OCR_BIN = path.join(stubDir, 'ocr');
+    const argsPath = path.join(root, 'ocr-args.txt');
+    const rulesSeenPath = path.join(root, 'ocr-rules-seen.txt');
+    // Records its arguments and the rule file OCR would read, then prints a result.
+    fs.writeFileSync(
+      process.env.OCR_BIN,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsPath}'\ncat .opencodereview/rule.json > '${rulesSeenPath}' 2>/dev/null\necho '{"status":"ok","comments":[]}'\n`,
+      'utf8',
+    );
+    fs.chmodSync(process.env.OCR_BIN, 0o755);
+
+    const harness = makeFlowHarness(root, null);
+    const workspaceDir = harness.ctx.job.workspaceDir;
+    const { execFileSync } = require('node:child_process') as {
+      execFileSync: (cmd: string, args: string[], opts: object) => Buffer;
+    };
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: workspaceDir, stdio: 'ignore' });
+    const write = (file: string, content: string) => {
+      fs.mkdirSync(path.dirname(path.join(workspaceDir, file)), { recursive: true });
+      fs.writeFileSync(path.join(workspaceDir, file), content, 'utf8');
+    };
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 't');
+    write(
+      '.localagent-box/config.json',
+      JSON.stringify({
+        review: {
+          background: 'Base instructions',
+          riskAreas: [{ paths: ['src/auth/**'], description: 'Token handling', risk: 'high' }],
+          exclude: ['**/generated/**'],
+          effort: 'high',
+        },
+      }),
+    );
+    write('.opencodereview/rule.json', '{"rules":[]}');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'base');
+    git('checkout', '-q', '-b', 'feature');
+    write('.localagent-box/config.json', JSON.stringify({ review: { background: 'Head instructions' } }));
+    write('.opencodereview/rule.json', '{"rules":[{"path":"**","rule":"HEAD","merge_system_rule":false}]}');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'head');
+
+    await runReviewJob(harness.ctx);
+
+    const args = fs.readFileSync(argsPath, 'utf8').trim().split('\n');
+    assert.equal(args[args.indexOf('--exclude') + 1], '**/generated/**');
+    assert.equal(args[args.indexOf('--effort') + 1], 'high');
+    const background = fs.readFileSync(args[args.indexOf('--background-file') + 1], 'utf8');
+    assert.match(background, /Repository Review Instructions: Base instructions/);
+    assert.match(background, /`src\/auth\/\*\*` \(high risk\): Token handling/);
+    assert.doesNotMatch(background, /Head instructions/);
+    assert.equal(fs.readFileSync(rulesSeenPath, 'utf8'), '{"rules":[]}');
+
+    const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
+    assert.ok(log.includes('Loaded .localagent-box/config.json from base branch main'));
+  });
+
   it('posts the summary to the sticky comment and line findings as a short review', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-flow-'));
     cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -517,7 +582,14 @@ describe('runReviewJob findings persistence', () => {
     writeOcrStub(stubDir, {
       status: 'ok',
       comments: [
-        { content: 'Line issue', severity: 'high', path: 'a.ts', start_line: 3, end_line: 4 },
+        {
+          content: 'Line issue here. Detail that belongs only inline.',
+          severity: 'high',
+          path: 'a.ts',
+          start_line: 3,
+          end_line: 4,
+          suggestion_code: 'const fixed = true;',
+        },
       ],
     });
 
@@ -558,6 +630,13 @@ describe('runReviewJob findings persistence', () => {
       summaries.push({ ...input, prNumber });
       return { id: 900, html_url: 'x', created: false };
     };
+    harness.postedReviewComments.push({
+      id: 501,
+      html_url: 'https://github.com/o/n/pull/7#discussion_r501',
+      path: 'a.ts',
+      line: 4,
+      start_line: 3,
+    });
 
     await runReviewJob(harness.ctx);
 
@@ -569,7 +648,13 @@ describe('runReviewJob findings persistence', () => {
     assert.equal(summaries[0].prNumber, 7);
     assert.equal(summaries[0].marker, REVIEW_SUMMARY_COMMENT_MARKER);
     assert.match(summaries[0].body, /^## Code Review/);
-    assert.doesNotMatch(summaries[0].body, /Line issue/, 'line findings stay out of the summary');
+    // The summary points at the inline comment with one sentence; detail stays inline.
+    assert.match(
+      summaries[0].body,
+      /- 🟠 \*\*high\*\* · \[`a\.ts:3-4`\]\(https:\/\/github\.com\/o\/n\/pull\/7#discussion_r501\) — Line issue here\.$/m,
+    );
+    assert.doesNotMatch(summaries[0].body, /Detail that belongs only inline/);
+    assert.doesNotMatch(summaries[0].body, /const fixed = true/);
 
     const log = fs.readFileSync(path.join(harness.agentDir, 'worker.log'), 'utf8');
     assert.ok(log.includes('summary comment updated'));

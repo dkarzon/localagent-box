@@ -68,6 +68,69 @@ describe('validateRepoConfig', () => {
     assert.equal(result.checkCommand, 'npm test');
   });
 
+  it('accepts a full review block', () => {
+    const result = validateRepoConfig({
+      review: {
+        background: 'Check auth flows',
+        riskAreas: [
+          { paths: ['src/auth/**'], description: ' Token expiry ', risk: 'high' },
+          { description: 'Billing' },
+        ],
+        exclude: ['**/generated/**'],
+        effort: 'high',
+        replaceDefaultRules: true,
+      },
+    });
+    assert.deepEqual(result.review, {
+      background: 'Check auth flows',
+      riskAreas: [
+        { paths: ['src/auth/**'], description: 'Token expiry', risk: 'high' },
+        { description: 'Billing' },
+      ],
+      exclude: ['**/generated/**'],
+      effort: 'high',
+      replaceDefaultRules: true,
+    });
+  });
+
+  it('maps legacy reviewBackground onto review.background', () => {
+    const result = validateRepoConfig({ reviewBackground: 'Legacy text', review: { effort: 'low' } });
+    assert.deepEqual(result.review, { effort: 'low', background: 'Legacy text' });
+  });
+
+  it('rejects setting both reviewBackground and review.background', () => {
+    assert.throws(
+      () => validateRepoConfig({ reviewBackground: 'a', review: { background: 'b' } }),
+      /both reviewBackground and review\.background/,
+    );
+  });
+
+  it('rejects invalid review fields', () => {
+    assert.throws(() => validateRepoConfig({ review: 'x' }), /review must be an object/);
+    assert.throws(() => validateRepoConfig({ review: { riskAreas: [] } }), /riskAreas must be a non-empty array/);
+    assert.throws(
+      () => validateRepoConfig({ review: { riskAreas: [{ paths: ['a'] }] } }),
+      /riskAreas\[0\]\.description must be a non-empty string/,
+    );
+    assert.throws(
+      () => validateRepoConfig({ review: { riskAreas: [{ description: 'd', paths: [] }] } }),
+      /riskAreas\[0\]\.paths must be a non-empty array/,
+    );
+    assert.throws(
+      () => validateRepoConfig({ review: { riskAreas: [{ description: 'd', risk: 'severe' }] } }),
+      /riskAreas\[0\]\.risk must be one of/,
+    );
+    assert.throws(
+      () => validateRepoConfig({ review: { exclude: ['src/{a,b}/**'] } }),
+      /must not contain commas/,
+    );
+    assert.throws(() => validateRepoConfig({ review: { effort: 'max' } }), /effort must be one of/);
+    assert.throws(
+      () => validateRepoConfig({ review: { replaceDefaultRules: 'yes' } }),
+      /replaceDefaultRules must be a boolean/,
+    );
+  });
+
   it('rejects empty checkCommand', () => {
     assert.throws(
       () => validateRepoConfig({ checkCommand: '   ' }),

@@ -10,6 +10,7 @@ import {
   DEFAULT_OCR_REVIEW_CONCURRENCY,
   buildOcrLlmEnv,
   buildOcrLlmSettings,
+  getOcrBackgroundPath,
   getOcrFileTimeoutMinutes,
   getOcrLlmTimeoutSeconds,
   getOcrReviewConcurrency,
@@ -229,6 +230,62 @@ describe('runOcrReview', () => {
     const concurrencyIdx = capturedArgs?.indexOf('--concurrency') ?? -1;
     assert.ok(concurrencyIdx >= 0);
     assert.equal(capturedArgs?.[concurrencyIdx + 1], String(DEFAULT_OCR_REVIEW_CONCURRENCY));
+  });
+});
+
+describe('runOcrReview repo review options', () => {
+  const appConfig = {
+    ollamaBaseUrl: 'http://localhost:11434',
+    opencodeModel: 'llama3.2',
+    reviewModel: '',
+  } as import('../../types').AppConfig;
+
+  it('passes the background as a file plus --exclude and --effort', async () => {
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-review-'));
+    let capturedArgs: readonly string[] | undefined;
+    await runOcrReview({
+      config: appConfig,
+      workspaceDir,
+      baseBranch: 'main',
+      headBranch: 'feature/foo',
+      background: '# Code review instructions\n\nCheck auth.',
+      exclude: ['**/generated/**', 'fixtures/**'],
+      effort: 'high',
+      spawnFn: (_cmd, args) => {
+        capturedArgs = args;
+        return mockChildProcess('{"summary":"ok"}\n');
+      },
+    });
+
+    const fileIdx = capturedArgs?.indexOf('--background-file') ?? -1;
+    assert.ok(fileIdx >= 0);
+    assert.equal(capturedArgs?.[fileIdx + 1], getOcrBackgroundPath(workspaceDir));
+    assert.equal(
+      fs.readFileSync(getOcrBackgroundPath(workspaceDir), 'utf8'),
+      '# Code review instructions\n\nCheck auth.',
+    );
+    assert.ok(!capturedArgs?.includes('-b'));
+    const excludeIdx = capturedArgs?.indexOf('--exclude') ?? -1;
+    assert.equal(capturedArgs?.[excludeIdx + 1], '**/generated/**,fixtures/**');
+    const effortIdx = capturedArgs?.indexOf('--effort') ?? -1;
+    assert.equal(capturedArgs?.[effortIdx + 1], 'high');
+  });
+
+  it('omits background, exclude and effort flags when not set', async () => {
+    let capturedArgs: readonly string[] | undefined;
+    await runOcrReview({
+      config: appConfig,
+      workspaceDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-review-')),
+      baseBranch: 'main',
+      headBranch: 'feature/foo',
+      spawnFn: (_cmd, args) => {
+        capturedArgs = args;
+        return mockChildProcess('{"summary":"ok"}\n');
+      },
+    });
+    assert.ok(!capturedArgs?.includes('--background-file'));
+    assert.ok(!capturedArgs?.includes('--exclude'));
+    assert.ok(!capturedArgs?.includes('--effort'));
   });
 });
 

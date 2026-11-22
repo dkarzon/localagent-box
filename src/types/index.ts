@@ -285,12 +285,39 @@ export interface LoopStepConfig {
   agent?: LoopOpenCodeAgent;
 }
 
+export type RepoReviewRiskLevel = 'critical' | 'high' | 'medium' | 'low';
+
+export type RepoReviewEffort = 'low' | 'medium' | 'high';
+
+/** A part of the codebase the reviewer should scrutinise more closely. */
+export interface RepoReviewRiskArea {
+  /** Gitignore-style globs; omitted means the risk applies across the codebase. */
+  paths?: string[];
+  description: string;
+  risk?: RepoReviewRiskLevel;
+}
+
+/** `review` block of `.localagent-box/config.json`. */
+export interface RepoReviewConfig {
+  /** Free-text review instructions. Legacy top-level `reviewBackground` maps here. */
+  background?: string;
+  riskAreas?: RepoReviewRiskArea[];
+  /** Passed to OCR `--exclude`, merged with `.opencodereview/rule.json` excludes. */
+  exclude?: string[];
+  /** Passed to OCR `--effort`. */
+  effort?: RepoReviewEffort;
+  /** When true, the built-in DEFAULT_REVIEW_RULES are left out of the background. */
+  replaceDefaultRules?: boolean;
+}
+
 export interface RepoPromptOverrides {
   systemPrompt?: string;
   batchContextPrompt?: string;
   interactiveContextPrompt?: string;
   loopContextPrompt?: string;
+  /** Legacy alias for `review.background`; validation copies it there. */
   reviewBackground?: string;
+  review?: RepoReviewConfig;
   /** Shell command the host runs after each ACT step in loop mode (e.g. `npm test`). */
   checkCommand?: string;
 }

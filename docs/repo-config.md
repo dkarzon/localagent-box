@@ -22,7 +22,7 @@ Prompt and behavioural overrides that let each repository customise how agents i
   "batchContextPrompt": "...",
   "interactiveContextPrompt": "...",
   "loopContextPrompt": "...",
-  "reviewBackground": "..."
+  "review": { "background": "..." }
 }
 ```
 
@@ -48,9 +48,59 @@ Replaces the default interactive-mode context paragraph. Default:
 
 Replaces the default loop-mode context paragraph, which instructs agents about multi-iteration orchestration and the completion marker format. Default begins with "Loop: unattended multi-step harness…".
 
-### `reviewBackground` *(string)*
+### `review` *(object)*
 
-Preamble passed to [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) as repository-level review instructions when running `mode: review` agents. Applied after the built-in default review rules (diff-only findings, one posting per issue, no speculative refactors, reachable-failure requirement) which always start the `-b` background for every repo, and merged alongside per-session `background` and parent-agent context, so repos extend the defaults. See [code-review.md](./code-review.md).
+Repository-specific instructions for [Open Code Review](https://alibaba.github.io/open-code-review/#/docs) (`mode: review` agents). All fields are optional.
+
+```jsonc
+"review": {
+  "background": "Payments service. Money values are integer cents.",
+  "riskAreas": [
+    { "paths": ["src/auth/**", "src/session/**"], "description": "Token expiry and scope checks", "risk": "high" },
+    { "description": "Anything that changes how invoices are totalled" }
+  ],
+  "exclude": ["**/generated/**", "fixtures/**"],
+  "effort": "high",
+  "replaceDefaultRules": false
+}
+```
+
+| Field | Type | Effect |
+|---|---|---|
+| `background` | string | Free-text review instructions, added after the built-in default review rules |
+| `riskAreas` | array (1–50) | Listed to the reviewer as areas needing extra scrutiny. Each entry: `description` (required), `paths` (gitignore-style globs; omit for a codebase-wide risk), `risk` (`critical` / `high` / `medium` / `low`, a hint to the reviewer, not a forced finding severity) |
+| `exclude` | string[] | Passed to OCR `--exclude`; merged with `.opencodereview/rule.json` excludes. Patterns must not contain commas |
+| `effort` | `low` / `medium` / `high` | Passed to OCR `--effort` |
+| `replaceDefaultRules` | boolean | When `true`, the built-in default review rules (diff-only findings, one posting per issue, no speculative refactors, reachable-failure requirement) are left out, so `background` and `riskAreas` stand alone |
+
+The review background is built in this order: default rules (unless replaced), `background`, `riskAreas`, per-session `background`, parent-agent context. See [code-review.md](./code-review.md).
+
+**Read from the base branch.** For review agents, `.localagent-box/config.json` is read from the PR's base branch, not the branch under review, so a pull request cannot change the instructions it is reviewed under. Config changes take effect for reviews once merged. Coding agents still read the file from their working branch.
+
+#### `reviewBackground` *(string, legacy)*
+
+Same as `review.background`. Setting both is an error.
+
+### Path-specific rules: `.opencodereview/rule.json`
+
+OCR also reads its own rule file, `.opencodereview/rule.json`, from the repository. It attaches rule text to files by glob, which suits checklists that only apply to part of the codebase:
+
+```json
+{
+  "exclude": ["**/generated/**"],
+  "rules": [
+    {
+      "path": "src/auth/**",
+      "rule": "## Auth\n- Every token check must verify expiry and audience",
+      "merge_system_rule": true
+    }
+  ]
+}
+```
+
+- `path` is a glob. Each file gets the first matching rule.
+- `merge_system_rule: true` adds the text to OCR's built-in checklist for that file type; `false` replaces the checklist for matching files.
+- Like `config.json`, this file is taken from the base branch for reviews: the host restores the base version into the workspace before OCR runs, or removes the file when the base branch has none.
 
 ## `.localagent-box/setup.sh` — Setup Script
 

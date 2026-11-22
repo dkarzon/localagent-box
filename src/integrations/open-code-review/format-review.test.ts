@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  firstSentence,
   formatFindingCommentBody,
   formatReviewMarkdown,
   formatReviewSummaryMarkdown,
@@ -252,6 +253,68 @@ describe('formatReviewSummaryMarkdown', () => {
     assert.doesNotMatch(summary, /### Findings/);
     assert.doesNotMatch(summary, /Issue one\./);
     assert.doesNotMatch(summary, /Issue two\./);
+  });
+
+  it('points at posted inline comments with one sentence per finding', () => {
+    const result: OcrReviewEnvelope = {
+      status: 'complete',
+      summary: { files_reviewed: 2, comments: 3 },
+      comments: [
+        {
+          path: 'src/foo.ts',
+          content: 'Issue one is low. It has `more.detail` that stays inline.',
+          start_line: 10,
+          severity: 'low',
+          category: 'style',
+          suggestion_code: 'fixed();',
+        },
+        {
+          path: 'src/bar.ts',
+          content: 'Issue two is critical!\n\nSecond paragraph.',
+          start_line: 20,
+          end_line: 22,
+          severity: 'critical',
+          category: 'security',
+        },
+        { path: 'src/baz.ts', content: 'Issue three could not be posted.', start_line: 5 },
+      ],
+    };
+
+    const summary = formatReviewSummaryMarkdown(
+      result,
+      new Map([
+        [0, 'https://github.com/o/r/pull/1#discussion_r1'],
+        [1, null],
+      ]),
+    );
+
+    const lines = summary.split('\n');
+    const findingsIndex = lines.indexOf('### Findings');
+    assert.ok(findingsIndex >= 0);
+    // Sorted by severity; unlinked when the comment URL is unknown.
+    assert.equal(
+      lines[findingsIndex + 2],
+      '- 🔴 **critical** · 🔒 Security · `src/bar.ts:20-22` — Issue two is critical!',
+    );
+    assert.equal(
+      lines[findingsIndex + 3],
+      '- 🔵 **low** · 🎨 Style · [`src/foo.ts:10`](https://github.com/o/r/pull/1#discussion_r1) — Issue one is low.',
+    );
+    assert.doesNotMatch(summary, /stays inline|Second paragraph|fixed\(\);/);
+
+    // A located finding that never made it inline keeps its full detail.
+    assert.match(summary, /### Findings not posted inline/);
+    assert.match(summary, /#### `src\/baz\.ts:5`\n\nIssue three could not be posted\./);
+  });
+
+  it('caps long pointer sentences and closes a cut code span', () => {
+    assert.equal(firstSentence('Short one. Another.'), 'Short one.');
+    assert.equal(firstSentence('No terminator\nwraps here'), 'No terminator wraps here');
+    assert.equal(firstSentence('Calls `foo.bar()` twice. Then more.'), 'Calls `foo.bar()` twice.');
+
+    const long = firstSentence(`Uses \`${'x'.repeat(300)}\` badly.`);
+    assert.ok(long.length <= 161);
+    assert.ok(long.endsWith('…`'));
   });
 
   it('keeps findings without file paths in the summary', () => {

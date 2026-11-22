@@ -1,5 +1,10 @@
-import type { Agent } from '../types';
-import type { RepoPromptOverrides } from '../types';
+import type { Agent, RepoPromptOverrides, RepoReviewRiskArea } from '../types';
+
+/**
+ * First line of every built background. Marks a persisted background as
+ * already built (retry guard) even when a repo replaced the default rules.
+ */
+export const REVIEW_BACKGROUND_HEADER = '# Code review instructions';
 
 /** Default review rules prepended to every OCR review background. */
 export const DEFAULT_REVIEW_RULES = [
@@ -11,10 +16,17 @@ export const DEFAULT_REVIEW_RULES = [
   '- Every bug finding must describe a reachable failure: the input or state and the wrong result.',
 ].join('\n');
 
+function formatRiskArea(area: RepoReviewRiskArea): string {
+  const scope = area.paths?.length ? area.paths.map((p) => `\`${p}\``).join(', ') : 'Across the codebase';
+  const risk = area.risk ? ` (${area.risk} risk)` : '';
+  return `- ${scope}${risk}: ${area.description}`;
+}
+
 /**
  * Builds concatenated background context for OCR review:
- * default review rules first, then repo preamble, caller context,
- * and parent agent task/transcript when auto-spawned.
+ * default review rules first (unless the repo replaces them), then repo
+ * instructions and risk areas, caller context, and parent agent
+ * task/transcript when auto-spawned.
  */
 export function buildReviewBackground(
   agent: Agent,
@@ -26,17 +38,32 @@ export function buildReviewBackground(
   // repo instructions + wrapped caller context) into review.background. Caller
   // context and overrides are unchanged on retry, so reuse that value verbatim;
   // rebuilding would duplicate the repo instructions, stack section labels, and
-  // keep a stale copy of any override that changed since.
+  // keep a stale copy of any override that changed since. Backgrounds built
+  // before the header existed start with the default rules instead.
   const persistedBackground = agent.review?.background;
-  if (persistedBackground?.startsWith(DEFAULT_REVIEW_RULES)) {
+  if (
+    persistedBackground?.startsWith(REVIEW_BACKGROUND_HEADER) ||
+    persistedBackground?.startsWith(DEFAULT_REVIEW_RULES)
+  ) {
     return persistedBackground;
   }
   const callerBackground = persistedBackground;
+  const review = repoPromptOverrides?.review;
 
-  let bg = `${DEFAULT_REVIEW_RULES}\n\n`;
+  let bg = `${REVIEW_BACKGROUND_HEADER}\n\n`;
 
-  if (repoPromptOverrides?.reviewBackground) {
-    bg += `Repository Review Instructions: ${repoPromptOverrides.reviewBackground}\n\n`;
+  if (!review?.replaceDefaultRules) {
+    bg += `${DEFAULT_REVIEW_RULES}\n\n`;
+  }
+
+  const repoBackground = review?.background ?? repoPromptOverrides?.reviewBackground;
+  if (repoBackground) {
+    bg += `Repository Review Instructions: ${repoBackground}\n\n`;
+  }
+  if (review?.riskAreas?.length) {
+    bg += `Repository Risk Areas (review changes here with extra scrutiny):\n${review.riskAreas
+      .map(formatRiskArea)
+      .join('\n')}\n\n`;
   }
   if (callerBackground) {
     bg += `Current Request Context: ${callerBackground}\n\n`;

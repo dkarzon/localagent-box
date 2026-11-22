@@ -101,10 +101,14 @@ Poll `GET /api/v1/agents/<reviewAgentId>` — `agent.review` includes `baseBranc
 
 OCR receives a merged **background** string built from:
 
-1. **Default review rules** — always first, for every repo: only diff-introduced problems, one posting per distinct issue, race claims must name the `await` that opens the window, no speculative refactor suggestions, and every bug finding must describe a reachable failure. Repo and session sections may extend but not replace them.
-2. **Repo preamble** — `reviewBackground` in `.localagent-box/config.json` (see [repo-config.md](./repo-config.md)), applied after the defaults
+1. **Default review rules** — first, for every repo: only diff-introduced problems, one posting per distinct issue, race claims must name the `await` that opens the window, no speculative refactor suggestions, and every bug finding must describe a reachable failure. A repo can drop them with `review.replaceDefaultRules`.
+2. **Repo instructions** — the `review` block in `.localagent-box/config.json` (`background`, then `riskAreas`; see [repo-config.md](./repo-config.md)), applied after the defaults
 3. **Caller `background`** on create (API or UI)
 4. **Parent context** — when `parentAgentId` is set: parent task + transcript summary (auto-spawn fills this from the coding session)
+
+The merged background is written to `.ocr/review-background.md` in the workspace and passed with `--background-file`. The repo `review` block can also set OCR's `--exclude` and `--effort`, and OCR applies path-specific rules from `.opencodereview/rule.json`.
+
+Repo review config (`.localagent-box/config.json` and `.opencodereview/rule.json`) is read from the **base branch**, so a pull request cannot loosen its own review. If the base branch cannot be read in the workspace, the review runs with no repo config (and without the head's rule file), and the worker log says so.
 
 ## Autofix (review findings)
 
@@ -163,8 +167,8 @@ Review check runs additionally need **Checks: Read and write** (see [github-app-
 When a PR matches `headBranch`:
 
 - **Check run** — a `localagent-box / review` check run is created on the PR head SHA before the review starts and completed when it finishes (see below)
-- **Summary** — markdown body on the PR review (`formatReviewSummaryMarkdown`), including a **Severity & categories** breakdown table
-- **Line comments** — inline on changed lines when OCR returns path/line data; each comment body leads with severity and category badges (e.g. `🔴 **critical** · 🔒 Security`)
+- **Summary** — one sticky PR conversation comment (`formatReviewSummaryMarkdown`) that every run updates in place, including a **Severity & categories** breakdown table. It is written after the inline comments, and its `### Findings` list gives each inline finding a single line (badges, location linked to the inline comment, and the finding's first sentence) rather than repeating the detail. Findings with no inline home (no file location, or a file comment that failed to post) are written in full.
+- **Line comments** — inline on changed lines when OCR returns path/line data; each comment body leads with severity and category badges (e.g. `🔴 **critical** · 🔒 Security`) and carries the full detail and suggestion
 - **File comments** — file-level notes when OCR returns file-scoped findings without line numbers (same badges)
 
 OCR classifies every finding with a `category` (`bug`, `security`, `performance`, `maintainability`, `test`, `style`, `documentation`, `other`) and a `severity` (`critical`, `high`, `medium`, `low`). These are surfaced in:
@@ -174,7 +178,7 @@ OCR classifies every finding with a `category` (`bug`, `security`, `performance`
 - The `### Findings` list, sorted critical → low
 - Each GitHub line/file comment body
 
-If line comments fail (e.g. stale diff), the worker retries with summary-only. If GitHub posting fails entirely, the review session still completes with `result.warning` in logs.
+If line comments fail (e.g. stale diff), there is nothing inline to point at, so the sticky summary carries every finding in full. If GitHub posting fails entirely, the review session still completes with `result.warning` in logs.
 
 If no PR exists for the head branch, OCR still runs and results are saved locally; GitHub posting and the check run are skipped.
 
@@ -229,5 +233,5 @@ Match the version pinned in the [Dockerfile](../Dockerfile). Ensure `ocr` is on 
 ## Related
 
 - [github-app-setup.md](./github-app-setup.md) — GitHub App needs pull request and Checks read/write for posting reviews and check runs
-- [repo-config.md](./repo-config.md) — per-repo `reviewBackground`
+- [repo-config.md](./repo-config.md) — per-repo `review` block and `.opencodereview/rule.json`
 - [README.md](../README.md) — full API reference and agent modes

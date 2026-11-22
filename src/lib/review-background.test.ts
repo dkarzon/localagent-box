@@ -5,6 +5,7 @@ import {
   buildReviewBackground,
   DEFAULT_REVIEW_RULES,
   readParentTranscriptLines,
+  REVIEW_BACKGROUND_HEADER,
 } from './review-background';
 import type { Agent } from '../types';
 
@@ -48,8 +49,58 @@ describe('buildReviewBackground', () => {
 
   it('places default review rules first when no repo config exists', () => {
     const result = buildReviewBackground(baseAgent, null, null);
-    assert.ok(result.startsWith(DEFAULT_REVIEW_RULES));
+    assert.ok(result.startsWith(`${REVIEW_BACKGROUND_HEADER}\n\n${DEFAULT_REVIEW_RULES}`));
     assert.match(result, /Current Request Context: Focus on security/);
+  });
+
+  it('uses review.background and lists risk areas after the default rules', () => {
+    const result = buildReviewBackground(
+      baseAgent,
+      {
+        review: {
+          background: 'Check auth flows',
+          riskAreas: [
+            { paths: ['src/auth/**', 'src/session/**'], description: 'Token expiry and scope', risk: 'high' },
+            { description: 'Anything touching billing' },
+          ],
+        },
+      },
+      null,
+    );
+    assert.match(result, /Repository Review Instructions: Check auth flows/);
+    assert.match(
+      result,
+      /Repository Risk Areas \(review changes here with extra scrutiny\):\n- `src\/auth\/\*\*`, `src\/session\/\*\*` \(high risk\): Token expiry and scope\n- Across the codebase: Anything touching billing/,
+    );
+    const rulesIndex = result.indexOf(DEFAULT_REVIEW_RULES);
+    const riskIndex = result.indexOf('Repository Risk Areas');
+    const callerIndex = result.indexOf('Current Request Context');
+    assert.ok(rulesIndex >= 0 && rulesIndex < riskIndex && riskIndex < callerIndex);
+  });
+
+  it('leaves out the default rules when the repo replaces them, and still reuses the result on retry', () => {
+    const overrides = { review: { background: 'Our own rules', replaceDefaultRules: true } };
+    const firstPass = buildReviewBackground(baseAgent, overrides, null);
+    assert.ok(firstPass.startsWith(REVIEW_BACKGROUND_HEADER));
+    assert.ok(!firstPass.includes(DEFAULT_REVIEW_RULES));
+    assert.match(firstPass, /Repository Review Instructions: Our own rules/);
+
+    const retried = buildReviewBackground(
+      { ...baseAgent, review: { ...baseAgent.review!, background: firstPass } },
+      overrides,
+      null,
+    );
+    assert.equal(retried, firstPass);
+  });
+
+  it('reuses a persisted background built before the header existed', () => {
+    const legacy = `${DEFAULT_REVIEW_RULES}\n\nCurrent Request Context: old`;
+    const retried = buildReviewBackground(
+      { ...baseAgent, review: { ...baseAgent.review!, background: legacy } },
+      null,
+      null,
+    );
+    assert.equal(retried, legacy);
   });
 
   it('keeps default rules first and repo, caller, parent sections in order after them', () => {
@@ -62,7 +113,7 @@ describe('buildReviewBackground', () => {
     const repoIndex = result.indexOf('Repository Review Instructions');
     const callerIndex = result.indexOf('Current Request Context');
     const parentIndex = result.indexOf('Previous Activity Summary');
-    assert.equal(rulesIndex, 0);
+    assert.equal(rulesIndex, REVIEW_BACKGROUND_HEADER.length + 2);
     assert.ok(repoIndex > rulesIndex);
     assert.ok(callerIndex > repoIndex);
     assert.ok(parentIndex > callerIndex);

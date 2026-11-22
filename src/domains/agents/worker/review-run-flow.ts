@@ -30,7 +30,7 @@ import {
 } from '../../../lib/review-findings';
 import { normalizeRepoAutofixSettings } from '../../repos/repo.repository';
 import { appendLog, readAgentRecord, updateAgentRecord } from './agent-state-writer';
-import { loadRepoConfig } from './repo-config';
+import { loadReviewRepoConfigFromBase } from './review-repo-config';
 import {
   REVIEW_CHECK_NAME,
   checkOutputForComplete,
@@ -397,7 +397,13 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
   appendLog(logPath, `Base: ${job.baseBranch}, Head: ${headBranch}`);
 
   const agentRecord = readAgentRecord(agentsStore, job.agentId);
-  const repoPromptOverrides = loadRepoConfig(job.workspaceDir);
+  // Review config comes from the base branch so the PR under review cannot
+  // change its own review instructions or OCR rules.
+  const { overrides: repoPromptOverrides, notes: repoConfigNotes } =
+    await loadReviewRepoConfigFromBase(job.workspaceDir, job.baseBranch);
+  for (const note of repoConfigNotes) {
+    appendLog(logPath, note);
+  }
   const parentAgent =
     agentRecord?.parentAgentId && !agentRecord.review?.background
       ? readAgentRecord(agentsStore, agentRecord.parentAgentId)
@@ -487,6 +493,8 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       baseBranch: job.baseBranch,
       headBranch,
       background: background || undefined,
+      exclude: repoPromptOverrides?.review?.exclude,
+      effort: repoPromptOverrides?.review?.effort,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -646,9 +654,13 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
       }));
 
       // Line comments go out as a PR review; the run summary lives in one
-      // sticky conversation comment that every run updates in place.
+      // sticky conversation comment that every run updates in place. The
+      // summary is written last so it can point at each posted inline comment
+      // instead of repeating its detail.
       let postFileCommentsSeparately = true;
       let reviewCommentsListed = false;
+      let lineCommentsPosted = false;
+      const inlineLinks = new Map<number, string | null>();
       if (lineComments.length > 0) {
         try {
           const reviewResponse = await githubApp.createPullRequestReview(
@@ -663,6 +675,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
             },
           );
           githubReviewId = reviewResponse.id ? String(reviewResponse.id) : null;
+          lineCommentsPosted = true;
           appendLog(logPath, `GitHub PR #${foundPrNumber} line comments posted`);
         } catch (lineCommentErr) {
           const lineCommentMessage =
@@ -674,23 +687,6 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           postFileCommentsSeparately = false;
         }
       }
-
-      const summaryComment = await githubApp.upsertStickyIssueComment(
-        config,
-        repo.owner,
-        repo.name,
-        foundPrNumber,
-        {
-          marker: REVIEW_SUMMARY_COMMENT_MARKER,
-          body: postFileCommentsSeparately
-            ? formatReviewSummaryMarkdown(successfulOcrResult)
-            : formatReviewMarkdown(successfulOcrResult),
-        },
-      );
-      appendLog(
-        logPath,
-        `GitHub PR #${foundPrNumber} summary comment ${summaryComment.created ? 'created' : 'updated'}`,
-      );
 
       // Map line comments created inside the submitted review back onto
       // findings, validated against path/line; unmatched ones stay unlinked.
@@ -737,6 +733,14 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
         }
       }
 
+      // Every line comment is inline once the review posted, mapped or not;
+      // only mapped ones carry a direct link.
+      if (lineCommentsPosted) {
+        for (const lineComment of lineComments) {
+          inlineLinks.set(lineComment.ordinal, findings[lineComment.ordinal]?.github.commentUrl ?? null);
+        }
+      }
+
       if (postFileCommentsSeparately && fileComments.length > 0 && headSha) {
         let postedFileComments = 0;
         for (const comment of fileComments) {
@@ -754,6 +758,7 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
               },
             );
             postedFileComments += 1;
+            inlineLinks.set(comment.ordinal, created.html_url || null);
             const record = findings[comment.ordinal];
             if (record) {
               record.github.reviewId = githubReviewId;
@@ -779,6 +784,23 @@ export async function runReviewJob(ctx: WorkerContext): Promise<void> {
           `Warning: ${fileComments.length} file comment(s) skipped — head SHA unavailable`,
         );
       }
+
+      const summaryComment = await githubApp.upsertStickyIssueComment(
+        config,
+        repo.owner,
+        repo.name,
+        foundPrNumber,
+        {
+          marker: REVIEW_SUMMARY_COMMENT_MARKER,
+          body: postFileCommentsSeparately
+            ? formatReviewSummaryMarkdown(successfulOcrResult, inlineLinks)
+            : formatReviewMarkdown(successfulOcrResult),
+        },
+      );
+      appendLog(
+        logPath,
+        `GitHub PR #${foundPrNumber} summary comment ${summaryComment.created ? 'created' : 'updated'}`,
+      );
     } else {
       appendLog(logPath, `No matching PR found for branch ${headBranch}, skipping GitHub post`);
     }

@@ -376,6 +376,11 @@ export interface GithubFileReviewComment {
   ordinal: number;
 }
 
+function hasFileLocation(comment: OcrComment): boolean {
+  const filePath = comment.path || comment.file;
+  return Boolean(filePath) && filePath !== 'unknown';
+}
+
 function partitionComments(comments: OcrComment[]): {
   lineComments: GithubLineReviewComment[];
   fileComments: GithubFileReviewComment[];
@@ -388,7 +393,7 @@ function partitionComments(comments: OcrComment[]): {
   for (let ordinal = 0; ordinal < comments.length; ordinal += 1) {
     const comment = comments[ordinal];
     const filePath = comment.path || comment.file;
-    if (!filePath || filePath === 'unknown') {
+    if (!filePath || !hasFileLocation(comment)) {
       unplacedComments.push(comment);
       continue;
     }
@@ -430,17 +435,61 @@ export function partitionReviewComments(result: OcrReviewEnvelope): {
   return partitionComments(normalizeComments(result));
 }
 
-function appendUnplacedFindings(lines: string[], comments: OcrComment[]): void {
+function appendDetailedFindings(lines: string[], heading: string, comments: OcrComment[]): void {
   if (comments.length === 0) {
     return;
   }
 
-  lines.push('', '### Findings without file location', '');
+  lines.push('', `### ${heading}`, '');
   for (const comment of sortFindingsBySeverity(comments).slice(0, 25)) {
     appendFinding(lines, comment);
   }
   if (comments.length > 25) {
     lines.push(`_…and ${comments.length - 25} more finding(s)._`, '');
+  }
+}
+
+const POINTER_SENTENCE_MAX_LENGTH = 160;
+const MAX_FINDING_POINTERS = 50;
+
+/** First sentence of a finding's first paragraph, collapsed to one line and length-capped. */
+export function firstSentence(content: string): string {
+  const firstParagraph = (content.trim().split(/\n\s*\n/)[0] || '').replace(/\s+/g, ' ').trim();
+  const match = firstParagraph.match(/^.+?[.!?](?=\s|$)/);
+  let sentence = match ? match[0] : firstParagraph;
+  if (sentence.length > POINTER_SENTENCE_MAX_LENGTH) {
+    sentence = `${sentence.slice(0, POINTER_SENTENCE_MAX_LENGTH - 1).trimEnd()}…`;
+    // Close a code span the cut left open so the rest of the line renders.
+    if ((sentence.match(/`/g) || []).length % 2 === 1) {
+      sentence += '`';
+    }
+  }
+  return sentence;
+}
+
+interface FindingPointer {
+  comment: OcrComment;
+  url: string | null;
+}
+
+/** One line per finding, linking to the inline GitHub comment that carries the detail. */
+function appendFindingPointers(lines: string[], pointers: FindingPointer[]): void {
+  if (pointers.length === 0) {
+    return;
+  }
+
+  lines.push('', '### Findings', '');
+  const sorted = [...pointers].sort((a, b) => compareBySeverity(a.comment, b.comment));
+  for (const { comment, url } of sorted.slice(0, MAX_FINDING_POINTERS)) {
+    const location = url ? `[${formatLocation(comment)}](${url})` : formatLocation(comment);
+    const badges = [formatSeverityBadge(comment.severity), formatCategoryBadge(comment.category)]
+      .filter(Boolean)
+      .join(' · ');
+    const prefix = badges ? `${badges} · ` : '';
+    lines.push(`- ${prefix}${location} — ${firstSentence(comment.content)}`);
+  }
+  if (pointers.length > MAX_FINDING_POINTERS) {
+    lines.push('', `_…and ${pointers.length - MAX_FINDING_POINTERS} more finding(s) in the inline comments._`);
   }
 }
 
@@ -570,7 +619,12 @@ function formatCountsRow(entries: Array<{ label: string; count: number }>): stri
 function buildReviewMarkdownCore(
   result: OcrReviewEnvelope,
   comments: OcrComment[],
-  options: { includeFindings: boolean; unplacedComments?: OcrComment[] },
+  options: {
+    includeFindings: boolean;
+    findingPointers?: FindingPointer[];
+    notPostedComments?: OcrComment[];
+    unplacedComments?: OcrComment[];
+  },
 ): string {
   const lines: string[] = ['## Code Review', ''];
 
@@ -597,8 +651,10 @@ function buildReviewMarkdownCore(
     if (comments.length > 25) {
       lines.push(`_…and ${comments.length - 25} more finding(s)._`, '');
     }
-  } else if (options.unplacedComments && options.unplacedComments.length > 0) {
-    appendUnplacedFindings(lines, options.unplacedComments);
+  } else {
+    appendFindingPointers(lines, options.findingPointers || []);
+    appendDetailedFindings(lines, 'Findings not posted inline', options.notPostedComments || []);
+    appendDetailedFindings(lines, 'Findings without file location', options.unplacedComments || []);
   }
 
   appendUnreviewedFiles(lines, result);
@@ -637,11 +693,44 @@ export function formatReviewMarkdown(result: OcrReviewEnvelope): string {
   return buildReviewMarkdownCore(result, normalizeComments(result), { includeFindings: true });
 }
 
-/** Summary-only markdown for the GitHub PR review body (findings posted as file comments). */
-export function formatReviewSummaryMarkdown(result: OcrReviewEnvelope): string {
+/**
+ * Inline GitHub comments posted for findings, keyed by finding ordinal
+ * (normalizeComments order). The value is the comment URL when known.
+ */
+export type InlineFindingLinks = ReadonlyMap<number, string | null>;
+
+/**
+ * Summary markdown for the sticky PR comment and check run. Findings without a
+ * file location are always written in full. Without `inlineLinks`, located
+ * findings are left out entirely (they are about to be posted inline). With
+ * `inlineLinks`, each posted finding gets a one-sentence pointer to its inline
+ * comment, and located findings that could not be posted are written in full.
+ */
+export function formatReviewSummaryMarkdown(
+  result: OcrReviewEnvelope,
+  inlineLinks?: InlineFindingLinks,
+): string {
   const comments = normalizeComments(result);
-  const { unplacedComments } = partitionComments(comments);
-  return buildReviewMarkdownCore(result, comments, { includeFindings: false, unplacedComments });
+  const findingPointers: FindingPointer[] = [];
+  const notPostedComments: OcrComment[] = [];
+  const unplacedComments: OcrComment[] = [];
+
+  comments.forEach((comment, ordinal) => {
+    if (!hasFileLocation(comment)) {
+      unplacedComments.push(comment);
+    } else if (inlineLinks?.has(ordinal)) {
+      findingPointers.push({ comment, url: inlineLinks.get(ordinal) ?? null });
+    } else if (inlineLinks) {
+      notPostedComments.push(comment);
+    }
+  });
+
+  return buildReviewMarkdownCore(result, comments, {
+    includeFindings: false,
+    findingPointers,
+    notPostedComments,
+    unplacedComments,
+  });
 }
 
 export function formatReviewBackgroundMessage(options: {
