@@ -147,4 +147,16 @@ describe('queue-eligibility', () => {
     });
     assert.equal(hasActiveCodingOnBranch([review, otherBranch], 'acme-demo', 'feature/project'), false);
   });
+
+  it('does not let a legacy record occupy the branch', () => {
+    const legacy = agent({ agentId: 'legacy1', mode: 'interactive', status: 'running' });
+    assert.equal(hasActiveCodingOnBranch([legacy], 'acme-demo', 'feature/project'), false);
+    assert.equal(decideQueueAction(second, [legacy, second], () => false), 'start');
+  });
+
+  it('does not gate a successor on a legacy predecessor', () => {
+    const legacy = agent({ agentId: 'legacy1', mode: 'loop', status: 'failed' });
+    assert.equal(findCodingPredecessor([legacy, second], second), undefined);
+    assert.equal(decideQueueAction(second, [legacy, second], () => false), 'start');
+  });
 });

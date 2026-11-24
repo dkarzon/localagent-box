@@ -46,14 +46,31 @@ describe('parseCreateAgentPayload', () => {
     assert.equal(payload.agentBranch, 'feature/existing');
   });
 
-  it('accepts loop mode', () => {
+  it('rejects a mode removed in v1', () => {
+    assert.throws(
+      () =>
+        parseCreateAgentPayload(
+          { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop' },
+          repo,
+          'abc123',
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof CodedError);
+        assert.equal(err.code, 'VALIDATION_ERROR');
+        assert.match(String(err.message), /mode "loop" was removed in v1/);
+        return true;
+      },
+    );
+  });
+
+  it('accepts batch and review modes', () => {
     const payload = parseCreateAgentPayload(
-      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop' },
+      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'batch' },
       repo,
       'abc123',
     );
 
-    assert.equal(payload.mode, 'loop');
+    assert.equal(payload.mode, 'batch');
     assert.equal(payload.prompt, 'Refactor auth');
   });
 

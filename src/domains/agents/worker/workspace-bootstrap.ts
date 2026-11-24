@@ -121,7 +121,11 @@ export async function runWorkspaceBootstrap(
       ? undefined
       : enabledProfiles;
 
-  const envConfig = loadEnvironmentConfig(workspaceDir);
+  const envResult = loadEnvironmentConfig(workspaceDir);
+  for (const note of envResult?.notes ?? []) {
+    appendLog(logPath, note);
+  }
+  const envConfig = envResult?.config ?? null;
   const setupScript = detectSetupScript(workspaceDir);
   if (envConfig === null && setupScript === null && config?.bootstrapAutoDetect !== true) {
     return { status: 'skipped' };

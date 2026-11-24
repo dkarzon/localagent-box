@@ -217,7 +217,11 @@ export async function runSessionOrchestrator(
   const autoApprovePermissions = options.autoApprovePermissions ?? false;
 
   const { job, logPath, config, agentsStore } = ctx;
-  const repoPromptOverrides = loadRepoConfig(job.workspaceDir);
+  const repoConfig = loadRepoConfig(job.workspaceDir);
+  for (const note of repoConfig?.notes ?? []) {
+    appendLog(logPath, note);
+  }
+  const repoPromptOverrides = repoConfig?.overrides ?? null;
   const agentDir = getAgentDir(job);
   const runConfig = resolveRunConfig(config, job);
   const modelRef = buildModelRef(runConfig);

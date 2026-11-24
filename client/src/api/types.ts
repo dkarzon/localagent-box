@@ -8,6 +8,7 @@ export type LegacyAgentMode = 'interactive' | 'loop';
 export type AgentStatus =
   | 'queued'
   | 'running'
+  /** Legacy only: pre-v1 interactive sessions; no run can set it */
   | 'awaiting_input'
   | 'processing'
   | 'completing'
@@ -353,12 +354,8 @@ export const BATCH_ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'completing',
 ]);
 
-export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
-  ...BATCH_ACTIVE_AGENT_STATUSES,
-  'awaiting_input',
-  'processing',
-  'completing',
-]);
+// `awaiting_input` is legacy only, so it is not an active status.
+export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([...BATCH_ACTIVE_AGENT_STATUSES]);
 
 export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>(['completed', 'failed', 'cancelled']);
 

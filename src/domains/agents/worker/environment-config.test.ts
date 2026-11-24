@@ -9,14 +9,18 @@ import {
   validateEnvironmentConfig,
 } from './environment-config';
 
+function validate(raw: unknown) {
+  return validateEnvironmentConfig(raw).config;
+}
+
 describe('validateEnvironmentConfig', () => {
   it('accepts minimal config with only version', () => {
-    const result = validateEnvironmentConfig({ version: 1 });
+    const result = validate({ version: 1 });
     assert.deepEqual(result, { version: 1 });
   });
 
   it('accepts setup with command only', () => {
-    const result = validateEnvironmentConfig({
+    const result = validate({
       version: 1,
       setup: { command: 'npm ci && npm run build' },
     });
@@ -27,7 +31,7 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('accepts optional timeoutMs and failOnError', () => {
-    const result = validateEnvironmentConfig({
+    const result = validate({
       version: 1,
       setup: { command: 'pnpm install', timeoutMs: 300_000, failOnError: false },
     });
@@ -38,7 +42,7 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('accepts timeoutMs at the 30 min maximum', () => {
-    const result = validateEnvironmentConfig({
+    const result = validate({
       version: 1,
       setup: { command: 'npm ci', timeoutMs: 1_800_000 },
     });
@@ -142,11 +146,31 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('accepts an optional setup.runOnModes', () => {
+    const result = validate({
+      version: 1,
+      setup: { command: 'npm ci', runOnModes: ['batch', 'review'] },
+    });
+    assert.deepEqual(result.setup?.runOnModes, ['batch', 'review']);
+  });
+
+  it('drops modes removed in v1 from setup.runOnModes with a note', () => {
     const result = validateEnvironmentConfig({
       version: 1,
-      setup: { command: 'npm ci', runOnModes: ['batch', 'interactive', 'loop'] },
+      setup: { command: 'npm ci', runOnModes: ['batch', 'loop'] },
     });
-    assert.deepEqual(result.setup?.runOnModes, ['batch', 'interactive', 'loop']);
+    assert.deepEqual(result.config.setup?.runOnModes, ['batch']);
+    assert.deepEqual(result.notes, [
+      `${environmentConfigRelative.split(path.sep).join('/')} setup runOnModes[1]: ignored removed mode loop`,
+    ]);
+  });
+
+  it('accepts setup.runOnModes holding only a removed mode as an empty list', () => {
+    const result = validateEnvironmentConfig({
+      version: 1,
+      setup: { command: 'npm ci', runOnModes: ['interactive'] },
+    });
+    assert.deepEqual(result.config.setup?.runOnModes, []);
+    assert.match(result.notes[0] ?? '', /ignored removed mode interactive/);
   });
 
   it('rejects non-array setup.runOnModes', () => {
@@ -170,7 +194,7 @@ describe('validateEnvironmentConfig', () => {
             version: 1,
             setup: { command: 'x', runOnModes: [entry] },
           }),
-        /environment\.json setup runOnModes\[0\] must be one of batch, interactive, loop, review/,
+        /environment\.json setup runOnModes\[0\] must be one of batch, review/,
       );
     }
   });
@@ -183,17 +207,13 @@ describe('validateEnvironmentConfig', () => {
             version: 1,
             setup: { command: 'x', runOnModes: [entry] },
           }),
-        /environment\.json setup runOnModes\[0\] must be one of batch, interactive, loop, review/,
+        /environment\.json setup runOnModes\[0\] must be one of batch, review/,
       );
     }
   });
 
   it('accepts optional profiles and autoDetect', () => {
-    const result = validateEnvironmentConfig({
-      version: 1,
-      profiles: ['nodejs-pnpm', 'nodejs'],
-      autoDetect: false,
-    });
+    const result = validate({ version: 1, profiles: ['nodejs-pnpm', 'nodejs'], autoDetect: false });
     assert.deepEqual(result, { version: 1, profiles: ['nodejs-pnpm', 'nodejs'], autoDetect: false });
   });
 
@@ -216,10 +236,7 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('accepts an optional cacheKey', () => {
-    const result = validateEnvironmentConfig({
-      version: 1,
-      cacheKey: 'acme-monorepo-pnpm9',
-    });
+    const result = validate({ version: 1, cacheKey: 'acme-monorepo-pnpm9' });
     assert.deepEqual(result, { version: 1, cacheKey: 'acme-monorepo-pnpm9' });
   });
 
@@ -242,7 +259,7 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('accepts an optional verifyCommand', () => {
-    const result = validateEnvironmentConfig({
+    const result = validate({
       version: 1,
       setup: { command: 'npm ci' },
       verifyCommand: 'npm test --passWithNoTests',
@@ -260,11 +277,7 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('accepts an optional verifyTimeoutMs', () => {
-    const result = validateEnvironmentConfig({
-      version: 1,
-      verifyCommand: 'npm test',
-      verifyTimeoutMs: 300_000,
-    });
+    const result = validate({ version: 1, verifyCommand: 'npm test', verifyTimeoutMs: 300_000 });
     assert.equal(result.verifyTimeoutMs, 300_000);
   });
 
@@ -284,7 +297,7 @@ describe('validateEnvironmentConfig', () => {
   });
 
   it('ignores unknown keys without error', () => {
-    const result = validateEnvironmentConfig({
+    const result = validate({
       version: 1,
       unknownTopLevel: 'should be ignored',
       setup: { command: 'npm ci', unknown: true },
@@ -307,8 +320,7 @@ describe('loadEnvironmentConfig', () => {
 
   it('returns null when environment.json does not exist', () => {
     const dir = tmpdir();
-    const result = loadEnvironmentConfig(dir);
-    assert.equal(result, null);
+    assert.equal(loadEnvironmentConfig(dir), null);
   });
 
   it('loads a valid minimal config', () => {
@@ -317,8 +329,18 @@ describe('loadEnvironmentConfig', () => {
 
     const result = loadEnvironmentConfig(dir);
     assert.ok(result !== null);
-    assert.equal(result.version, 1);
-    assert.deepEqual(result.setup, { command: 'npm ci' });
+    assert.equal(result.config.version, 1);
+    assert.deepEqual(result.config.setup, { command: 'npm ci' });
+  });
+
+  it('loads runOnModes with a removed mode and returns a note', () => {
+    const dir = tmpdir();
+    writeConfig(dir, JSON.stringify({ version: 1, setup: { command: 'npm ci', runOnModes: ['batch', 'loop'] } }));
+
+    const result = loadEnvironmentConfig(dir);
+    assert.ok(result !== null);
+    assert.deepEqual(result.config.setup?.runOnModes, ['batch']);
+    assert.match(result.notes[0] ?? '', /ignored removed mode loop/);
   });
 
   it('exposes the well-known relative path', () => {

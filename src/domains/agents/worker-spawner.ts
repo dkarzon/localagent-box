@@ -3,7 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { getLogger } from '../../lib/logger';
-import type { Agent, AgentJob, SpawnFn } from '../../types';
+import { CodedError, type Agent, type AgentJob, type SpawnFn } from '../../types';
 import type { AgentRepository } from './agent.repository';
 import { getAgentMode } from './agent.types';
 
@@ -85,12 +85,18 @@ export function createWorkerSpawner(options: {
   }
 
   function start(agent: Agent): void {
+    const mode = getAgentMode(agent);
+    if (mode === 'interactive' || mode === 'loop') {
+      // Legacy records are read-only: they are failed at startup and can never be
+      // retried, so a legacy job must not run as a batch.
+      throw new CodedError(`Legacy ${mode} sessions are read-only`, 'VALIDATION_ERROR');
+    }
     const log = getLogger().child({
       agentId: agent.agentId,
       repoId: agent.repoId,
       workspaceId: agent.workspaceId,
     });
-    log.info({ mode: getAgentMode(agent) }, 'Starting agent worker');
+    log.info({ mode }, 'Starting agent worker');
 
     const agentDir = options.repository.getAgentDir(agent.agentId);
     fsImpl.mkdirSync(agentDir, { recursive: true });
@@ -99,7 +105,6 @@ export function createWorkerSpawner(options: {
       fsImpl.writeFileSync(logPath, '', 'utf8');
     }
 
-    const mode = getAgentMode(agent);
     const job: AgentJob = {
       agentId: agent.agentId,
       workspaceId: agent.workspaceId,

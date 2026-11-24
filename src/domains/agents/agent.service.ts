@@ -58,6 +58,7 @@ import {
   ACTIVE_STATUSES,
   BATCH_ACTIVE_STATUSES,
   getAgentMode,
+  isLegacyMode,
   TERMINAL_STATUSES,
   withDerivedAgentFields,
 } from './agent.types';
@@ -574,6 +575,9 @@ export function createAgentService(options: {
 
   function retryAgent(agentId: string): Agent {
     const agent = repository.getAgent(agentId);
+    if (isLegacyMode(agent)) {
+      throw new CodedError(`Legacy ${getAgentMode(agent)} sessions are read-only`, 'VALIDATION_ERROR');
+    }
     if (agent.status !== 'failed' && agent.status !== 'cancelled') {
       throw new CodedError(`Agent cannot be retried while ${agent.status}`, 'NOT_ACTIVE');
     }
@@ -649,6 +653,9 @@ export function createAgentService(options: {
 
   function allowSuccessors(agentId: string): { agent: Agent; warning: string | null } {
     const agent = repository.getAgent(agentId);
+    if (isLegacyMode(agent)) {
+      throw new CodedError(`Legacy ${getAgentMode(agent)} sessions are read-only`, 'VALIDATION_ERROR');
+    }
     if (agent.status !== 'failed' && agent.status !== 'cancelled') {
       throw new CodedError(
         `Successors can only be released after a failed or cancelled session`,
@@ -1118,6 +1125,17 @@ export function createAgentService(options: {
     let changed = false;
 
     for (const agent of agents) {
+      if (isLegacyMode(agent)) {
+        // A pre-v1 record cannot run again, so an unfinished one is closed out here
+        // instead of being left to block its branch.
+        if (!TERMINAL_STATUSES.has(agent.status)) {
+          agent.status = 'failed';
+          agent.finishedAt = new Date().toISOString();
+          agent.error = `Legacy ${getAgentMode(agent)} session stopped by v1 upgrade`;
+          changed = true;
+        }
+        continue;
+      }
       if (agent.status === 'queued') {
         continue;
       }

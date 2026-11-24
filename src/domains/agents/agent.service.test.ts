@@ -1245,6 +1245,31 @@ describe('createAgentService (shared-branch queue)', () => {
     });
   });
 
+  it('rejects retrying or releasing a legacy record', () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'legacy0000009',
+        mode: 'loop',
+        status: 'failed',
+        agentBranch: 'feature/project',
+        error: 'boom',
+      }),
+    );
+
+    for (const action of [() => ctx.service.retryAgent('legacy0000009'), () => ctx.service.allowSuccessors('legacy0000009')]) {
+      assert.throws(action, (err: unknown) => {
+        assert.ok(err instanceof CodedError);
+        assert.equal(err.code, 'VALIDATION_ERROR');
+        assert.match(String(err.message), /Legacy loop sessions are read-only/);
+        return true;
+      });
+    }
+    assert.equal(ctx.service.getAgent('legacy0000009').status, 'failed');
+    assert.equal(ctx.spawned.length, 0);
+  });
+
   it('starts the next queued session after allowSuccessors on a failed predecessor', () => {
     const ctx = createTestContext();
 
@@ -1349,6 +1374,27 @@ describe('restoreOnStartup', () => {
     assert.match(failed.error || '', /Server restarted/);
     assert.equal(ctx.service.getAgent('queued0000002').status, 'queued');
     assert.equal(hasStartedWorker(ctx, 'queued0000002'), false);
+  });
+
+  it('fails a legacy record that was left in an active status', async () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'legacy0000001',
+        mode: 'interactive',
+        status: 'awaiting_input',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:01.000Z',
+      }),
+    );
+
+    await ctx.service.restoreOnStartup();
+
+    const failed = ctx.service.getAgent('legacy0000001');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error || '', /Legacy interactive session stopped by v1 upgrade/);
+    assert.equal(hasStartedWorker(ctx, 'legacy0000001'), false);
   });
 
   it('starts queued sessions in createdAt order across branches', async () => {

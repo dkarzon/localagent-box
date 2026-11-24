@@ -10,6 +10,16 @@ import type {
 
 export const REPO_CONFIG_RELATIVE_PATH = '.localagent-box/config.json';
 
+const ALLOWED_KEYS = ['systemPrompt', 'batchContextPrompt', 'reviewBackground'] as const;
+/** `review` is the review block; anything else is an unknown (legacy) key. */
+const KNOWN_KEYS: readonly string[] = [...ALLOWED_KEYS, 'review'];
+
+export interface RepoConfigResult {
+  overrides: RepoPromptOverrides;
+  /** Human-readable notes for the worker log. */
+  notes: string[];
+}
+
 const repoConfigRelative = path.join('.localagent-box', 'config.json');
 
 const RISK_LEVELS: readonly RepoReviewRiskLevel[] = ['critical', 'high', 'medium', 'low'];
@@ -104,17 +114,23 @@ function validateReviewConfig(raw: unknown): RepoReviewConfig {
   return review;
 }
 
-export function validateRepoConfig(raw: unknown): RepoPromptOverrides {
+export function validateRepoConfig(raw: unknown): RepoConfigResult {
   if (typeof raw !== 'object' || raw === null) {
     throw new Error('.localagent-box/config.json must be a JSON object');
   }
 
   const obj = raw as Record<string, unknown>;
   const overrides: RepoPromptOverrides = {};
+  const notes: string[] = [];
 
-  const allowedKeys = ['systemPrompt', 'batchContextPrompt', 'reviewBackground'] as const;
+  // Keys from removed modes (e.g. `interactiveContextPrompt`, `loopContextPrompt`,
+  // `checkCommand`) are no longer read, so they are reported rather than rejected.
+  const unknownKeys = Object.keys(obj).filter((key) => !KNOWN_KEYS.includes(key)).sort();
+  if (unknownKeys.length > 0) {
+    notes.push(`Ignoring unknown keys in ${REPO_CONFIG_RELATIVE_PATH}: ${unknownKeys.join(', ')}`);
+  }
 
-  for (const key of allowedKeys) {
+  for (const key of ALLOWED_KEYS) {
     if (obj[key] !== undefined) {
       const value = obj[key];
       if (!isNonEmptyString(value)) {
@@ -137,11 +153,11 @@ export function validateRepoConfig(raw: unknown): RepoPromptOverrides {
     overrides.review = { ...overrides.review, background: overrides.reviewBackground };
   }
 
-  return overrides;
+  return { overrides, notes };
 }
 
 /** Parses and validates config file text; the error names the file. */
-export function parseRepoConfig(raw: string): RepoPromptOverrides {
+export function parseRepoConfig(raw: string): RepoConfigResult {
   try {
     return validateRepoConfig(JSON.parse(raw) as unknown);
   } catch (err) {
@@ -152,7 +168,7 @@ export function parseRepoConfig(raw: string): RepoPromptOverrides {
 export function loadRepoConfig(
   workspaceDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync'> = fs,
-): RepoPromptOverrides | null {
+): RepoConfigResult | null {
   const repoPath = path.join(workspaceDir, repoConfigRelative);
   if (!fsImpl.existsSync(repoPath)) {
     return null;

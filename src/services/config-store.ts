@@ -1,6 +1,27 @@
 import type { AppConfig, ConfigPartial, PublicConfig } from '../types';
+import { getLogger } from '../lib/logger';
 import { sanitizeModelTokenCosts } from '../lib/model-cost';
 import { resolveOpenCodeProvider } from '../lib/llm-provider';
+
+/**
+ * Keys from modes removed in v1. They are no longer part of `AppConfig`, so a
+ * pre-v1 `config.json` that still lists them is dropped with a warning rather
+ * than being kept in memory and written back.
+ */
+export const LEGACY_CONFIG_KEYS = [
+  'interactiveAutoApprovePermissions',
+  'interactiveAgentTimeoutSeconds',
+  'loopAutoApprovePermissions',
+  'loopAgentTimeoutSeconds',
+  'loopVerbModels',
+  'loopDefaultMaxIterations',
+] as const;
+
+/**
+ * Keys `AppConfig` declares but `DEFAULT_CONFIG` does not default; a `config.json`
+ * may still set them, so they are not unknown.
+ */
+const OPTIONAL_CONFIG_KEYS = ['enabledRuntimeProfiles', 'bootstrapAutoDetect', 'globalSetupTimeoutMs'] as const;
 
 export const DEFAULT_CONFIG: AppConfig = {
   ollamaBaseUrl: '',
@@ -37,15 +58,30 @@ type FsLike = Pick<
   'readFileSync' | 'writeFileSync' | 'existsSync' | 'mkdirSync'
 >;
 
-export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
+type WarnLogger = { warn(obj: Record<string, unknown>, message: string): void };
+
+export function createConfigStore(
+  dataDir: string,
+  fs: FsLike,
+  logger: WarnLogger = getLogger(),
+): ConfigStore {
   const configPath = `${dataDir}/config.json`;
 
   function loadRaw(): AppConfig {
     try {
-      const raw = fs.readFileSync(configPath, 'utf8');
-      const parsed = { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as AppConfig;
-      parsed.modelTokenCosts = sanitizeModelTokenCosts(parsed.modelTokenCosts);
-      return parsed;
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+      const knownKeys = new Set<string>([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
+      const unknownKeys = Object.keys(parsed).filter((key) => !knownKeys.has(key));
+      if (unknownKeys.length > 0) {
+        logger.warn({ keys: unknownKeys }, 'ignoring unknown config keys');
+      }
+
+      const config = {
+        ...DEFAULT_CONFIG,
+        ...Object.fromEntries(Object.entries(parsed).filter(([key]) => knownKeys.has(key))),
+      } as AppConfig;
+      config.modelTokenCosts = sanitizeModelTokenCosts(config.modelTokenCosts);
+      return config;
     } catch (err) {
       if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT') {
         return { ...DEFAULT_CONFIG };

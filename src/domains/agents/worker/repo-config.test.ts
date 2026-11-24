@@ -11,21 +11,47 @@ describe('validateRepoConfig', () => {
       systemPrompt: 'Custom system prompt',
       batchContextPrompt: 'Custom batch context',
     });
-    assert.equal(result.systemPrompt, 'Custom system prompt');
-    assert.equal(result.batchContextPrompt, 'Custom batch context');
+    assert.equal(result.overrides.systemPrompt, 'Custom system prompt');
+    assert.equal(result.overrides.batchContextPrompt, 'Custom batch context');
+    assert.deepEqual(result.notes, []);
   });
 
   it('accepts partial overrides', () => {
     const result = validateRepoConfig({
       systemPrompt: 'Only system prompt overridden',
     });
-    assert.equal(result.systemPrompt, 'Only system prompt overridden');
-    assert.equal(result.batchContextPrompt, undefined);
+    assert.equal(result.overrides.systemPrompt, 'Only system prompt overridden');
+    assert.equal(result.overrides.batchContextPrompt, undefined);
   });
 
   it('accepts empty object', () => {
     const result = validateRepoConfig({});
-    assert.deepEqual(result, {});
+    assert.deepEqual(result.overrides, {});
+    assert.deepEqual(result.notes, []);
+  });
+
+  it('reports unknown keys as a note instead of erroring', () => {
+    const result = validateRepoConfig({
+      systemPrompt: 'Custom',
+      unknownField: 'should be ignored',
+    });
+    assert.equal(result.overrides.systemPrompt, 'Custom');
+    assert.ok(!('unknownField' in result.overrides));
+    assert.deepEqual(result.notes, [
+      'Ignoring unknown keys in .localagent-box/config.json: unknownField',
+    ]);
+  });
+
+  it('reports keys from removed modes as the same note', () => {
+    const result = validateRepoConfig({
+      systemPrompt: 'Custom',
+      interactiveContextPrompt: 'Legacy text',
+      loopContextPrompt: 'Legacy text',
+      checkCommand: 'npm test',
+    });
+    assert.deepEqual(result.notes, [
+      'Ignoring unknown keys in .localagent-box/config.json: checkCommand, interactiveContextPrompt, loopContextPrompt',
+    ]);
   });
 
   it('rejects non-object values', () => {
@@ -39,15 +65,6 @@ describe('validateRepoConfig', () => {
       () => validateRepoConfig({ systemPrompt: '   ' }),
       /systemPrompt must be a non-empty string/,
     );
-  });
-
-  it('ignores unknown keys without error', () => {
-    const result = validateRepoConfig({
-      systemPrompt: 'Custom',
-      unknownField: 'should be ignored',
-    });
-    assert.equal(result.systemPrompt, 'Custom');
-    assert.ok(!('unknownField' in result));
   });
 
   it('rejects non-string values for allowed keys', () => {
@@ -70,7 +87,7 @@ describe('validateRepoConfig', () => {
         replaceDefaultRules: true,
       },
     });
-    assert.deepEqual(result.review, {
+    assert.deepEqual(result.overrides.review, {
       background: 'Check auth flows',
       riskAreas: [
         { paths: ['src/auth/**'], description: 'Token expiry', risk: 'high' },
@@ -84,7 +101,7 @@ describe('validateRepoConfig', () => {
 
   it('maps legacy reviewBackground onto review.background', () => {
     const result = validateRepoConfig({ reviewBackground: 'Legacy text', review: { effort: 'low' } });
-    assert.deepEqual(result.review, { effort: 'low', background: 'Legacy text' });
+    assert.deepEqual(result.overrides.review, { effort: 'low', background: 'Legacy text' });
   });
 
   it('rejects setting both reviewBackground and review.background', () => {
@@ -109,10 +126,7 @@ describe('validateRepoConfig', () => {
       () => validateRepoConfig({ review: { riskAreas: [{ description: 'd', risk: 'severe' }] } }),
       /riskAreas\[0\]\.risk must be one of/,
     );
-    assert.throws(
-      () => validateRepoConfig({ review: { exclude: ['src/{a,b}/**'] } }),
-      /must not contain commas/,
-    );
+    assert.throws(() => validateRepoConfig({ review: { exclude: ['src/{a,b}/**'] } }), /must not contain commas/);
     assert.throws(() => validateRepoConfig({ review: { effort: 'max' } }), /effort must be one of/);
     assert.throws(
       () => validateRepoConfig({ review: { replaceDefaultRules: 'yes' } }),
@@ -122,49 +136,54 @@ describe('validateRepoConfig', () => {
 });
 
 describe('loadRepoConfig', () => {
+  function writeConfig(dir: string, content: string): void {
+    const repoDir = path.join(dir, '.localagent-box');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(path.join(repoDir, 'config.json'), content, 'utf8');
+  }
+
   it('returns null when config file does not exist', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-config-'));
-    const result = loadRepoConfig(dir);
-    assert.equal(result, null);
+    assert.equal(loadRepoConfig(dir), null);
   });
 
   it('loads and validates partial repo config', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-config-'));
-    const repoDir = path.join(dir, '.localagent-box');
-    fs.mkdirSync(repoDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(repoDir, 'config.json'),
+    writeConfig(
+      dir,
       JSON.stringify({
         systemPrompt: 'My custom system prompt',
         batchContextPrompt: 'My custom batch context',
       }),
-      'utf8',
     );
 
     const result = loadRepoConfig(dir);
     assert.ok(result !== null);
-    assert.equal(result.systemPrompt, 'My custom system prompt');
-    assert.equal(result.batchContextPrompt, 'My custom batch context');
+    assert.equal(result.overrides.systemPrompt, 'My custom system prompt');
+    assert.equal(result.overrides.batchContextPrompt, 'My custom batch context');
+  });
+
+  it('returns a note for a legacy key in the loaded file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-config-'));
+    writeConfig(dir, JSON.stringify({ loopContextPrompt: 'Legacy text' }));
+
+    const result = loadRepoConfig(dir);
+    assert.ok(result !== null);
+    assert.deepEqual(result.notes, [
+      'Ignoring unknown keys in .localagent-box/config.json: loopContextPrompt',
+    ]);
   });
 
   it('throws on invalid JSON', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-config-'));
-    const repoDir = path.join(dir, '.localagent-box');
-    fs.mkdirSync(repoDir, { recursive: true });
-    fs.writeFileSync(path.join(repoDir, 'config.json'), '{invalid json', 'utf8');
+    writeConfig(dir, '{invalid json');
 
     assert.throws(() => loadRepoConfig(dir), /Failed to load/);
   });
 
   it('throws on validation failure in loaded file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-config-'));
-    const repoDir = path.join(dir, '.localagent-box');
-    fs.mkdirSync(repoDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(repoDir, 'config.json'),
-      JSON.stringify({ systemPrompt: '' }),
-      'utf8',
-    );
+    writeConfig(dir, JSON.stringify({ systemPrompt: '' }));
 
     assert.throws(() => loadRepoConfig(dir), /Failed to load/);
   });

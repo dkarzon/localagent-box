@@ -1,4 +1,4 @@
-import { CodedError } from '../types';
+import { CodedError, type AgentMode, type LegacyAgentMode } from '../types';
 
 export function validationError(message: string): CodedError {
   return new CodedError(message, 'VALIDATION_ERROR');
@@ -132,23 +132,26 @@ export function validatePrompt(prompt: unknown): string {
   return sanitized;
 }
 
-export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
+function isLegacyAgentMode(mode: unknown): mode is LegacyAgentMode {
+  return mode === 'interactive' || mode === 'loop';
+}
 
 export function validateAgentMode(mode: unknown): AgentMode {
   if (mode == null || mode === '') {
     return 'batch';
   }
 
-  if (
-    mode === 'batch' ||
-    mode === 'interactive' ||
-    mode === 'loop' ||
-    mode === 'review'
-  ) {
+  if (mode === 'batch' || mode === 'review') {
     return mode;
   }
 
-  throw validationError('mode must be "batch", "interactive", "loop", or "review"');
+  if (isLegacyAgentMode(mode)) {
+    throw validationError(
+      `mode "${mode}" was removed in v1; use "batch" (follow-ups are new batch runs on the same branch) or "review"`,
+    );
+  }
+
+  throw validationError('mode must be "batch" or "review"');
 }
 
 export function validateModel(model: unknown): string | null {

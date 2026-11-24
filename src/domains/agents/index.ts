@@ -11,7 +11,7 @@ export { createAgentRepository, type AgentRepository } from './agent.repository'
 export { createAgentQueue, type AgentQueue } from './agent-queue';
 export { decideQueueAction, buildAgentQueueState, type QueueDecision } from './queue-eligibility';
 export { createWorkerSpawner, type WorkerSpawner } from './worker-spawner';
-export { getAgentMode } from './agent.types';
+export { getAgentMode, isLegacyMode } from './agent.types';
 export { parseCreateAgentPayload, type CreateAgentPayload } from './agent.validation';
 export type {
   CreateAgentRequest,

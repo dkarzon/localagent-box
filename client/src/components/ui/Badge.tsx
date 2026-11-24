@@ -9,7 +9,6 @@ type BadgeVariant =
   | 'idle'
   | 'error'
   | 'neutral'
-  | 'awaiting'
   | 'processing'
   | 'completing';
 
@@ -22,7 +21,6 @@ const variantStyles: Record<BadgeVariant, string> = {
   idle: 'border-surface-container-highest bg-surface-container text-muted',
   error: 'border-error/30 bg-error-container text-on-error-container',
   neutral: 'border-surface-container-highest bg-surface-container text-on-surface-variant',
-  awaiting: 'border-primary/40 bg-primary/15 text-primary',
   processing: 'border-success/30 bg-success-container text-on-success-container',
   completing: 'border-primary/30 bg-primary-container text-on-primary-container',
 };
@@ -53,8 +51,6 @@ export function agentStatusVariant(status: string): BadgeVariant {
       return 'completed';
     case 'queued':
       return 'queued';
-    case 'awaiting_input':
-      return 'awaiting';
     case 'processing':
       return 'processing';
     case 'completing':

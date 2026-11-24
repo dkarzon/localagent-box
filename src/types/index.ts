@@ -246,7 +246,10 @@ export interface AgentResult {
   opencodeSuccess: boolean;
 }
 
-export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
+export type AgentMode = 'batch' | 'review';
+
+/** Modes removed in v1. Pre-v1 records may still carry them and are read-only. */
+export type LegacyAgentMode = 'interactive' | 'loop';
 
 export type RepoReviewRiskLevel = 'critical' | 'high' | 'medium' | 'low';
 
@@ -284,6 +287,7 @@ export interface RepoPromptOverrides {
 export type AgentStatus =
   | 'queued'
   | 'running'
+  /** Legacy only: pre-v1 interactive sessions; no run can set it any more */
   | 'awaiting_input'
   | 'processing'
   | 'completing'
@@ -455,8 +459,8 @@ export interface Agent {
   agentId: string;
   workspaceId: string;
   repoId: string;
-  /** Defaults to 'batch' when omitted in persisted records */
-  mode?: AgentMode;
+  /** Defaults to 'batch' when omitted in persisted records; legacy records keep a removed mode */
+  mode?: AgentMode | LegacyAgentMode;
   prompt: string;
   systemPrompt: string | null;
   baseBranch: string;

@@ -1,10 +1,9 @@
 import type { Agent, AgentQueueState, AgentQueueWaitingOn, AgentStatus } from '../../types';
-import { ACTIVE_STATUSES, getAgentMode, TERMINAL_STATUSES } from './agent.types';
+import { ACTIVE_STATUSES, getAgentMode, isLegacyMode, TERMINAL_STATUSES } from './agent.types';
 
 /** Statuses that mean a worker is (or should be) occupying the branch. */
 const BRANCH_WORKER_STATUSES = new Set<AgentStatus>([
   'running',
-  'awaiting_input',
   'processing',
   'completing',
 ]);
@@ -21,6 +20,10 @@ export function findCodingPredecessor(agents: readonly Agent[], agent: Agent): A
       continue;
     }
     if (getAgentMode(candidate) === 'review') {
+      continue;
+    }
+    // A legacy record is read-only and can never release a successor, so it must not gate the branch.
+    if (isLegacyMode(candidate)) {
       continue;
     }
     if (candidate.createdAt >= agent.createdAt) {
@@ -59,6 +62,7 @@ export function hasLiveWorkerOnBranch(
       other.agentId !== agent.agentId &&
       other.repoId === agent.repoId &&
       other.agentBranch === agent.agentBranch &&
+      !isLegacyMode(other) &&
       (hasWorker(other.agentId) || BRANCH_WORKER_STATUSES.has(other.status)),
   );
 }
@@ -111,6 +115,7 @@ export function hasActiveCodingOnBranch(
       other.repoId === repoId &&
       other.agentBranch === branch &&
       getAgentMode(other) !== 'review' &&
+      !isLegacyMode(other) &&
       ACTIVE_STATUSES.has(other.status),
   );
 }
