@@ -3,12 +3,10 @@ import { createJsonStore } from '../../lib/json-store';
 import { getLogger } from '../../lib/logger';
 import { registerProcessHandlers } from '../../lib/process-handlers';
 import { runChildCleanups } from '../../lib/child-cleanup';
-import { buildLoopState, LOOP_ACTIVE_STATUSES } from '../../lib/loop-state';
 import { BATCH_ACTIVE_STATUSES } from '../../domains/agents/agent.types';
 import type { Agent, AgentJob } from '../../types';
 import { appendLog } from '../../domains/agents/worker/agent-state-writer';
 import { runBatchJob } from '../../domains/agents/worker/batch-run-flow';
-import { runLoopJob } from '../../domains/agents/worker/loop-run-flow';
 import { createWorkerContext, getAgentMode } from '../../domains/agents/worker/worker-context';
 import { prepareWorkspace } from '../../domains/agents/worker/workspace-setup';
 import { runReviewJob, completeReviewCheck } from '../../domains/agents/worker/review-run-flow';
@@ -17,9 +15,7 @@ export async function runJob(job: AgentJob): Promise<void> {
   const ctx = await createWorkerContext(job);
   await prepareWorkspace(ctx);
 
-  if (getAgentMode(job) === 'loop') {
-    await runLoopJob(ctx);
-  } else if (getAgentMode(job) === 'review') {
+  if (getAgentMode(job) === 'review') {
     await runReviewJob(ctx);
   } else {
     await runBatchJob(ctx);
@@ -64,8 +60,6 @@ async function main(): Promise<void> {
   const job = JSON.parse(fs.readFileSync(jobFile, 'utf8')) as AgentJob;
   const agentLog = log.child({ agentId: job.agentId, repoId: job.repoId });
   const agentsStore = createJsonStore<{ agents: Agent[] }>(`${job.dataDir}/agents.json`, { agents: [] }, fs);
-  const mode = getAgentMode(job);
-  const activeStatuses = mode === 'loop' ? LOOP_ACTIVE_STATUSES : BATCH_ACTIVE_STATUSES;
 
   try {
     await runJob(job);
@@ -80,7 +74,7 @@ async function main(): Promise<void> {
     const data = agentsStore.load();
     const agents = data.agents || [];
     const index = agents.findIndex((entry: Agent) => entry.agentId === job.agentId);
-    if (index !== -1 && activeStatuses.has(agents[index].status)) {
+    if (index !== -1 && BATCH_ACTIVE_STATUSES.has(agents[index].status)) {
       agents[index] = {
         ...agents[index],
         status: 'failed',
@@ -88,9 +82,6 @@ async function main(): Promise<void> {
         error: message,
         pushed: false,
       };
-      if (mode === 'loop') {
-        agents[index].loop = buildLoopState('failed', agents[index].loop, agents[index]);
-      }
       const review = agents[index].review;
       const checkRunId = review?.githubCheckRunId;
       const checkConcluded =

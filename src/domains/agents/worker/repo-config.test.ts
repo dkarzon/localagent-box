@@ -6,15 +6,13 @@ import { describe, it } from 'node:test';
 import { loadRepoConfig, validateRepoConfig } from './repo-config';
 
 describe('validateRepoConfig', () => {
-  it('accepts all three overrides', () => {
+  it('accepts both prompt overrides', () => {
     const result = validateRepoConfig({
       systemPrompt: 'Custom system prompt',
       batchContextPrompt: 'Custom batch context',
-      loopContextPrompt: 'Custom loop context',
     });
     assert.equal(result.systemPrompt, 'Custom system prompt');
     assert.equal(result.batchContextPrompt, 'Custom batch context');
-    assert.equal(result.loopContextPrompt, 'Custom loop context');
   });
 
   it('accepts partial overrides', () => {
@@ -23,7 +21,6 @@ describe('validateRepoConfig', () => {
     });
     assert.equal(result.systemPrompt, 'Only system prompt overridden');
     assert.equal(result.batchContextPrompt, undefined);
-    assert.equal(result.loopContextPrompt, undefined);
   });
 
   it('accepts empty object', () => {
@@ -58,11 +55,6 @@ describe('validateRepoConfig', () => {
       () => validateRepoConfig({ systemPrompt: 123 }),
       /systemPrompt must be a non-empty string/,
     );
-  });
-
-  it('accepts optional checkCommand for loop host checks', () => {
-    const result = validateRepoConfig({ checkCommand: 'npm test' });
-    assert.equal(result.checkCommand, 'npm test');
   });
 
   it('accepts a full review block', () => {
@@ -127,13 +119,6 @@ describe('validateRepoConfig', () => {
       /replaceDefaultRules must be a boolean/,
     );
   });
-
-  it('rejects empty checkCommand', () => {
-    assert.throws(
-      () => validateRepoConfig({ checkCommand: '   ' }),
-      /checkCommand must be a non-empty string/,
-    );
-  });
 });
 
 describe('loadRepoConfig', () => {
@@ -160,7 +145,6 @@ describe('loadRepoConfig', () => {
     assert.ok(result !== null);
     assert.equal(result.systemPrompt, 'My custom system prompt');
     assert.equal(result.batchContextPrompt, 'My custom batch context');
-    assert.equal(result.loopContextPrompt, undefined);
   });
 
   it('throws on invalid JSON', () => {

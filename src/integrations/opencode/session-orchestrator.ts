@@ -25,18 +25,13 @@ import {
   updateAgentRecord,
 } from '../../domains/agents/worker/agent-state-writer';
 import { logOpenCodeRunContext, resolveRunConfig } from '../../domains/agents/worker/batch-run-flow';
-import { resolveLoopStepModel } from '../../domains/agents/worker/loop-model';
-import { formatLoopStepAgentsSummary } from '../../domains/agents/worker/loop-agent';
-import { loadLoopConfig } from '../../domains/agents/worker/loop-config';
 import { loadRepoConfig } from '../../domains/agents/worker/repo-config';
 import type { WorkerContext } from '../../domains/agents/worker/worker-context';
 import type {
   Agent,
-  AgentJob,
   AgentStatus,
   AgentTokenUsage,
   AppConfig,
-  LoopVerb,
   ModelTokenCosts,
 } from '../../types';
 import { createOpenCodeEventMapper } from './event-mapper';
@@ -47,7 +42,6 @@ import {
   isAgentRunTimedOut,
   parseTimeoutMs,
   resolveAgentRunStartedAtMs,
-  type OpenCodeModelRef,
 } from './runner';
 import {
   createOpenCodeSessionRunner,
@@ -134,7 +128,27 @@ function describeError(err: unknown): string {
 }
 
 /**
- * Unattended runs (batch / loop) have no one to answer OpenCode: auto-approve permission
+ * Assistant text produced by a batch turn: the streamed deltas merged with the
+ * message snapshot, whichever is longer (a snapshot can arrive after the stream).
+ * Reported per turn so the host can show what the model actually said.
+ */
+export function resolveTurnAssistantText(state: {
+  lastAssistantText: string | null;
+  streamedAssistantText: string;
+}): string | null {
+  const snapshot = state.lastAssistantText;
+  const streamed = state.streamedAssistantText;
+  if (!streamed) {
+    return snapshot;
+  }
+  if (!snapshot) {
+    return streamed;
+  }
+  return mergeAssistantText(streamed, snapshot);
+}
+
+/**
+ * Unattended runs have no one to answer OpenCode: auto-approve permission
  * requests when enabled, and cancel forms (v2's question tool) so the turn never blocks.
  */
 export function handleUnattendedRequest(
@@ -568,8 +582,6 @@ export async function runSessionOrchestrator(
         ? `${bootstrapSummary}\n\n${job.prompt}`
         : job.prompt,
       job.systemPrompt,
-      'batch',
-      undefined,
       repoPromptOverrides ?? undefined,
       config.systemPrompt,
     );
@@ -635,387 +647,4 @@ export async function runSessionOrchestrator(
     eventSubscription?.unsubscribe();
     await sessionRunner.dispose();
   }
-}
-
-export type LoopTurnOutcome = 'turn_complete' | 'cancelled' | 'failed' | 'timeout';
-
-export interface LoopTurnResult {
-  outcome: LoopTurnOutcome;
-  assistantText: string | null;
-  failureMessage?: string;
-}
-
-export interface OpenCodeLoopSessionHandle {
-  sessionRunner: OpenCodeSessionRunner;
-  readonly sessionId: string;
-  eventWriter: EventWriter;
-  modelRef: OpenCodeModelRef | null;
-  ctx: WorkerContext;
-  timeoutMs: number;
-  sessionStartedAt: number;
-  turnCount: number;
-  dispose: () => Promise<void>;
-  runTurn: (options: {
-    conversationText: string;
-    promptText: string;
-    model?: OpenCodeModelRef;
-    agent?: string;
-  }) => Promise<LoopTurnResult>;
-  /** Create a fresh OpenCode session in the running process, discarding accumulated conversation history. */
-  rotateSession: () => Promise<void>;
-}
-
-function resolveTurnAssistantText(state: {
-  lastAssistantText: string | null;
-  streamedAssistantText: string;
-}): string | null {
-  const snapshot = state.lastAssistantText;
-  const streamed = state.streamedAssistantText;
-  if (!streamed) {
-    return snapshot;
-  }
-  if (!snapshot) {
-    return streamed;
-  }
-  return mergeAssistantText(streamed, snapshot);
-}
-
-function appendTurnAssistantConversation(
-  job: AgentJob,
-  assistantText: string | null | undefined,
-): void {
-  const text = assistantText?.trim();
-  if (text) {
-    appendConversation(job, 'assistant', text);
-  }
-}
-
-export async function startOpenCodeLoopSession(options: {
-  ctx: WorkerContext;
-  autoApprovePermissions: boolean;
-}): Promise<OpenCodeLoopSessionHandle> {
-  const { ctx, autoApprovePermissions } = options;
-  const { job, logPath, config, agentsStore } = ctx;
-  const agentDir = getAgentDir(job);
-  const runConfig = resolveRunConfig(config, job);
-  const modelRef = buildModelRef(runConfig);
-  const eventWriter = new EventWriter(getEventsPath(job));
-  fs.mkdirSync(agentDir, { recursive: true });
-
-  const codegraph = isCodegraphEnabled();
-
-  const perAgentConfig = createOpenCodeConfigService({
-    configDir: getAgentOpenCodeConfigDir(agentDir),
-  });
-  perAgentConfig.writeOpenCodeConfig(runConfig, {
-    autoApprovePermissions,
-    job,
-    codegraph,
-    disableQuestionTool: true,
-    modelContextLengths: await resolveContextLengthsForRun(runConfig, logPath),
-  });
-  appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended loop)');
-  if (codegraph) {
-    logCodegraphEnabled(logPath);
-  }
-  excludeWorkspaceInfrastructureFromGit(job.workspaceDir);
-
-  const loopVerbs: LoopVerb[] = ['INITIAL_PLAN', 'ORIENT', 'ACT', 'REFLECT'];
-  appendLog(
-    logPath,
-    `Loop verb models: ${loopVerbs
-      .map((verb) => `${verb}=${resolveLoopStepModel(verb, runConfig, job) ?? 'default'}`)
-      .join(', ')}`,
-  );
-  try {
-    const { config: loopConfig } = loadLoopConfig(job.workspaceDir);
-    appendLog(logPath, `Loop step agents: ${formatLoopStepAgentsSummary(loopConfig.steps)}`);
-  } catch {
-    /* loop config logged from runLoopJob when load fails */
-  }
-
-  appendLog(logPath, 'Starting OpenCode loop session…');
-  logOpenCodeRunContext(logPath, {
-    config: runConfig,
-    job,
-    timeoutMs: parseTimeoutMs(job.agentTimeoutMs),
-  });
-
-  const sessionRunner = createOpenCodeSessionRunner({
-    cwd: job.workspaceDir,
-    agentDir,
-    onServerOutput: (chunk) => fs.appendFileSync(logPath, chunk),
-    onDebugLog: (line) => appendLog(logPath, line),
-  });
-
-  let sessionId = '';
-  let turnCount = 0;
-  let sessionFailed = false;
-  let failureMessage: string | null = null;
-  const sessionStartedAt = resolveAgentRunStartedAtMs(
-    readAgentRecord(agentsStore, job.agentId)?.startedAt,
-  );
-  const timeoutMs = parseTimeoutMs(job.agentTimeoutMs);
-  let eventSubscription: { unsubscribe: () => void; ready: Promise<void> } | undefined;
-  const eventMapper = createOpenCodeEventMapper();
-
-  // Cumulative token usage across all loop turns
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let totalCacheReadTokens = 0;
-  let totalCacheWriteTokens = 0;
-  let totalCost = 0;
-  let costEstimated = false;
-  let hasTokenUsage = false;
-
-  const sseLockedStatuses = new Set<AgentStatus>([
-    'queued',
-    'completing',
-    'completed',
-    'failed',
-    'cancelled',
-  ]);
-
-  const turnState = {
-    seenBusySinceProcessing: false,
-    batchPromptBusySeen: false,
-    lastAssistantText: null as string | null,
-    streamedAssistantText: '',
-  };
-
-  const handleOpenCodeEvent = (ocEvent: OpenCodeServerEvent) => {
-    handleUnattendedRequest(ocEvent, sessionRunner, logPath, autoApprovePermissions);
-
-    const { event: mapped } = eventMapper.map(ocEvent, sessionId);
-    if (!mapped) {
-      return;
-    }
-
-    eventWriter.write(mapped.type, mapped.payload, sessionId || undefined);
-
-    if (mapped.type === 'assistant.delta') {
-      if (mapped.payload.field !== 'reasoning') {
-        const deltaText = mapped.payload.text;
-        if (typeof deltaText === 'string') {
-          turnState.streamedAssistantText += deltaText;
-        }
-      }
-    }
-
-    if (mapped.type === 'assistant.message') {
-      const text = extractAssistantTextFromPayload(mapped.payload);
-      if (text) {
-        turnState.lastAssistantText = text;
-      }
-
-      const msgTokens = extractMessageTokenUsage(mapped.payload, runConfig.modelTokenCosts ?? {});
-      if (msgTokens) {
-        totalInputTokens += msgTokens.input;
-        totalOutputTokens += msgTokens.output;
-        totalCacheReadTokens += msgTokens.cacheRead;
-        totalCacheWriteTokens += msgTokens.cacheWrite;
-        totalCost += msgTokens.cost;
-        costEstimated ||= msgTokens.estimatedCost;
-        hasTokenUsage = true;
-        appendLog(
-          logPath,
-          `OpenCode SSE: token usage model=${msgTokens.model} input=${msgTokens.input} output=${msgTokens.output} cacheRead=${msgTokens.cacheRead} cost=$${msgTokens.cost.toFixed(6)}${msgTokens.estimatedCost ? ' (estimated from configured rates)' : ''} | session total: input=${totalInputTokens} output=${totalOutputTokens} cost=$${totalCost.toFixed(6)}`,
-        );
-        const usage: AgentTokenUsage = {
-          inputTokens: totalInputTokens,
-          outputTokens: totalOutputTokens,
-          ...(totalCacheReadTokens > 0 ? { cacheReadTokens: totalCacheReadTokens } : {}),
-          ...(totalCacheWriteTokens > 0 ? { cacheWriteTokens: totalCacheWriteTokens } : {}),
-          cost: totalCost,
-          ...(costEstimated ? { costEstimated: true } : {}),
-        };
-        updateAgentRecord(agentsStore, job.agentId, { tokenUsage: usage });
-      }
-    }
-
-    if (mapped.type === 'tool.end') {
-      const tool = mapped.payload.tool as NormalizedTool | undefined;
-      if (tool) {
-        const label = tool.title && tool.title !== tool.name ? `${tool.name}: ${tool.title}` : tool.name;
-        appendLog(logPath, `Tool ${label} — ${tool.status}`);
-      }
-    }
-
-    if (mapped.status) {
-      const current = readAgentStatus(agentsStore, job.agentId);
-      if (current && sseLockedStatuses.has(current)) {
-        if (mapped.status === 'failed') {
-          sessionFailed = true;
-          failureMessage =
-            typeof mapped.payload.error === 'object' && mapped.payload.error !== null
-              ? JSON.stringify(mapped.payload.error)
-              : 'OpenCode session error';
-        }
-        return;
-      }
-
-      if (mapped.status === 'processing') {
-        turnState.seenBusySinceProcessing = true;
-      }
-
-      const patch: Partial<Agent> = {
-        status: mapped.status,
-        lastActivityAt: new Date().toISOString(),
-      };
-      if (mapped.status === 'failed') {
-        sessionFailed = true;
-        failureMessage =
-          typeof mapped.payload.error === 'object' && mapped.payload.error !== null
-            ? JSON.stringify(mapped.payload.error)
-            : 'OpenCode session error';
-      }
-      updateAgentRecord(agentsStore, job.agentId, patch);
-    }
-  };
-
-  await sessionRunner.startServer();
-  appendLog(logPath, `OpenCode serve spawned; waiting for ready on port ${sessionRunner.port}…`);
-  await sessionRunner.waitForServerReady();
-  appendLog(logPath, `OpenCode serve ready on ${sessionRunner.baseUrl} (port ${sessionRunner.port})`);
-
-  eventSubscription = sessionRunner.subscribeEvents(handleOpenCodeEvent);
-  await eventSubscription.ready;
-  appendLog(logPath, 'OpenCode SSE connected');
-
-  const session = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
-  sessionId = session.id;
-  appendLog(logPath, `OpenCode session created: ${sessionId}`);
-
-  updateAgentRecord(agentsStore, job.agentId, {
-    opencodeSessionId: sessionId,
-    turnCount: 0,
-    lastActivityAt: new Date().toISOString(),
-    status: 'processing',
-  });
-
-  async function runTurn(options: {
-    conversationText: string;
-    promptText: string;
-    model?: OpenCodeModelRef;
-    agent?: string;
-  }): Promise<LoopTurnResult> {
-    turnState.seenBusySinceProcessing = false;
-    turnState.batchPromptBusySeen = false;
-    turnState.lastAssistantText = null;
-    turnState.streamedAssistantText = '';
-    eventMapper.reset();
-
-    if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
-      return { outcome: 'timeout', assistantText: null };
-    }
-
-    const agentStatus = readAgentStatus(agentsStore, job.agentId);
-    if (agentStatus === 'cancelled') {
-      appendLog(logPath, 'Agent cancelled — aborting loop turn');
-      if (sessionId) {
-        await sessionRunner.abort(sessionId);
-      }
-      return { outcome: 'cancelled', assistantText: null };
-    }
-
-    const turnModelRef = options.model ?? modelRef;
-
-    appendConversation(job, 'user', options.conversationText);
-    await sessionRunner.sendPromptAsync(sessionId, {
-      parts: [{ type: 'text', text: options.promptText }],
-      agent: options.agent ?? 'build',
-      ...(turnModelRef ? { model: turnModelRef } : {}),
-    });
-    turnCount += 1;
-    updateAgentRecord(agentsStore, job.agentId, { turnCount, status: 'processing' });
-
-    function finishTurn(result: LoopTurnResult): LoopTurnResult {
-      appendTurnAssistantConversation(job, result.assistantText);
-      return result;
-    }
-
-    while (!sessionFailed) {
-      if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
-        return finishTurn({ outcome: 'timeout', assistantText: resolveTurnAssistantText(turnState) });
-      }
-
-      const currentStatus = readAgentStatus(agentsStore, job.agentId);
-      if (currentStatus === 'cancelled') {
-        appendLog(logPath, 'Agent cancelled during loop turn');
-        if (sessionId) {
-          await sessionRunner.abort(sessionId);
-        }
-        return finishTurn({
-          outcome: 'cancelled',
-          assistantText: resolveTurnAssistantText(turnState),
-        });
-      }
-
-      try {
-        const statusMap = await sessionRunner.getSessionStatusMap();
-        const status = statusMap[sessionId];
-        if (status?.type === 'busy' || status?.type === 'retry') {
-          turnState.batchPromptBusySeen = true;
-        }
-        const batchBusySeen = turnState.batchPromptBusySeen || turnState.seenBusySinceProcessing;
-        if (isBatchTurnComplete(statusMap, sessionId, batchBusySeen)) {
-          appendLog(logPath, 'OpenCode session idle — loop step complete');
-          return finishTurn({
-            outcome: 'turn_complete',
-            assistantText: resolveTurnAssistantText(turnState),
-          });
-        }
-      } catch {
-        /* transient status poll failure */
-      }
-
-      await sleep(300);
-    }
-
-    return finishTurn({
-      outcome: 'failed',
-      assistantText: resolveTurnAssistantText(turnState),
-      failureMessage: failureMessage || 'OpenCode session failed',
-    });
-  }
-
-  async function dispose(): Promise<void> {
-    if (hasTokenUsage) {
-      appendLog(
-        logPath,
-        `OpenCode token usage total: inputTokens=${totalInputTokens} outputTokens=${totalOutputTokens} cacheRead=${totalCacheReadTokens} cacheWrite=${totalCacheWriteTokens} cost=$${totalCost.toFixed(6)}`,
-      );
-    }
-    eventSubscription?.unsubscribe();
-    await sessionRunner.dispose();
-  }
-
-  async function rotateSession(): Promise<void> {
-    const newSess = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
-    sessionId = newSess.id;
-    turnState.seenBusySinceProcessing = false;
-    turnState.batchPromptBusySeen = false;
-    turnState.lastAssistantText = null;
-    turnState.streamedAssistantText = '';
-    eventMapper.reset();
-    appendLog(logPath, `OpenCode session rotated: new sessionId=${sessionId}`);
-    updateAgentRecord(agentsStore, job.agentId, {
-      opencodeSessionId: sessionId,
-      lastActivityAt: new Date().toISOString(),
-    });
-  }
-
-  return {
-    sessionRunner,
-    get sessionId() { return sessionId; },
-    eventWriter,
-    modelRef,
-    ctx,
-    timeoutMs,
-    sessionStartedAt,
-    turnCount,
-    dispose,
-    runTurn,
-    rotateSession,
-  };
 }

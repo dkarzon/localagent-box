@@ -76,7 +76,6 @@ function createContext(env: ReturnType<typeof getServerEnv>): ServerContext {
     workspaceRoot: env.agentWorkspace,
     maxConcurrent: env.maxConcurrentAgents,
     agentTimeoutMs: env.agentTimeoutMs,
-    loopAgentTimeoutFallbackSeconds: env.agentTimeoutSeconds,
   });
 
   // Runs in the background; ordering (reconcile before re-enqueue) is handled

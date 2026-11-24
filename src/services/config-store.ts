@@ -1,6 +1,4 @@
-import type { AppConfig, ConfigPartial, LoopVerbModels, PublicConfig } from '../types';
-import { loadServerDefaultLoopConfig } from '../domains/agents/worker/loop-config';
-import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
+import type { AppConfig, ConfigPartial, PublicConfig } from '../types';
 import { sanitizeModelTokenCosts } from '../lib/model-cost';
 import { resolveOpenCodeProvider } from '../lib/llm-provider';
 
@@ -21,29 +19,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   gitUserEmail: '',
   webhookUrl: '',
   batchAutoApprovePermissions: true,
-  loopAutoApprovePermissions: true,
   autoCreatePullRequest: true,
   autoReviewPullRequests: false,
   reviewModel: '',
   ocrSkipWorkspaceBootstrap: false,
-  loopAgentTimeoutSeconds: 3600,
-  loopVerbModels: {
-    INITIAL_PLAN: '',
-    ORIENT: '',
-    ACT: '',
-    REFLECT: '',
-  },
   modelTokenCosts: {},
 };
-
-export function getLoopVerbModelsDefault(): LoopVerbModels {
-  return {
-    INITIAL_PLAN: '',
-    ORIENT: '',
-    ACT: '',
-    REFLECT: '',
-  };
-}
 
 export interface ConfigStore {
   loadConfig: () => AppConfig;
@@ -63,11 +44,6 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
     try {
       const raw = fs.readFileSync(configPath, 'utf8');
       const parsed = { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as AppConfig;
-      // Migrate configs persisted before OBSERVE/PLAN were merged into ORIENT.
-      parsed.loopVerbModels = {
-        ...getLoopVerbModelsDefault(),
-        ...normalizeLoopVerbModels(parsed.loopVerbModels),
-      };
       parsed.modelTokenCosts = sanitizeModelTokenCosts(parsed.modelTokenCosts);
       return parsed;
     } catch (err) {
@@ -120,15 +96,11 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       gitUserEmail: config.gitUserEmail,
       webhookUrl: config.webhookUrl,
       batchAutoApprovePermissions: config.batchAutoApprovePermissions !== false,
-      loopAutoApprovePermissions: config.loopAutoApprovePermissions !== false,
-      loopAgentTimeoutSeconds: config.loopAgentTimeoutSeconds || 3600,
       autoCreatePullRequest: config.autoCreatePullRequest !== false,
       autoReviewPullRequests: config.autoReviewPullRequests === true,
       reviewModel: config.reviewModel || '',
       ocrSkipWorkspaceBootstrap: config.ocrSkipWorkspaceBootstrap === true,
-      loopVerbModels: config.loopVerbModels,
       modelTokenCosts: config.modelTokenCosts ?? {},
-      loopDefaultMaxIterations: loadServerDefaultLoopConfig().maxIterations,
     };
   }
 

@@ -29,6 +29,19 @@ export function tailOutputLines(output: string, maxLines: number): string {
   return lines.slice(-maxLines).join('\n');
 }
 
+/** Markdown block for a host-run command result, injected into a model turn. */
+export function formatCommandResultBlock(
+  result: WorkspaceCommandResult,
+  heading = 'Check result',
+): string {
+  const statusSuffix = result.timedOut ? ' (timed out)' : '';
+  return [
+    `## ${heading} (host-run: \`${result.command}\`)`,
+    `exit=${result.exitCode}${statusSuffix}`,
+    result.outputTail.trim() || '(no output)',
+  ].join('\n');
+}
+
 /**
  * Run a shell command inside the workspace directory.
  * Captures combined stdout/stderr tail and enforces a bounded timeout.

@@ -3,7 +3,7 @@ import {
   getOpencodeBin,
 } from '../../../integrations/opencode/runner';
 import { runSessionOrchestrator } from '../../../integrations/opencode/session-orchestrator';
-import type { AgentJob, AgentMode, AppConfig } from '../../../types';
+import type { AgentJob, AppConfig } from '../../../types';
 import {
   appendLog,
   updateAgentRecord,
@@ -18,16 +18,9 @@ export function resolveRunConfig(config: AppConfig, job: AgentJob): AppConfig {
   return config;
 }
 
-export function resolveAutoApprovePermissions(
-  config: AppConfig,
-  job: AgentJob,
-  mode: AgentMode,
-): boolean {
+export function resolveAutoApprovePermissions(config: AppConfig, job: AgentJob): boolean {
   if (job.autoApprovePermissions !== undefined) {
     return job.autoApprovePermissions;
-  }
-  if (mode === 'loop') {
-    return config.loopAutoApprovePermissions !== false;
   }
   return config.batchAutoApprovePermissions !== false;
 }
@@ -82,7 +75,7 @@ export async function runBatchJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, 'Using custom system prompt');
   }
 
-  const autoApprovePermissions = resolveAutoApprovePermissions(config, job, 'batch');
+  const autoApprovePermissions = resolveAutoApprovePermissions(config, job);
   appendLog(
     logPath,
     autoApprovePermissions

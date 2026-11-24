@@ -5,7 +5,6 @@ import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import { createJsonStore } from '../../lib/json-store';
-import { buildLoopState } from '../../lib/loop-state';
 import { getLogger } from '../../lib/logger';
 import {
   CodedError,
@@ -128,7 +127,6 @@ function createTestContext(options?: {
     githubAppId: '123',
     githubAppInstallationId: '456',
     githubAppPrivateKey: 'test-key',
-    loopAutoApprovePermissions: true,
     ollamaBaseUrl: options?.ollamaChat ? 'http://localhost:11434' : undefined,
     opencodeModel: options?.ollamaChat ? 'qwen2.5-coder:7b' : undefined,
   });
@@ -277,56 +275,7 @@ afterEach(() => {
   }
 });
 
-describe('createAgentService (loop mode)', () => {
-  it('creates a loop agent with initial loop state and queues it', () => {
-    const { service } = createTestContext();
-
-    const agent = service.createAgent({
-      repoId: testRepo.repoId,
-      prompt: 'Refactor auth module',
-      mode: 'loop',
-      pushOnFailure: true,
-    });
-
-    assert.equal(agent.mode, 'loop');
-    assert.equal(agent.status, 'queued');
-    assert.equal(agent.pushOnFailure, true);
-    assert.ok(agent.loop);
-    assert.equal(agent.loop!.iteration, 1);
-    assert.equal(agent.loop!.finishRequested, false);
-    assert.equal(agent.loop!.canFinish, false);
-  });
-
-  it('persists loopMaxIterations set on creation and returns it on select', () => {
-    const { service, repository } = createTestContext();
-
-    const agent = service.createAgent({
-      repoId: testRepo.repoId,
-      prompt: 'Refactor auth module',
-      mode: 'loop',
-      loopMaxIterations: 7,
-    });
-
-    assert.equal(agent.loopMaxIterations, 7);
-    assert.equal(agent.loop?.maxIterations, 7);
-    assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, 7);
-    assert.equal(service.getAgent(agent.agentId).loopMaxIterations, 7);
-    assert.equal(service.getAgent(agent.agentId).loop?.maxIterations, 7);
-  });
-
-  it('leaves loopMaxIterations unset so the global/repo default applies', () => {
-    const { service, repository } = createTestContext();
-
-    const agent = service.createAgent({
-      repoId: testRepo.repoId,
-      prompt: 'Refactor auth module',
-      mode: 'loop',
-    });
-
-    assert.equal(agent.loopMaxIterations, undefined);
-    assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, undefined);
-  });
-
+describe('createAgentService', () => {
   it('persists autofix metadata on batch agents', () => {
     const { service, repository } = createTestContext();
 
@@ -357,40 +306,18 @@ describe('createAgentService (loop mode)', () => {
       batchIndex: 0,
     });
   });
-
-  it('returns derived loop fields when fetching an active loop agent', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'loopproc0001';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'loop',
-        status: 'processing',
-        loop: buildLoopState('processing'),
-      }),
-    );
-
-    const agent = service.getAgent(agentId);
-
-    assert.equal(agent.mode, 'loop');
-    assert.ok(agent.loop);
-    assert.equal(agent.loop!.canFinish, true);
-    assert.equal(agent.loop!.finishRequested, false);
-  });
 });
 
 describe('cancelAgent', () => {
-  it('cancels an active loop agent without committing', () => {
+  it('cancels an active batch agent without committing', () => {
     const { service, repository } = createTestContext();
-    const agentId = 'loopcancel01';
+    const agentId = 'batchcancel01';
     seedAgent(
       repository,
       baseAgentFields({
         agentId,
-        mode: 'loop',
+        mode: 'batch',
         status: 'processing',
-        loop: buildLoopState('processing'),
       }),
     );
 

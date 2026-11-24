@@ -1,14 +1,13 @@
 import fs from 'fs';
 import path from 'path';
-import { buildLoopState } from '../../../lib/loop-state';
-import type { Agent, AgentEvent, AgentEventType, AgentJob, AgentStatus, LoopVerb } from '../../../types';
+import type { Agent, AgentEvent, AgentEventType, AgentJob, AgentStatus } from '../../../types';
 import type { JsonStore } from '../../../lib/json-store';
 
 export function getAgentDir(job: AgentJob): string {
   return path.join(job.dataDir, 'agents', job.agentId);
 }
 
-/** Ensure the agent runtime directory exists (logs, handoff state, etc.). */
+/** Ensure the agent runtime directory exists (logs, transcripts, events). */
 export function ensureAgentDir(job: AgentJob): string {
   const dir = getAgentDir(job);
   fs.mkdirSync(dir, { recursive: true });
@@ -49,9 +48,6 @@ export function updateAgentRecord(
     return;
   }
   const merged = { ...agents[index], ...patch };
-  if (merged.mode === 'loop') {
-    merged.loop = buildLoopState(merged.status, merged.loop, merged);
-  }
   agents[index] = merged;
   agentsStore.save({ agents });
 }
@@ -103,45 +99,3 @@ export class EventWriter {
   }
 }
 
-export function readAgentLoopFinishRequested(
-  agentsStore: JsonStore<{ agents: Agent[] }>,
-  agentId: string,
-): boolean {
-  const agent = (agentsStore.load().agents || []).find((entry) => entry.agentId === agentId);
-  return agent?.loop?.finishRequested === true;
-}
-
-export function emitLoopStepStart(
-  eventWriter: EventWriter,
-  payload: {
-    iteration: number;
-    stepIndex: number;
-    verb: LoopVerb;
-    model: string | null;
-    openCodeAgent?: string;
-  },
-  sessionId?: string,
-): AgentEvent {
-  return eventWriter.write('loop.step.start', payload, sessionId);
-}
-
-export function emitLoopStepEnd(
-  eventWriter: EventWriter,
-  payload: {
-    iteration: number;
-    stepIndex: number;
-    verb: LoopVerb;
-    completionSignal?: boolean;
-  },
-  sessionId?: string,
-): AgentEvent {
-  return eventWriter.write('loop.step.end', payload, sessionId);
-}
-
-export function emitLoopIterationEnd(
-  eventWriter: EventWriter,
-  payload: { iteration: number; completed: boolean },
-  sessionId?: string,
-): AgentEvent {
-  return eventWriter.write('loop.iteration.end', payload, sessionId);
-}

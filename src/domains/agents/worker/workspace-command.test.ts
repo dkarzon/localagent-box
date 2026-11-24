@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'child_process';
 import { describe, it } from 'node:test';
 import {
+  formatCommandResultBlock,
   runWorkspaceCommand,
   tailOutputLines,
 } from './workspace-command';
@@ -45,6 +46,38 @@ describe('tailOutputLines', () => {
   it('returns the last N lines of output', () => {
     const output = ['line1', 'line2', 'line3', 'line4'].join('\n');
     assert.equal(tailOutputLines(output, 2), 'line3\nline4');
+  });
+});
+
+describe('formatCommandResultBlock', () => {
+  it('formats a failed check for injection', () => {
+    const block = formatCommandResultBlock({
+      command: 'npm test',
+      exitCode: 1,
+      outputTail: 'AssertionError: expected true',
+      timedOut: false,
+      success: false,
+    });
+    assert.match(block, /^## Check result \(host-run: `npm test`\)/);
+    assert.match(block, /exit=1/);
+    assert.match(block, /AssertionError/);
+  });
+
+  it('uses the heading given and marks a timed-out run', () => {
+    const block = formatCommandResultBlock(
+      {
+        command: 'npm test',
+        exitCode: 124,
+        outputTail: '',
+        timedOut: true,
+        success: false,
+      },
+      'Failed check',
+    );
+    assert.equal(
+      block,
+      '## Failed check (host-run: `npm test`)\nexit=124 (timed out)\n(no output)',
+    );
   });
 });
 

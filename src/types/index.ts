@@ -42,8 +42,6 @@ export interface AppConfig {
   webhookUrl: string;
   /** Default true — batch agents auto-approve OpenCode tool permissions */
   batchAutoApprovePermissions: boolean;
-  /** Default true — loop agents auto-approve OpenCode tool permissions */
-  loopAutoApprovePermissions: boolean;
   /** Auto-create PR when agent completes */
   autoCreatePullRequest?: boolean;
   /** Default false — auto-spawn review agent after PR creation for completed agents */
@@ -52,10 +50,6 @@ export interface AppConfig {
   reviewModel: string;
   /** Default false — skip the workspace bootstrap for review runs */
   ocrSkipWorkspaceBootstrap?: boolean;
-  /** Loop agent timeout in seconds (default 3600) */
-  loopAgentTimeoutSeconds: number;
-  /** Per-verb model overrides for loop mode. Empty string = use fallback. */
-  loopVerbModels: LoopVerbModels;
   /**
    * Token costs per model in USD per 1,000,000 tokens. Keys are model ids
    * (`llama3.2` or `ollama/llama3.2`). Ollama reports no cost amounts, so session
@@ -101,16 +95,11 @@ export interface PublicConfig {
   gitUserEmail: string;
   webhookUrl: string;
   batchAutoApprovePermissions: boolean;
-  loopAutoApprovePermissions: boolean;
   autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
   reviewModel: string;
   ocrSkipWorkspaceBootstrap?: boolean;
-  loopAgentTimeoutSeconds: number;
-  loopVerbModels: LoopVerbModels;
   modelTokenCosts?: ModelTokenCosts;
-  /** Bundled server default from config/loop.default.json */
-  loopDefaultMaxIterations: number;
 }
 
 export interface OllamaModel {
@@ -259,26 +248,6 @@ export interface AgentResult {
 
 export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
 
-export type LoopVerb = 'INITIAL_PLAN' | 'ORIENT' | 'ACT' | 'REFLECT';
-
-export type LoopVerbModels = Partial<Record<LoopVerb, string>>;
-
-export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
-  INITIAL_PLAN: '',
-  ORIENT: '',
-  ACT: '',
-  REFLECT: '',
-};
-
-export type LoopOpenCodeAgent = 'build' | 'plan';
-
-export interface LoopStepConfig {
-  verb: LoopVerb;
-  prompt: string;
-  /** OpenCode agent profile. Defaults: ORIENT/REFLECT → plan (read-only), ACT → build. */
-  agent?: LoopOpenCodeAgent;
-}
-
 export type RepoReviewRiskLevel = 'critical' | 'high' | 'medium' | 'low';
 
 export type RepoReviewEffort = 'low' | 'medium' | 'high';
@@ -307,39 +276,9 @@ export interface RepoReviewConfig {
 export interface RepoPromptOverrides {
   systemPrompt?: string;
   batchContextPrompt?: string;
-  loopContextPrompt?: string;
   /** Legacy alias for `review.background`; validation copies it there. */
   reviewBackground?: string;
   review?: RepoReviewConfig;
-  /** Shell command the host runs after each ACT step in loop mode (e.g. `npm test`). */
-  checkCommand?: string;
-}
-
-/** Milestone progress mirrored from loop handoff state for API/UI. */
-export interface AgentLoopHandoffState {
-  next: string | null;
-  remaining: string | null;
-  milestonesTotal: number;
-  milestonesDone: number;
-  currentMilestone: string | null;
-  lastFiles: string[];
-}
-
-export interface AgentLoopState {
-  iteration: number;
-  stepIndex: number;
-  currentVerb: LoopVerb;
-  stepsInIteration: number;
-  maxIterations: number;
-  completionMarker: string;
-  canFinish: boolean;
-  /** Failed loop sessions with uncommitted workspace changes can salvage via commit. */
-  canCommitOutstanding: boolean;
-  finishRequested: boolean;
-  configSource: 'server-default' | 'repo-override';
-  effectiveSteps: LoopStepConfig[];
-  /** Host-maintained handoff slice for milestone progress (loop mode only). */
-  handoff?: AgentLoopHandoffState;
 }
 
 export type AgentStatus =
@@ -372,10 +311,7 @@ export type AgentEventType =
   | 'tool.end'
   | 'permission.requested'
   | 'error'
-  | 'log.line'
-  | 'loop.step.start'
-  | 'loop.step.end'
-  | 'loop.iteration.end';
+  | 'log.line';
 
 export interface AgentEvent {
   seq: number;
@@ -497,7 +433,7 @@ export interface AgentBootstrapState {
   source?: AgentBootstrapSource;
   durationMs?: number;
   exitCode?: number;
-  /** Last ~50 lines of command output (same cap as loop checks) */
+  /** Last ~50 lines of command output (same cap as host-run checks) */
   outputTail?: string;
   error?: string;
   /**
@@ -533,11 +469,7 @@ export interface Agent {
   /** When set, overrides mode default from Settings for OpenCode tool permissions */
   autoApprovePermissions?: boolean;
   model: string | null;
-  /** Per-verb model overrides for this loop run (create-time snapshot) */
-  loopVerbModels?: LoopVerbModels;
-  /** Per-session iteration cap for loop mode (create-time snapshot); omitted = global/repo default */
-  loopMaxIterations?: number;
-  /** Distinct models actually invoked during a loop run's lifecycle */
+  /** Distinct models invoked during the run (read by PR content generation) */
   modelsUsed?: string[] | null;
   status: AgentStatus;
   /** Legacy interactive-session fields; kept so pre-v1 records still read */
@@ -546,10 +478,8 @@ export interface Agent {
   lastActivityAt?: string | null;
   awaitingInputSince?: string | null;
   messagesPreview?: string | null;
-  /** Snapshot of working tree changes at the last awaiting_input checkpoint */
+  /** Snapshot of working tree changes at the last checkpoint */
   gitStatus?: AgentGitStatus | null;
-  /** Present when mode === 'loop' */
-  loop?: AgentLoopState;
   commitSha: string | null;
   pushed: boolean;
   filesChanged: number | null;
@@ -596,10 +526,6 @@ export interface AgentJob {
   /** When set, overrides mode default from Settings for OpenCode tool permissions */
   autoApprovePermissions?: boolean;
   model?: string;
-  /** Per-verb model overrides for this loop run */
-  loopVerbModels?: LoopVerbModels;
-  /** Per-session iteration cap for loop mode (create-time snapshot); omitted = global/repo default */
-  loopMaxIterations?: number;
   /** Review mode head branch (set by worker-spawner when mode is 'review') */
   headBranch?: string;
   /** Review mode background context */

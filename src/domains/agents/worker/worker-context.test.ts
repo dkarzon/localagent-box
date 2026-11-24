@@ -46,10 +46,7 @@ function writeConfig(dataDir: string, extra: Partial<AppConfig>): void {
     gitUserEmail: '',
     webhookUrl: '',
     batchAutoApprovePermissions: true,
-    loopAutoApprovePermissions: true,
     reviewModel: '',
-    loopAgentTimeoutSeconds: 3600,
-    loopVerbModels: { INITIAL_PLAN: '', ORIENT: '', ACT: '', REFLECT: '' },
     ...extra,
   };
   fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(config, null, 2), 'utf8');

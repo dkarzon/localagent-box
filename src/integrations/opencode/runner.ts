@@ -183,22 +183,8 @@ export const SENIOR_ENGINEER_SYSTEM_PROMPT =
 export const BATCH_RUN_CONTEXT_PROMPT =
   'Batch: one unattended run — implement the task in this session (edit files, run checks). Do not stop at a plan or overview; the host fails the run if there are no file changes when you go idle.';
 
-export const LOOP_RUN_CONTEXT_PROMPT =
-  'Loop: unattended multi-step harness — each step is a directive toward the goal. The host fails on zero file changes at end (like batch). Emit {{completionMarker}}: true when the goal is fully achieved — on REFLECT, or on the first step of an iteration if it was already complete before you started. Do not stop after plans or overviews — ACT steps must produce file edits.';
-
-export type OpenCodeRunMode = 'batch' | 'loop';
-
-function resolveRunModeContext(
-  runMode?: OpenCodeRunMode,
-  repoOverrides?: RepoPromptOverrides,
-): string | null {
-  if (runMode === 'batch') {
-    return !repoOverrides?.batchContextPrompt ? BATCH_RUN_CONTEXT_PROMPT : repoOverrides.batchContextPrompt;
-  }
-  if (runMode === 'loop') {
-    return !repoOverrides?.loopContextPrompt ? LOOP_RUN_CONTEXT_PROMPT : repoOverrides.loopContextPrompt;
-  }
-  return null;
+function resolveBatchContextPrompt(repoOverrides?: RepoPromptOverrides): string {
+  return repoOverrides?.batchContextPrompt ?? BATCH_RUN_CONTEXT_PROMPT;
 }
 
 /** P4-T5: duration for the workspace-ready summary (whole seconds, "38s"). */
@@ -288,8 +274,6 @@ export interface BuildOpenCodePromptOptions {
 export function buildOpenCodePrompt(
   userPrompt: string,
   jobSystemPrompt?: string,
-  runMode?: OpenCodeRunMode,
-  completionMarker?: string,
   repoOverrides?: RepoPromptOverrides,
   serverSystemPrompt?: string,
   options?: BuildOpenCodePromptOptions,
@@ -314,14 +298,7 @@ export function buildOpenCodePrompt(
           ? serverSystemPrompt.trim()
           : SENIOR_ENGINEER_SYSTEM_PROMPT;
 
-  let modeContext = resolveRunModeContext(runMode, repoOverrides);
-  if (modeContext && runMode === 'loop' && completionMarker) {
-    modeContext = modeContext.replaceAll('{{completionMarker}}', completionMarker);
-  }
-  const contextLines = [system];
-  if (modeContext) {
-    contextLines.push(modeContext);
-  }
+  const contextLines = [system, resolveBatchContextPrompt(repoOverrides)];
 
   // Static `## Context` first, changing `## Task` last: keeps the prompt prefix
   // stable across turns so Ollama can reuse its KV cache.

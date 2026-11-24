@@ -15,21 +15,6 @@ import { runWorkspaceBootstrap } from './workspace-bootstrap';
 import type { WorkerContext } from './worker-context';
 import { getAgentMode } from './worker-context';
 
-const LOCALAGENT_BOX_IGNORE_ENTRY = '.localagent-box/loop-plan.md';
-
-export function ensureLocalagentBoxIgnored(workspaceDir: string): void {
-  const gitignorePath = path.join(workspaceDir, '.gitignore');
-  if (!fs.existsSync(gitignorePath)) {
-    fs.writeFileSync(gitignorePath, LOCALAGENT_BOX_IGNORE_ENTRY + '\n', 'utf8');
-    return;
-  }
-  const content = fs.readFileSync(gitignorePath, 'utf8');
-  if (!content.includes(LOCALAGENT_BOX_IGNORE_ENTRY)) {
-    const prefix = content.endsWith('\n') ? '' : '\n';
-    fs.writeFileSync(gitignorePath, content + prefix + LOCALAGENT_BOX_IGNORE_ENTRY + '\n', 'utf8');
-  }
-}
-
 const execFileAsync = promisify(execFile);
 const CODEGRAPH_INIT_TIMEOUT_MS = 180_000;
 
@@ -140,8 +125,6 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
       `Could not record run start commit — agent-made commits will not be detected (${err instanceof Error ? err.message : String(err)})`,
     );
   }
-
-  ensureLocalagentBoxIgnored(job.workspaceDir);
 
   if (isReview && config.ocrSkipWorkspaceBootstrap === true) {
     appendLog(logPath, 'Workspace bootstrap skipped: ocrSkipWorkspaceBootstrap is enabled for review runs');

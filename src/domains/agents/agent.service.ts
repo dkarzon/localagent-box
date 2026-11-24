@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { buildLoopState } from '../../lib/loop-state';
 import { createWebhookSender } from '../../lib/webhook';
 import {
   buildDefaultPullRequestBody,
@@ -59,9 +58,8 @@ import {
   ACTIVE_STATUSES,
   BATCH_ACTIVE_STATUSES,
   getAgentMode,
-  LOOP_ACTIVE_STATUSES,
   TERMINAL_STATUSES,
-  withLoopFields,
+  withDerivedAgentFields,
 } from './agent.types';
 import type { CreateAgentRequest } from './dto';
 
@@ -69,7 +67,6 @@ export {
   TERMINAL_STATUSES,
   BATCH_ACTIVE_STATUSES,
   ACTIVE_STATUSES,
-  LOOP_ACTIVE_STATUSES,
 } from './agent.types';
 
 export interface AgentService {
@@ -152,7 +149,6 @@ export function createAgentService(options: {
   workspaceRoot: string;
   maxConcurrent?: unknown;
   agentTimeoutMs?: unknown;
-  loopAgentTimeoutFallbackSeconds?: unknown;
   repository?: AgentRepository;
 }): AgentService {
   const fsImpl = options.fs || fs;
@@ -167,19 +163,6 @@ export function createAgentService(options: {
   const workspaceRoot = options.workspaceRoot;
   const maxConcurrent = parsePositiveInt(options.maxConcurrent, 3);
   const agentTimeoutMs = parsePositiveInt(options.agentTimeoutMs, 3600000);
-  const loopAgentTimeoutFallbackSeconds = parsePositiveInt(
-    options.loopAgentTimeoutFallbackSeconds,
-    3600,
-  );
-
-  function getLoopAgentTimeoutMs(): number {
-    const config = configRepository.load();
-    const seconds = parsePositiveInt(
-      config.loopAgentTimeoutSeconds || loopAgentTimeoutFallbackSeconds,
-      loopAgentTimeoutFallbackSeconds,
-    );
-    return seconds * 1000;
-  }
 
   const repository =
     options.repository ||
@@ -337,33 +320,6 @@ export function createAgentService(options: {
       return;
     }
 
-    const mode = getAgentMode(current);
-    const isLoop = mode === 'loop';
-
-    if (isLoop && LOOP_ACTIVE_STATUSES.has(current.status) && code === 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || 'Loop worker exited unexpectedly',
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
-    if (isLoop && LOOP_ACTIVE_STATUSES.has(current.status) && code !== 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || `Worker exited with code ${code}`,
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
     if (signal === 'SIGTERM' || signal === 'SIGKILL') {
       if (
         current.status === 'running' ||
@@ -431,7 +387,6 @@ export function createAgentService(options: {
     dataDir,
     workspaceRoot,
     agentTimeoutMs,
-    getLoopAgentTimeoutMs,
     fs: fsImpl,
     path: pathImpl,
     spawn: (options.spawn || spawn) as SpawnFn,
@@ -472,7 +427,7 @@ export function createAgentService(options: {
 
   function present(agent: Agent): Agent {
     return {
-      ...withLoopFields(agent),
+      ...agent,
       queue: buildAgentQueueState(agent, repository.findAll(), (id) => spawner.has(id)),
     };
   }
@@ -558,10 +513,6 @@ export function createAgentService(options: {
         payload.model?.trim() ||
         (mode === 'review' && config.reviewModel?.trim() ? config.reviewModel.trim() : null) ||
         null,
-      ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
-      ...(payload.loopMaxIterations !== undefined
-        ? { loopMaxIterations: payload.loopMaxIterations }
-        : {}),
       status: 'queued',
       commitSha: null,
       pushed: false,
@@ -574,16 +525,6 @@ export function createAgentService(options: {
       result: null,
       pullRequest: null,
       autoCreatePullRequest: payload.autoCreatePullRequest,
-      ...((mode as import('../../types').AgentMode) === 'loop'
-        ? {
-            loop: buildLoopState(
-              'queued',
-              payload.loopMaxIterations !== undefined
-                ? { maxIterations: payload.loopMaxIterations }
-                : undefined,
-            ),
-          }
-        : {}),
       ...(payload.autofix ? { autofix: payload.autofix } : {}),
       ...((mode as import('../../types').AgentMode) === 'review'
         ? {
@@ -600,7 +541,7 @@ export function createAgentService(options: {
     repository.save(agent);
     queue.enqueue(agentId);
 
-    return withLoopFields(agent);
+    return withDerivedAgentFields(agent);
   }
 
   function cancelAgent(agentId: string): Agent {
@@ -668,9 +609,6 @@ export function createAgentService(options: {
       gitStatus: null,
       push,
     };
-    if (mode === 'loop') {
-      patch.loop = buildLoopState('queued');
-    }
     if (mode === 'review') {
       // Keep the previous attempt's check id until the fresh run is created,
       // so an orphaned in_progress check stays reconcilable (restoreOnStartup
@@ -1184,14 +1122,10 @@ export function createAgentService(options: {
         continue;
       }
       const mode = getAgentMode(agent);
-      const activeStatuses = mode === 'loop' ? LOOP_ACTIVE_STATUSES : BATCH_ACTIVE_STATUSES;
-      if (activeStatuses.has(agent.status)) {
+      if (BATCH_ACTIVE_STATUSES.has(agent.status)) {
         agent.status = 'failed';
         agent.finishedAt = new Date().toISOString();
         agent.error = 'Server restarted while agent was in progress';
-        if (mode === 'loop') {
-          agent.loop = buildLoopState('failed', agent.loop, agent);
-        }
         if (mode === 'review' && agent.review?.githubCheckRunId) {
           // Interrupted review: cancel its in-progress check run (best-effort).
           cancelReviewCheckRun(agent.agentId, agent.review);

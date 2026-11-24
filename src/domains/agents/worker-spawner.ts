@@ -46,7 +46,6 @@ export function createWorkerSpawner(options: {
   dataDir: string;
   workspaceRoot: string;
   agentTimeoutMs: number;
-  getLoopAgentTimeoutMs: () => number;
   shutdownWaitMs?: number;
   fs?: FsLike;
   path?: typeof path;
@@ -116,10 +115,6 @@ export function createWorkerSpawner(options: {
       pushOnFailure: agent.pushOnFailure,
       autoApprovePermissions: agent.autoApprovePermissions,
       model: agent.model || undefined,
-      ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
-      ...(agent.loopMaxIterations !== undefined
-        ? { loopMaxIterations: agent.loopMaxIterations }
-        : {}),
       // Pass review-specific fields if present (review mode)
       ...(mode === 'review' && agent.review?.headBranch
         ? { headBranch: agent.review.headBranch as unknown as string }
@@ -127,7 +122,7 @@ export function createWorkerSpawner(options: {
       ...(mode === 'review' && agent.review?.background
         ? { background: agent.review.background as unknown as string | undefined }
         : {}),
-      agentTimeoutMs: mode === 'loop' ? options.getLoopAgentTimeoutMs() : options.agentTimeoutMs,
+      agentTimeoutMs: options.agentTimeoutMs,
       dataDir: options.dataDir,
       workspaceRoot: options.workspaceRoot,
       workspaceDir: options.repository.getWorkspaceDir(agent.workspaceId),

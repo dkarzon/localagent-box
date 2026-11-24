@@ -93,22 +93,17 @@ describe('buildOpenCodeConfig', () => {
     assert.equal(file.provider.ollama?.models.mistral?.cost, undefined);
   });
 
-  it('registers all distinct loop verb and job models', () => {
+  it('registers the default and job models', () => {
     const config = {
       ollamaBaseUrl: 'http://localhost:11434',
       opencodeProvider: 'ollama',
       opencodeModel: 'llama3.2',
-      loopVerbModels: {
-        ACT: 'qwen3-coder:30b',
-        REFLECT: 'llama3.2',
-      },
     } as AppConfig;
     const job = { model: 'mistral' } as AgentJob;
     const file = buildOpenCodeConfig(config, { job });
     assert.ok(file.provider.ollama?.models['llama3.2']);
-    assert.ok(file.provider.ollama?.models['qwen3-coder:30b']);
     assert.ok(file.provider.ollama?.models.mistral);
-    assert.equal(Object.keys(file.provider.ollama?.models ?? {}).length, 3);
+    assert.equal(Object.keys(file.provider.ollama?.models ?? {}).length, 2);
   });
 
   it('omits the mcp block by default', () => {

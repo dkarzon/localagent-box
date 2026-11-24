@@ -5,7 +5,6 @@ import { describe, it } from 'node:test';
 import os from 'os';
 import {
   initCodegraph,
-  ensureLocalagentBoxIgnored,
   checkoutJobBranch,
   prepareWorkspace,
 } from './workspace-setup';
@@ -34,10 +33,7 @@ const BASE_CONFIG: AppConfig = {
   gitUserEmail: '',
   webhookUrl: '',
   batchAutoApprovePermissions: true,
-  loopAutoApprovePermissions: true,
   reviewModel: '',
-  loopAgentTimeoutSeconds: 3600,
-  loopVerbModels: { INITIAL_PLAN: '', ORIENT: '', ACT: '', REFLECT: '' },
 };
 
 function makeAgent(): Agent {
@@ -276,7 +272,7 @@ describe('prepareWorkspace — bootstrap wiring', () => {
     fs.writeFileSync(path.join(h.fixtureDir, 'package.json'), '{}', 'utf8');
     writeEnvironmentJson(
       h,
-      JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok', runOnModes: ['loop'] } }),
+      JSON.stringify({ version: 1, setup: { command: 'echo bootstrap-ok', runOnModes: ['batch'] } }),
     );
     h.job.mode = 'review';
 
@@ -289,7 +285,7 @@ describe('prepareWorkspace — bootstrap wiring', () => {
       assert.equal(agent.bootstrap, undefined);
 
       const log = fs.readFileSync(h.job.logPath, 'utf8');
-      assert.match(log, /Workspace bootstrap skipped: mode 'review' not in setup\.runOnModes \[loop\]/);
+      assert.match(log, /Workspace bootstrap skipped: mode 'review' not in setup\.runOnModes \[batch\]/);
       assert.doesNotMatch(log, /Running workspace bootstrap/);
     } finally {
       fs.rmSync(h.dataDir, { recursive: true, force: true });
@@ -339,57 +335,6 @@ describe('prepareWorkspace — bootstrap wiring', () => {
       assert.match(log, /Running workspace bootstrap/);
     } finally {
       fs.rmSync(h.dataDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('ensureLocalagentBoxIgnored', () => {
-  const base = path.join(os.tmpdir(), 'test-gitignore-');
-
-  it('creates .gitignore when it does not exist', () => {
-    const dir = fs.mkdtempSync(base);
-    try {
-      ensureLocalagentBoxIgnored(dir);
-      const content = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
-      assert.equal(content, '.localagent-box/loop-plan.md\n');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('appends entry when .gitignore exists without the entry', () => {
-    const dir = fs.mkdtempSync(base);
-    try {
-      fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n', 'utf8');
-      ensureLocalagentBoxIgnored(dir);
-      const content = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
-      assert.equal(content, 'node_modules/\n.localagent-box/loop-plan.md\n');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('does nothing when entry already present', () => {
-    const dir = fs.mkdtempSync(base);
-    try {
-      fs.writeFileSync(path.join(dir, '.gitignore'), '.localagent-box/loop-plan.md\nnode_modules/\n', 'utf8');
-      ensureLocalagentBoxIgnored(dir);
-      const content = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
-      assert.equal(content, '.localagent-box/loop-plan.md\nnode_modules/\n');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('handles .gitignore not ending with newline', () => {
-    const dir = fs.mkdtempSync(base);
-    try {
-      fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/', 'utf8');
-      ensureLocalagentBoxIgnored(dir);
-      const content = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
-      assert.equal(content, 'node_modules/\n.localagent-box/loop-plan.md\n');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

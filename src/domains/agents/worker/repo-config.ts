@@ -112,7 +112,7 @@ export function validateRepoConfig(raw: unknown): RepoPromptOverrides {
   const obj = raw as Record<string, unknown>;
   const overrides: RepoPromptOverrides = {};
 
-  const allowedKeys = ['systemPrompt', 'batchContextPrompt', 'loopContextPrompt', 'reviewBackground'] as const;
+  const allowedKeys = ['systemPrompt', 'batchContextPrompt', 'reviewBackground'] as const;
 
   for (const key of allowedKeys) {
     if (obj[key] !== undefined) {
@@ -135,13 +135,6 @@ export function validateRepoConfig(raw: unknown): RepoPromptOverrides {
       );
     }
     overrides.review = { ...overrides.review, background: overrides.reviewBackground };
-  }
-
-  if (obj.checkCommand !== undefined) {
-    if (typeof obj.checkCommand !== 'string' || !obj.checkCommand.trim()) {
-      throw new Error('.localagent-box/config.json checkCommand must be a non-empty string when provided');
-    }
-    overrides.checkCommand = obj.checkCommand.trim();
   }
 
   return overrides;

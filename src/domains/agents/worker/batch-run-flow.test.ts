@@ -20,15 +20,7 @@ const baseConfig: AppConfig = {
   gitUserEmail: '',
   webhookUrl: '',
   batchAutoApprovePermissions: true,
-  loopAutoApprovePermissions: true,
   reviewModel: '',
-  loopAgentTimeoutSeconds: 3600,
-  loopVerbModels: {
-    INITIAL_PLAN: '',
-    ORIENT: '',
-    ACT: '',
-    REFLECT: '',
-  },
 };
 
 const baseJob: AgentJob = {
@@ -49,18 +41,18 @@ const baseJob: AgentJob = {
 };
 
 describe('resolveAutoApprovePermissions', () => {
-  it('uses loopAutoApprovePermissions for loop mode', () => {
-    const config = { ...baseConfig, loopAutoApprovePermissions: false };
-    assert.equal(resolveAutoApprovePermissions(config, baseJob, 'loop'), false);
+  it('uses batchAutoApprovePermissions for batch mode', () => {
+    const config = { ...baseConfig, batchAutoApprovePermissions: false };
+    assert.equal(resolveAutoApprovePermissions(config, baseJob), false);
   });
 
-  it('defaults loop auto-approve to true when setting is unset', () => {
-    const config = { ...baseConfig, loopAutoApprovePermissions: undefined as unknown as boolean };
-    assert.equal(resolveAutoApprovePermissions(config, baseJob, 'loop'), true);
+  it('defaults batch auto-approve to true when the setting is unset', () => {
+    const config = { ...baseConfig, batchAutoApprovePermissions: undefined as unknown as boolean };
+    assert.equal(resolveAutoApprovePermissions(config, baseJob), true);
   });
 
-  it('prefers per-agent override for loop mode', () => {
+  it('prefers the per-agent override', () => {
     const job = { ...baseJob, autoApprovePermissions: false };
-    assert.equal(resolveAutoApprovePermissions(baseConfig, job, 'loop'), false);
+    assert.equal(resolveAutoApprovePermissions(baseConfig, job), false);
   });
 });

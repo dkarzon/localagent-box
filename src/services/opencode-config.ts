@@ -9,7 +9,6 @@ import {
 } from '../lib/llm-provider';
 import { hasModelTokenCost, normalizeRate, resolveModelTokenCost } from '../lib/model-cost';
 import type { AgentJob, AppConfig, LlmProviderId, ModelTokenCost } from '../types';
-import { collectLoopModels } from '../domains/agents/worker/loop-model';
 
 /** Legacy workspace filename — excluded from agent commits if still present. */
 export const OPENCODE_TOOL_INSTRUCTIONS_FILE = 'opencode-tool-instructions.md';
@@ -271,8 +270,9 @@ export function buildOpenCodeConfig(
   const providerId = resolveOpenCodeProvider(config);
   const modelId = config.opencodeModel || 'llama3.2';
   const instructionsContent = buildMergedInstructionsContent(config);
-  const modelIds = collectLoopModels(config, options?.job);
-  const registeredModelIds = Array.from(new Set([modelId, ...modelIds]));
+  const registeredModelIds = Array.from(
+    new Set([modelId, ...(options?.job?.model ? [options.job.model] : [])]),
+  );
 
   const file: OpenCodeConfigFile = {
     $schema: 'https://opencode.ai/config.json',
