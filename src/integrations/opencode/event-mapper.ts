@@ -2,8 +2,6 @@ import { isTerminalToolStatus, normalizeToolPart } from '../../lib/tool-event';
 import type { AgentEventType, AgentStatus } from '../../types';
 import type { OpenCodeServerEvent } from './session-runner';
 
-export type AgentRunMode = 'batch' | 'interactive';
-
 export interface MappedOpenCodeEvent {
   type: AgentEventType;
   payload: Record<string, unknown>;
@@ -133,10 +131,7 @@ function mapToolPartEvent(event: OpenCodeServerEvent): MappedOpenCodeEvent | nul
   };
 }
 
-function mapStatusEvent(
-  event: OpenCodeServerEvent,
-  mode: AgentRunMode,
-): MappedOpenCodeEvent | null {
+function mapStatusEvent(event: OpenCodeServerEvent): MappedOpenCodeEvent | null {
   switch (event.type) {
     case 'session.status': {
       const statusObj = event.properties.status as { type?: string } | undefined;
@@ -145,26 +140,12 @@ function mapStatusEvent(
         return { type: 'session.status', payload: { status: 'busy' }, status: 'processing' };
       }
       if (statusType === 'idle') {
-        const mapped: MappedOpenCodeEvent = {
-          type: 'session.status',
-          payload: { status: 'idle' },
-        };
-        if (mode === 'interactive') {
-          mapped.status = 'awaiting_input';
-        }
-        return mapped;
+        return { type: 'session.status', payload: { status: 'idle' } };
       }
       return { type: 'session.status', payload: { raw: event.properties } };
     }
     case 'session.idle': {
-      const mapped: MappedOpenCodeEvent = {
-        type: 'session.status',
-        payload: { status: 'idle' },
-      };
-      if (mode === 'interactive') {
-        mapped.status = 'awaiting_input';
-      }
-      return mapped;
+      return { type: 'session.status', payload: { status: 'idle' } };
     }
     default:
       return null;
@@ -172,7 +153,7 @@ function mapStatusEvent(
 }
 
 export interface OpenCodeEventMapper {
-  map: (event: OpenCodeServerEvent, sessionId: string, mode: AgentRunMode) => OpenCodeEventMapperResult;
+  map: (event: OpenCodeServerEvent, sessionId: string) => OpenCodeEventMapperResult;
   reset: () => void;
   getTextSnapshot: (partId: string) => string | undefined;
 }
@@ -253,7 +234,7 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
     };
   }
 
-  function map(event: OpenCodeServerEvent, _sessionId: string, mode: AgentRunMode): OpenCodeEventMapperResult {
+  function map(event: OpenCodeServerEvent, _sessionId: string): OpenCodeEventMapperResult {
     switch (event.type) {
       case 'server.connected':
         return { event: null };
@@ -352,7 +333,7 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
           },
         };
       default: {
-        const statusMapped = mapStatusEvent(event, mode);
+        const statusMapped = mapStatusEvent(event);
         if (statusMapped) {
           return { event: statusMapped };
         }
@@ -376,7 +357,6 @@ export function createOpenCodeEventMapper(): OpenCodeEventMapper {
 export function mapOpenCodeEvent(
   event: OpenCodeServerEvent,
   sessionId: string,
-  mode: AgentRunMode,
 ): MappedOpenCodeEvent | null {
-  return createOpenCodeEventMapper().map(event, sessionId, mode).event;
+  return createOpenCodeEventMapper().map(event, sessionId).event;
 }

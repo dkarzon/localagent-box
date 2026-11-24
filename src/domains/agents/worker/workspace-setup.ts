@@ -10,7 +10,7 @@ import type { Agent, AgentGitStatus, AgentJob, AppConfig, Repo } from '../../../
 import type { JsonStore } from '../../../lib/json-store';
 import type { GitService } from '../../../services/git-service';
 import type { GithubAppService } from '../../../services/github-app';
-import { appendLog, readAgentStatus, updateAgentRecord } from './agent-state-writer';
+import { appendLog, updateAgentRecord } from './agent-state-writer';
 import { runWorkspaceBootstrap } from './workspace-bootstrap';
 import type { WorkerContext } from './worker-context';
 import { getAgentMode } from './worker-context';
@@ -101,12 +101,8 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   appendLog(logPath, `Base branch: ${job.baseBranch}`);
   appendLog(logPath, `Agent branch: ${job.agentBranch}`);
 
-  const currentStatus = readAgentStatus(agentsStore, job.agentId);
-  const finishAlreadyRequested =
-    getAgentMode(job) === 'interactive' && currentStatus === 'completing';
-
   updateAgentRecord(agentsStore, job.agentId, {
-    ...(finishAlreadyRequested ? {} : { status: 'running' }),
+    status: 'running',
     startedAt: new Date().toISOString(),
   });
 

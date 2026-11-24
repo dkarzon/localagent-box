@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { buildInteractiveState } from '../../lib/interactive-state';
 import { buildLoopState } from '../../lib/loop-state';
 import { createWebhookSender } from '../../lib/webhook';
 import {
@@ -60,10 +59,8 @@ import {
   ACTIVE_STATUSES,
   BATCH_ACTIVE_STATUSES,
   getAgentMode,
-  INTERACTIVE_ACTIVE_STATUSES,
   LOOP_ACTIVE_STATUSES,
   TERMINAL_STATUSES,
-  withInteractiveFields,
   withLoopFields,
 } from './agent.types';
 import type { CreateAgentRequest } from './dto';
@@ -72,7 +69,6 @@ export {
   TERMINAL_STATUSES,
   BATCH_ACTIVE_STATUSES,
   ACTIVE_STATUSES,
-  INTERACTIVE_ACTIVE_STATUSES,
   LOOP_ACTIVE_STATUSES,
 } from './agent.types';
 
@@ -156,7 +152,6 @@ export function createAgentService(options: {
   workspaceRoot: string;
   maxConcurrent?: unknown;
   agentTimeoutMs?: unknown;
-  interactiveAgentTimeoutFallbackSeconds?: unknown;
   loopAgentTimeoutFallbackSeconds?: unknown;
   repository?: AgentRepository;
 }): AgentService {
@@ -172,23 +167,10 @@ export function createAgentService(options: {
   const workspaceRoot = options.workspaceRoot;
   const maxConcurrent = parsePositiveInt(options.maxConcurrent, 3);
   const agentTimeoutMs = parsePositiveInt(options.agentTimeoutMs, 3600000);
-  const interactiveAgentTimeoutFallbackSeconds = parsePositiveInt(
-    options.interactiveAgentTimeoutFallbackSeconds,
-    3600,
-  );
   const loopAgentTimeoutFallbackSeconds = parsePositiveInt(
     options.loopAgentTimeoutFallbackSeconds,
     3600,
   );
-
-  function getInteractiveAgentTimeoutMs(): number {
-    const config = configRepository.load();
-    const seconds = parsePositiveInt(
-      config.interactiveAgentTimeoutSeconds || interactiveAgentTimeoutFallbackSeconds,
-      interactiveAgentTimeoutFallbackSeconds,
-    );
-    return seconds * 1000;
-  }
 
   function getLoopAgentTimeoutMs(): number {
     const config = configRepository.load();
@@ -356,32 +338,7 @@ export function createAgentService(options: {
     }
 
     const mode = getAgentMode(current);
-    const isInteractive = mode === 'interactive';
     const isLoop = mode === 'loop';
-
-    if (isInteractive && INTERACTIVE_ACTIVE_STATUSES.has(current.status) && code === 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || 'Interactive worker exited unexpectedly',
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
-    if (isInteractive && INTERACTIVE_ACTIVE_STATUSES.has(current.status) && code !== 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || `Worker exited with code ${code}`,
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
 
     if (isLoop && LOOP_ACTIVE_STATUSES.has(current.status) && code === 0) {
       repository.update(agentId, {
@@ -474,7 +431,6 @@ export function createAgentService(options: {
     dataDir,
     workspaceRoot,
     agentTimeoutMs,
-    getInteractiveAgentTimeoutMs,
     getLoopAgentTimeoutMs,
     fs: fsImpl,
     path: pathImpl,
@@ -516,7 +472,7 @@ export function createAgentService(options: {
 
   function present(agent: Agent): Agent {
     return {
-      ...withLoopFields(withInteractiveFields(agent)),
+      ...withLoopFields(agent),
       queue: buildAgentQueueState(agent, repository.findAll(), (id) => spawner.has(id)),
     };
   }
@@ -618,15 +574,6 @@ export function createAgentService(options: {
       result: null,
       pullRequest: null,
       autoCreatePullRequest: payload.autoCreatePullRequest,
-      ...(payload.mode === 'interactive'
-        ? {
-            opencodeSessionId: null,
-            turnCount: 0,
-            lastActivityAt: null,
-            awaitingInputSince: null,
-            interactive: buildInteractiveState('queued'),
-          }
-        : {}),
       ...((mode as import('../../types').AgentMode) === 'loop'
         ? {
             loop: buildLoopState(
@@ -653,7 +600,7 @@ export function createAgentService(options: {
     repository.save(agent);
     queue.enqueue(agentId);
 
-    return withLoopFields(withInteractiveFields(agent));
+    return withLoopFields(agent);
   }
 
   function cancelAgent(agentId: string): Agent {
@@ -721,15 +668,6 @@ export function createAgentService(options: {
       gitStatus: null,
       push,
     };
-    if (mode === 'interactive') {
-      Object.assign(patch, {
-        opencodeSessionId: null,
-        turnCount: 0,
-        lastActivityAt: null,
-        awaitingInputSince: null,
-        interactive: buildInteractiveState('queued'),
-      });
-    }
     if (mode === 'loop') {
       patch.loop = buildLoopState('queued');
     }
@@ -1246,19 +1184,11 @@ export function createAgentService(options: {
         continue;
       }
       const mode = getAgentMode(agent);
-      const activeStatuses =
-        mode === 'interactive'
-          ? INTERACTIVE_ACTIVE_STATUSES
-          : mode === 'loop'
-            ? LOOP_ACTIVE_STATUSES
-            : BATCH_ACTIVE_STATUSES;
+      const activeStatuses = mode === 'loop' ? LOOP_ACTIVE_STATUSES : BATCH_ACTIVE_STATUSES;
       if (activeStatuses.has(agent.status)) {
         agent.status = 'failed';
         agent.finishedAt = new Date().toISOString();
         agent.error = 'Server restarted while agent was in progress';
-        if (mode === 'interactive') {
-          agent.interactive = buildInteractiveState('failed');
-        }
         if (mode === 'loop') {
           agent.loop = buildLoopState('failed', agent.loop, agent);
         }

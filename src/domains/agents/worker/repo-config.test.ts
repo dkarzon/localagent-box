@@ -6,16 +6,14 @@ import { describe, it } from 'node:test';
 import { loadRepoConfig, validateRepoConfig } from './repo-config';
 
 describe('validateRepoConfig', () => {
-  it('accepts all four overrides', () => {
+  it('accepts all three overrides', () => {
     const result = validateRepoConfig({
       systemPrompt: 'Custom system prompt',
       batchContextPrompt: 'Custom batch context',
-      interactiveContextPrompt: 'Custom interactive context',
       loopContextPrompt: 'Custom loop context',
     });
     assert.equal(result.systemPrompt, 'Custom system prompt');
     assert.equal(result.batchContextPrompt, 'Custom batch context');
-    assert.equal(result.interactiveContextPrompt, 'Custom interactive context');
     assert.equal(result.loopContextPrompt, 'Custom loop context');
   });
 
@@ -25,7 +23,6 @@ describe('validateRepoConfig', () => {
     });
     assert.equal(result.systemPrompt, 'Only system prompt overridden');
     assert.equal(result.batchContextPrompt, undefined);
-    assert.equal(result.interactiveContextPrompt, undefined);
     assert.equal(result.loopContextPrompt, undefined);
   });
 
@@ -163,7 +160,6 @@ describe('loadRepoConfig', () => {
     assert.ok(result !== null);
     assert.equal(result.systemPrompt, 'My custom system prompt');
     assert.equal(result.batchContextPrompt, 'My custom batch context');
-    assert.equal(result.interactiveContextPrompt, undefined);
     assert.equal(result.loopContextPrompt, undefined);
   });
 

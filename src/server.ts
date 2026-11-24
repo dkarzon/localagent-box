@@ -76,7 +76,6 @@ function createContext(env: ReturnType<typeof getServerEnv>): ServerContext {
     workspaceRoot: env.agentWorkspace,
     maxConcurrent: env.maxConcurrentAgents,
     agentTimeoutMs: env.agentTimeoutMs,
-    interactiveAgentTimeoutFallbackSeconds: env.agentTimeoutSeconds,
     loopAgentTimeoutFallbackSeconds: env.agentTimeoutSeconds,
   });
 

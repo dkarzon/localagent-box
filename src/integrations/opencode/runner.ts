@@ -183,13 +183,10 @@ export const SENIOR_ENGINEER_SYSTEM_PROMPT =
 export const BATCH_RUN_CONTEXT_PROMPT =
   'Batch: one unattended run — implement the task in this session (edit files, run checks). Do not stop at a plan or overview; the host fails the run if there are no file changes when you go idle.';
 
-export const INTERACTIVE_RUN_CONTEXT_PROMPT =
-  'Interactive: follow-ups are allowed; the host commits only when the user finishes the session.';
-
 export const LOOP_RUN_CONTEXT_PROMPT =
   'Loop: unattended multi-step harness — each step is a directive toward the goal. The host fails on zero file changes at end (like batch). Emit {{completionMarker}}: true when the goal is fully achieved — on REFLECT, or on the first step of an iteration if it was already complete before you started. Do not stop after plans or overviews — ACT steps must produce file edits.';
 
-export type OpenCodeRunMode = 'batch' | 'interactive' | 'loop';
+export type OpenCodeRunMode = 'batch' | 'loop';
 
 function resolveRunModeContext(
   runMode?: OpenCodeRunMode,
@@ -197,9 +194,6 @@ function resolveRunModeContext(
 ): string | null {
   if (runMode === 'batch') {
     return !repoOverrides?.batchContextPrompt ? BATCH_RUN_CONTEXT_PROMPT : repoOverrides.batchContextPrompt;
-  }
-  if (runMode === 'interactive') {
-    return !repoOverrides?.interactiveContextPrompt ? INTERACTIVE_RUN_CONTEXT_PROMPT : repoOverrides.interactiveContextPrompt;
   }
   if (runMode === 'loop') {
     return !repoOverrides?.loopContextPrompt ? LOOP_RUN_CONTEXT_PROMPT : repoOverrides.loopContextPrompt;

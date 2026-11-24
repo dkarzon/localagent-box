@@ -16,8 +16,6 @@ import {
   emitLoopStepEnd,
   emitLoopStepStart,
   ensureAgentDir,
-  getInboxPath,
-  InboxReader,
   readAgentLoopFinishRequested,
   readAgentRecord,
   updateAgentRecord,
@@ -59,12 +57,8 @@ import type { WorkerContext } from './worker-context';
 function isFinishRequested(
   agentsStore: WorkerContext['agentsStore'],
   agentId: string,
-  inboxReader: InboxReader,
 ): boolean {
-  if (readAgentLoopFinishRequested(agentsStore, agentId)) {
-    return true;
-  }
-  return inboxReader.pollFinishOnly();
+  return readAgentLoopFinishRequested(agentsStore, agentId);
 }
 
 function patchLoopState(
@@ -101,7 +95,6 @@ interface RunLoopStepParams {
   agentsStore: WorkerContext['agentsStore'];
   gitService: WorkerContext['gitService'];
   logPath: string;
-  inboxReader: InboxReader;
   iteration: number;
   stepIndex: number;
   verb: LoopVerb;
@@ -133,7 +126,6 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
     config,
     agentsStore,
     logPath,
-    inboxReader,
     iteration,
     stepIndex,
     verb,
@@ -288,7 +280,7 @@ async function runLoopStep(params: RunLoopStepParams): Promise<{
   );
   appendLog(logPath, `Loop step end: iteration=${iteration} step=${stepIndex} verb=${verb}`);
 
-  if (isFinishRequested(agentsStore, job.agentId, inboxReader)) {
+  if (isFinishRequested(agentsStore, job.agentId)) {
     loopState = patchLoopState('processing', loopState, { finishRequested: true });
     updateAgentRecord(agentsStore, job.agentId, { loop: loopState });
     appendLog(logPath, 'Finish requested — completing after current step');
@@ -372,8 +364,7 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     timeoutMs: parseTimeoutMs(job.agentTimeoutMs),
   });
 
-  const inboxReader = new InboxReader(getInboxPath(job));
-  let session = await startOpenCodeLoopSession({ ctx, autoApprovePermissions });
+  const session = await startOpenCodeLoopSession({ ctx, autoApprovePermissions });
 
   let loopState = initialLoopState;
   let exitReason:
@@ -407,7 +398,6 @@ export async function runLoopJob(ctx: WorkerContext): Promise<void> {
     agentsStore,
     gitService,
     logPath,
-    inboxReader,
     repoPromptOverrides: repoPromptOverrides ?? undefined,
     // P4-T5: first INITIAL_PLAN kickoff only; omitted once harnessDone.
     bootstrap: (() => {

@@ -28,7 +28,6 @@ import { logOpenCodeRunContext, resolveRunConfig } from '../../domains/agents/wo
 import { resolveLoopStepModel } from '../../domains/agents/worker/loop-model';
 import { formatLoopStepAgentsSummary } from '../../domains/agents/worker/loop-agent';
 import { loadLoopConfig } from '../../domains/agents/worker/loop-config';
-import { captureGitStatusCheckpoint } from '../../domains/agents/worker/workspace-setup';
 import { loadRepoConfig } from '../../domains/agents/worker/repo-config';
 import type { WorkerContext } from '../../domains/agents/worker/worker-context';
 import type {
@@ -40,7 +39,7 @@ import type {
   LoopVerb,
   ModelTokenCosts,
 } from '../../types';
-import { createOpenCodeEventMapper, type AgentRunMode } from './event-mapper';
+import { createOpenCodeEventMapper } from './event-mapper';
 import {
   buildModelRef,
   buildOpenCodePrompt,
@@ -58,20 +57,12 @@ import {
   type OpenCodeSessionRunner,
 } from './session-runner';
 
-export type SessionInboxCommand =
-  | { type: 'message'; text: string; ts?: string }
-  | { type: 'finish'; ts?: string };
-
-export type SessionOrchestratorOutcome = 'finish' | 'cancelled' | 'incomplete' | 'failed' | 'turn_complete';
+export type SessionOrchestratorOutcome = 'cancelled' | 'failed' | 'turn_complete';
 
 export interface SessionOrchestratorOptions {
-  mode: AgentRunMode;
   ctx: WorkerContext;
   /** PR2: merge permission allow block into per-agent opencode.json */
   autoApprovePermissions?: boolean;
-  pollInbox?: () => SessionInboxCommand[];
-  pollFinishBeforeStart?: () => boolean;
-  onFinishRequested?: () => void;
 }
 
 export interface SessionOrchestratorResult {
@@ -208,7 +199,7 @@ async function resolveContextLengthsForRun(
 export async function runSessionOrchestrator(
   options: SessionOrchestratorOptions,
 ): Promise<SessionOrchestratorResult> {
-  const { mode, ctx, pollInbox, pollFinishBeforeStart, onFinishRequested } = options;
+  const { ctx } = options;
   const autoApprovePermissions = options.autoApprovePermissions ?? false;
 
   const { job, logPath, config, agentsStore } = ctx;
@@ -224,11 +215,10 @@ export async function runSessionOrchestrator(
   const perAgentConfig = createOpenCodeConfigService({
     configDir: getAgentOpenCodeConfigDir(agentDir),
   });
-  const disableQuestionTool = mode === 'batch';
   perAgentConfig.writeOpenCodeConfig(runConfig, {
     autoApprovePermissions,
     codegraph,
-    disableQuestionTool,
+    disableQuestionTool: true,
     modelContextLengths: await resolveContextLengthsForRun(runConfig, logPath),
   });
   const opencodeConfigPath = path.join(getAgentOpenCodeConfigDir(agentDir), 'opencode.json');
@@ -236,9 +226,7 @@ export async function runSessionOrchestrator(
   if (codegraph) {
     logCodegraphEnabled(logPath);
   }
-  if (disableQuestionTool) {
-    appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended batch)');
-  }
+  appendLog(logPath, 'OpenCode tools: question disabled in opencode.json (unattended batch)');
   if (runConfig.opencodeModel && isGemmaThinkingModel(runConfig.opencodeModel)) {
     appendLog(
       logPath,
@@ -250,12 +238,7 @@ export async function runSessionOrchestrator(
   }
   excludeWorkspaceInfrastructureFromGit(job.workspaceDir);
 
-  appendLog(
-    logPath,
-    mode === 'interactive'
-      ? 'Starting interactive OpenCode session…'
-      : 'Starting OpenCode session…',
-  );
+  appendLog(logPath, 'Starting OpenCode session…');
   logOpenCodeRunContext(logPath, {
     config: runConfig,
     job,
@@ -272,7 +255,6 @@ export async function runSessionOrchestrator(
 
   let sessionId = '';
   let turnCount = 0;
-  let finishRequested = false;
   let sessionFailed = false;
   let failureMessage: string | null = null;
   const sessionStartedAt = resolveAgentRunStartedAtMs(
@@ -335,9 +317,7 @@ export async function runSessionOrchestrator(
   ]);
 
   const handleOpenCodeEvent = (ocEvent: OpenCodeServerEvent) => {
-    if (mode === 'batch') {
-      handleUnattendedRequest(ocEvent, sessionRunner, logPath, autoApprovePermissions);
-    }
+    handleUnattendedRequest(ocEvent, sessionRunner, logPath, autoApprovePermissions);
 
     if (ocEvent.type === 'message.part.delta') {
       const field = ocEvent.properties.field;
@@ -363,7 +343,7 @@ export async function runSessionOrchestrator(
       }
     }
 
-    const { event: mapped, debug } = eventMapper.map(ocEvent, sessionId, mode);
+    const { event: mapped, debug } = eventMapper.map(ocEvent, sessionId);
 
     const snapshotDebugSources = new Set([
       'updated-backfill',
@@ -537,42 +517,10 @@ export async function runSessionOrchestrator(
         seenBusySinceProcessing = true;
       }
 
-      if (
-        mapped.status === 'awaiting_input' &&
-        current === 'processing' &&
-        !seenBusySinceProcessing
-      ) {
-        return;
-      }
-
       const patch: Partial<Agent> = {
         status: mapped.status,
         lastActivityAt: new Date().toISOString(),
       };
-      if (mapped.status === 'awaiting_input') {
-        patch.awaitingInputSince = new Date().toISOString();
-        seenBusySinceProcessing = false;
-      }
-      if (mapped.status === 'awaiting_input' && mode === 'interactive') {
-        void (async () => {
-          try {
-            await captureGitStatusCheckpoint({
-              gitService: ctx.gitService,
-              workspaceDir: job.workspaceDir,
-              logPath,
-              agentsStore,
-              agentId: job.agentId,
-            });
-          } catch (err) {
-            appendLog(
-              logPath,
-              `Checkpoint git status failed (${err instanceof Error ? err.message : String(err)})`,
-            );
-          }
-          updateAgentRecord(agentsStore, job.agentId, patch);
-        })();
-        return;
-      }
       if (mapped.status === 'failed') {
         sessionFailed = true;
         failureMessage =
@@ -584,94 +532,59 @@ export async function runSessionOrchestrator(
     }
   };
 
-  const requestFinish = () => {
-    if (finishRequested) {
-      return;
-    }
-    finishRequested = true;
-    onFinishRequested?.();
-  };
-
   try {
-    if (pollFinishBeforeStart?.()) {
-      requestFinish();
-    }
+    await sessionRunner.startServer();
+    appendLog(logPath, `OpenCode serve spawned; waiting for ready on port ${sessionRunner.port}…`);
+    await sessionRunner.waitForServerReady();
+    appendLog(
+      logPath,
+      `OpenCode serve ready on ${sessionRunner.baseUrl} (port ${sessionRunner.port})`,
+    );
 
-    if (!finishRequested && readAgentStatus(agentsStore, job.agentId) === 'completing') {
-      requestFinish();
-    }
+    eventSubscription = sessionRunner.subscribeEvents(handleOpenCodeEvent);
+    await eventSubscription.ready;
+    appendLog(logPath, 'OpenCode SSE connected');
 
-    if (!finishRequested) {
-      await sessionRunner.startServer();
-      appendLog(logPath, `OpenCode serve spawned; waiting for ready on port ${sessionRunner.port}…`);
-      await sessionRunner.waitForServerReady();
-      appendLog(
-        logPath,
-        `OpenCode serve ready on ${sessionRunner.baseUrl} (port ${sessionRunner.port})`,
-      );
+    const session = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
+    sessionId = session.id;
+    appendLog(logPath, `OpenCode session created: ${sessionId}`);
 
-      eventSubscription = sessionRunner.subscribeEvents(handleOpenCodeEvent);
-      await eventSubscription.ready;
-      appendLog(logPath, 'OpenCode SSE connected');
+    updateAgentRecord(agentsStore, job.agentId, {
+      opencodeSessionId: sessionId,
+      turnCount: 0,
+      lastActivityAt: new Date().toISOString(),
+      status: 'processing',
+    });
 
-      if (pollFinishBeforeStart?.()) {
-        requestFinish();
-      } else {
-        const session = await sessionRunner.createSession(`agent-${job.agentId}`, { model: modelRef, agent: 'build' });
-        sessionId = session.id;
-        appendLog(logPath, `OpenCode session created: ${sessionId}`);
+    // P4-T5: the host bootstrap outcome is summarized for the model so
+    // it doesn't spend turns rediscovering the environment, and a
+    // failed bootstrap feeds the error tail so the agent can attempt a
+    // fix (skipped bootstrap produces no block).
+    const bootstrapSummary = formatBootstrapSummaryBlock(
+      readAgentRecord(agentsStore, job.agentId)?.bootstrap,
+    );
+    const initialText = buildOpenCodePrompt(
+      bootstrapSummary
+        ? `${bootstrapSummary}\n\n${job.prompt}`
+        : job.prompt,
+      job.systemPrompt,
+      'batch',
+      undefined,
+      repoPromptOverrides ?? undefined,
+      config.systemPrompt,
+    );
+    appendConversation(job, 'user', bootstrapSummary ? `${bootstrapSummary}\n\n${job.prompt}` : job.prompt);
+    await sessionRunner.sendPromptAsync(sessionId, {
+      parts: [{ type: 'text', text: initialText }],
+      agent: 'build',
+      ...(modelRef ? { model: modelRef } : {}),
+    });
+    turnCount = 1;
+    updateAgentRecord(agentsStore, job.agentId, { turnCount, status: 'processing' });
 
-        updateAgentRecord(agentsStore, job.agentId, {
-          opencodeSessionId: sessionId,
-          turnCount: 0,
-          lastActivityAt: new Date().toISOString(),
-          status: 'processing',
-        });
-
-        if (pollFinishBeforeStart?.()) {
-          requestFinish();
-        } else {
-          if (mode === 'batch') {
-            seenBusySinceProcessing = false;
-            batchPromptBusySeen = false;
-          }
-
-          // P4-T5: the host bootstrap outcome is summarized for the model so
-          // it doesn't spend turns rediscovering the environment, and a
-          // failed bootstrap feeds the error tail so the agent can attempt a
-          // fix (skipped bootstrap produces no block).
-          const bootstrapSummary = formatBootstrapSummaryBlock(
-            readAgentRecord(agentsStore, job.agentId)?.bootstrap,
-          );
-          const initialText = buildOpenCodePrompt(
-            bootstrapSummary
-              ? `${bootstrapSummary}\n\n${job.prompt}`
-              : job.prompt,
-            job.systemPrompt,
-            mode === 'interactive' ? 'interactive' : 'batch',
-            undefined,
-            repoPromptOverrides ?? undefined,
-            config.systemPrompt,
-          );
-          appendConversation(job, 'user', bootstrapSummary ? `${bootstrapSummary}\n\n${job.prompt}` : job.prompt);
-          await sessionRunner.sendPromptAsync(sessionId, {
-            parts: [{ type: 'text', text: initialText }],
-            agent: 'build',
-            ...(modelRef ? { model: modelRef } : {}),
-          });
-          turnCount = 1;
-          updateAgentRecord(agentsStore, job.agentId, { turnCount, status: 'processing' });
-        }
-      }
-    }
-
-    while (!finishRequested && !sessionFailed) {
+    while (!sessionFailed) {
       if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
-        throw new Error(
-          mode === 'interactive'
-            ? `Interactive session timed out after ${Math.round(timeoutMs / 1000)}s`
-            : `Session timed out after ${Math.round(timeoutMs / 1000)}s`,
-        );
+        throw new Error(`Session timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
 
       const agentStatus = readAgentStatus(agentsStore, job.agentId);
@@ -683,7 +596,7 @@ export async function runSessionOrchestrator(
         return { outcome: 'cancelled', sessionId };
       }
 
-      if (mode === 'batch' && sessionId) {
+      if (sessionId) {
         try {
           const statusMap = await sessionRunner.getSessionStatusMap();
           const status = statusMap[sessionId];
@@ -704,55 +617,14 @@ export async function runSessionOrchestrator(
         }
       }
 
-      const commands = pollInbox?.() ?? [];
-      for (const command of commands) {
-        if (command.type === 'finish') {
-          requestFinish();
-          break;
-        }
-
-        if (command.type === 'message') {
-          appendLog(logPath, `Follow-up message: ${command.text.slice(0, 80)}…`);
-          appendConversation(job, 'user', command.text);
-          seenBusySinceProcessing = false;
-          updateAgentRecord(agentsStore, job.agentId, {
-            status: 'processing',
-            messagesPreview: command.text.slice(0, 200),
-            lastActivityAt: new Date().toISOString(),
-          });
-          await sessionRunner.sendPromptAsync(sessionId, {
-            parts: [{ type: 'text', text: command.text }],
-            agent: 'build',
-            ...(modelRef ? { model: modelRef } : {}),
-          });
-          turnCount += 1;
-          updateAgentRecord(agentsStore, job.agentId, { turnCount });
-        }
-      }
-
-      if (sessionFailed) {
-        break;
-      }
-
       await sleep(300);
     }
 
-    if (sessionFailed && !finishRequested) {
-      return {
-        outcome: 'failed',
-        sessionId,
-        failureMessage: failureMessage || 'OpenCode session failed',
-      };
-    }
-
-    if (finishRequested) {
-      if (sessionId) {
-        await sessionRunner.abort(sessionId);
-      }
-      return { outcome: 'finish', sessionId };
-    }
-
-    return { outcome: 'incomplete', sessionId };
+    return {
+      outcome: 'failed',
+      sessionId,
+      failureMessage: failureMessage || 'OpenCode session failed',
+    };
   } finally {
     if (hasTokenUsage) {
       appendLog(
@@ -886,7 +758,6 @@ export async function startOpenCodeLoopSession(options: {
   const timeoutMs = parseTimeoutMs(job.agentTimeoutMs);
   let eventSubscription: { unsubscribe: () => void; ready: Promise<void> } | undefined;
   const eventMapper = createOpenCodeEventMapper();
-  const loopMode: AgentRunMode = 'batch';
 
   // Cumulative token usage across all loop turns
   let totalInputTokens = 0;
@@ -915,7 +786,7 @@ export async function startOpenCodeLoopSession(options: {
   const handleOpenCodeEvent = (ocEvent: OpenCodeServerEvent) => {
     handleUnattendedRequest(ocEvent, sessionRunner, logPath, autoApprovePermissions);
 
-    const { event: mapped } = eventMapper.map(ocEvent, sessionId, loopMode);
+    const { event: mapped } = eventMapper.map(ocEvent, sessionId);
     if (!mapped) {
       return;
     }

@@ -44,8 +44,6 @@ export interface AppConfig {
   batchAutoApprovePermissions: boolean;
   /** Default true — loop agents auto-approve OpenCode tool permissions */
   loopAutoApprovePermissions: boolean;
-  /** Default false — interactive agents require permission approval unless overridden */
-  interactiveAutoApprovePermissions: boolean;
   /** Auto-create PR when agent completes */
   autoCreatePullRequest?: boolean;
   /** Default false — auto-spawn review agent after PR creation for completed agents */
@@ -54,8 +52,6 @@ export interface AppConfig {
   reviewModel: string;
   /** Default false — skip the workspace bootstrap for review runs */
   ocrSkipWorkspaceBootstrap?: boolean;
-  /** Interactive agent timeout in seconds (default 3600) */
-  interactiveAgentTimeoutSeconds: number;
   /** Loop agent timeout in seconds (default 3600) */
   loopAgentTimeoutSeconds: number;
   /** Per-verb model overrides for loop mode. Empty string = use fallback. */
@@ -106,12 +102,10 @@ export interface PublicConfig {
   webhookUrl: string;
   batchAutoApprovePermissions: boolean;
   loopAutoApprovePermissions: boolean;
-  interactiveAutoApprovePermissions: boolean;
   autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
   reviewModel: string;
   ocrSkipWorkspaceBootstrap?: boolean;
-  interactiveAgentTimeoutSeconds: number;
   loopAgentTimeoutSeconds: number;
   loopVerbModels: LoopVerbModels;
   modelTokenCosts?: ModelTokenCosts;
@@ -313,7 +307,6 @@ export interface RepoReviewConfig {
 export interface RepoPromptOverrides {
   systemPrompt?: string;
   batchContextPrompt?: string;
-  interactiveContextPrompt?: string;
   loopContextPrompt?: string;
   /** Legacy alias for `review.background`; validation copies it there. */
   reviewBackground?: string;
@@ -396,12 +389,6 @@ export interface AgentMessage {
   ts: string;
   role: 'user' | 'assistant';
   text: string;
-}
-
-export interface AgentInteractiveState {
-  canSendMessage: boolean;
-  canFinish: boolean;
-  pendingPermissionId: string | null;
 }
 
 export interface AgentGitStatus {
@@ -553,7 +540,7 @@ export interface Agent {
   /** Distinct models actually invoked during a loop run's lifecycle */
   modelsUsed?: string[] | null;
   status: AgentStatus;
-  /** Present only when mode === 'interactive' */
+  /** Legacy interactive-session fields; kept so pre-v1 records still read */
   opencodeSessionId?: string | null;
   turnCount?: number;
   lastActivityAt?: string | null;
@@ -561,7 +548,6 @@ export interface Agent {
   messagesPreview?: string | null;
   /** Snapshot of working tree changes at the last awaiting_input checkpoint */
   gitStatus?: AgentGitStatus | null;
-  interactive?: AgentInteractiveState;
   /** Present when mode === 'loop' */
   loop?: AgentLoopState;
   commitSha: string | null;
