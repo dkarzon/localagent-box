@@ -9,24 +9,7 @@ export type AgentEventType =
   | 'tool.end'
   | 'permission.requested'
   | 'error'
-  | 'log.line'
-  | 'loop.step.start'
-  | 'loop.step.end'
-  | 'loop.iteration.end';
-
-export interface LoopStepEventPayload {
-  iteration: number;
-  stepIndex: number;
-  verb: string;
-  model?: string | null;
-  openCodeAgent?: string;
-  completionSignal?: boolean;
-}
-
-export interface LoopIterationEndPayload {
-  iteration: number;
-  completed: boolean;
-}
+  | 'log.line';
 
 export interface AgentEvent {
   seq: number;

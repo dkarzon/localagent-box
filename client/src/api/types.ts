@@ -1,83 +1,9 @@
 export type StatusVariant = '' | 'success' | 'error';
 
-export type AgentMode = 'batch' | 'interactive' | 'loop' | 'review';
+export type AgentMode = 'batch' | 'review';
 
-export type LoopVerb = 'INITIAL_PLAN' | 'ORIENT' | 'ACT' | 'REFLECT';
-
-/** Model id on the configured provider (e.g. Ollama tag). Empty string = use fallback. */
-export type LoopVerbModels = Partial<Record<LoopVerb, string>>;
-
-export const LOOP_VERB_MODELS_DEFAULT: LoopVerbModels = {
-  INITIAL_PLAN: '',
-  ORIENT: '',
-  ACT: '',
-  REFLECT: '',
-};
-
-export const LOOP_VERBS: LoopVerb[] = ['INITIAL_PLAN', 'ORIENT', 'ACT', 'REFLECT'];
-
-export const LOOP_VERB_LABELS: Record<LoopVerb, { label: string; hint: string }> = {
-  INITIAL_PLAN: { label: 'Initial plan', hint: 'One-time kickoff before iterations' },
-  ORIENT: { label: 'Orient', hint: 'Read the code and pick the next change' },
-  ACT: { label: 'Act', hint: 'Implementation (edits, commands)' },
-  REFLECT: { label: 'Reflect', hint: 'Progress check / completion marker' },
-};
-
-export function mergeLoopVerbModels(from?: Partial<LoopVerbModels> | null): LoopVerbModels {
-  return { ...LOOP_VERB_MODELS_DEFAULT, ...from };
-}
-
-export function hasNonEmptyLoopVerbModel(models?: LoopVerbModels | null): boolean {
-  if (!models) return false;
-  return LOOP_VERBS.some((verb) => Boolean(models[verb]?.trim()));
-}
-
-/** True when at least one loop step can resolve a model from run overrides, Settings, fallback, or global. */
-export function hasResolvableLoopModel(options: {
-  settingsVerbModels?: LoopVerbModels | null;
-  runVerbModels?: LoopVerbModels | null;
-  fallbackModel?: string | null;
-  globalModel?: string | null;
-}): boolean {
-  const { settingsVerbModels, runVerbModels, fallbackModel, globalModel } = options;
-  if (globalModel?.trim()) return true;
-  if (fallbackModel?.trim()) return true;
-  if (hasNonEmptyLoopVerbModel(settingsVerbModels)) return true;
-  if (hasNonEmptyLoopVerbModel(runVerbModels)) return true;
-  return false;
-}
-
-export type LoopOpenCodeAgent = 'build' | 'plan';
-
-export interface LoopStepConfig {
-  verb: LoopVerb;
-  prompt: string;
-  agent?: LoopOpenCodeAgent;
-}
-
-export interface AgentLoopHandoffState {
-  next: string | null;
-  remaining: string | null;
-  milestonesTotal: number;
-  milestonesDone: number;
-  currentMilestone: string | null;
-  lastFiles: string[];
-}
-
-export interface AgentLoopState {
-  iteration: number;
-  stepIndex: number;
-  currentVerb: LoopVerb;
-  stepsInIteration: number;
-  maxIterations: number;
-  completionMarker: string;
-  canFinish: boolean;
-  canCommitOutstanding: boolean;
-  finishRequested: boolean;
-  configSource: 'server-default' | 'repo-override';
-  effectiveSteps: LoopStepConfig[];
-  handoff?: AgentLoopHandoffState;
-}
+/** Modes removed in v1. Older records still carry them and render read-only. */
+export type LegacyAgentMode = 'interactive' | 'loop';
 
 export type AgentStatus =
   | 'queued'
@@ -151,16 +77,8 @@ export interface AppConfig {
   gitUserEmail?: string;
   webhookUrl?: string;
   batchAutoApprovePermissions?: boolean;
-  loopAutoApprovePermissions?: boolean;
-  interactiveAutoApprovePermissions?: boolean;
-  interactiveAgentTimeoutSeconds?: number;
-  loopAgentTimeoutSeconds?: number;
-  /** Per-verb model overrides for loop mode. Empty string = use fallback chain. */
-  loopVerbModels?: LoopVerbModels;
   /** Per-model token rates in USD per 1,000,000 tokens. Models without an entry cost 0. */
   modelTokenCosts?: ModelTokenCosts;
-  /** Bundled server default from config/loop.default.json */
-  loopDefaultMaxIterations?: number;
   /** When true (default), auto-create a PR once an agent completes and pushes. Per-agent create request can override. */
   autoCreatePullRequest?: boolean;
   autoReviewPullRequests?: boolean;
@@ -289,12 +207,6 @@ export interface AgentPullRequest {
   updatedAt: string;
 }
 
-export interface AgentInteractiveState {
-  canSendMessage: boolean;
-  canFinish: boolean;
-  pendingPermissionId: string | null;
-}
-
 export type GitFileChangeKind =
   | 'added'
   | 'modified'
@@ -366,7 +278,7 @@ export interface Agent {
   agentId: string;
   repoId: string;
   status: AgentStatus | string;
-  mode?: AgentMode;
+  mode?: AgentMode | LegacyAgentMode;
   workspaceId?: string;
   prompt?: string;
   agentBranch?: string;
@@ -374,9 +286,6 @@ export interface Agent {
   baseBranch?: string;
   useExistingBranch?: boolean;
   model?: string | null;
-  loopVerbModels?: LoopVerbModels;
-  /** Per-session iteration cap for loop mode; omitted = global/repo default */
-  loopMaxIterations?: number;
   createdAt?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -389,8 +298,6 @@ export interface Agent {
   awaitingInputSince?: string | null;
   messagesPreview?: string | null;
   gitStatus?: AgentGitStatus | null;
-  interactive?: AgentInteractiveState;
-  loop?: AgentLoopState;
   autoApprovePermissions?: boolean;
   result?: { warning?: string; commitSha?: string | null; opencodeSuccess?: boolean };
   pullRequest?: AgentPullRequest | null;
@@ -446,21 +353,6 @@ export const BATCH_ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'completing',
 ]);
 
-export const INTERACTIVE_ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
-  'queued',
-  'running',
-  'awaiting_input',
-  'processing',
-  'completing',
-]);
-
-export const LOOP_ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
-  'queued',
-  'running',
-  'processing',
-  'completing',
-]);
-
 export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   ...BATCH_ACTIVE_AGENT_STATUSES,
   'awaiting_input',
@@ -470,16 +362,14 @@ export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
 
 export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>(['completed', 'failed', 'cancelled']);
 
-export function getAgentMode(agent: Agent): AgentMode {
+export function getAgentMode(agent: Agent): AgentMode | LegacyAgentMode {
   return agent.mode || 'batch';
 }
 
-export function isInteractiveAgent(agent: Agent): boolean {
-  return getAgentMode(agent) === 'interactive';
-}
-
-export function isLoopAgent(agent: Agent): boolean {
-  return getAgentMode(agent) === 'loop';
+/** Modes removed in v1 — such records are shown but not actionable. */
+export function isLegacyAgentMode(agent: Agent): boolean {
+  const mode = getAgentMode(agent);
+  return mode === 'interactive' || mode === 'loop';
 }
 
 export function isReviewAgent(agent: Agent): boolean {
@@ -574,24 +464,9 @@ export function canReviewBranches(
   return true;
 }
 
-export function formatLoopProgress(loop: AgentLoopState, stepModel?: string | null): string {
-  if (loop.currentVerb === 'INITIAL_PLAN') {
-    return stepModel?.trim() ? `Initial plan · ${stepModel.trim()}` : 'Initial plan';
-  }
-
-  const verbLabel = loop.currentVerb.toLowerCase();
-  const verbPart = stepModel?.trim() ? `${verbLabel} · ${stepModel.trim()}` : verbLabel;
-  const base = `Iteration ${loop.iteration}/${loop.maxIterations} · ${verbPart}`;
-  if (loop.stepsInIteration === 0) {
-    return base;
-  }
-  const stepNumber = loop.stepIndex + 1;
-  return `${base} · step ${stepNumber}/${loop.stepsInIteration}`;
-}
-
-export function agentModeBadgeVariant(mode: AgentMode): 'awaiting' | 'processing' | 'neutral' {
-  if (mode === 'interactive') return 'awaiting';
-  if (mode === 'loop') return 'processing';
+export function agentModeBadgeVariant(
+  mode: AgentMode | LegacyAgentMode,
+): 'processing' | 'neutral' {
   if (mode === 'review') return 'processing';
   return 'neutral';
 }

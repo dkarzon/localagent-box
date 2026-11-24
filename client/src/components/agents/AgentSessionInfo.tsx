@@ -8,11 +8,7 @@ import {
   canCreatePullRequest,
   getAgentMode,
   isAgentActive,
-  isInteractiveAgent,
-  isLoopAgent,
   isReviewAgent,
-  LOOP_VERB_LABELS,
-  LOOP_VERBS,
 } from '../../api/types';
 import { formatDuration, formatRelativeTime, formatTokenCount, formatCost } from '../../lib/format';
 import { IconLink, IconLogs, IconRefresh } from '../icons';
@@ -67,7 +63,6 @@ export interface AgentSessionInfoProps {
   repoLabel: string;
   defaultModel: string;
   defaultReviewModel?: string;
-  loopProgress: string | null;
   eventsConnected: boolean;
   loadError: string | null;
   prBusy: boolean;
@@ -84,7 +79,6 @@ export function AgentSessionInfo({
   repoLabel,
   defaultModel,
   defaultReviewModel = '',
-  loopProgress,
   eventsConnected,
   loadError,
   prBusy,
@@ -94,9 +88,7 @@ export function AgentSessionInfo({
   tokenUsage: tokenUsageOverride = null,
   onRefreshPullRequest,
 }: AgentSessionInfoProps) {
-  const interactive = agent ? isInteractiveAgent(agent) : false;
   const tokenUsage = tokenUsageOverride ?? agent?.tokenUsage ?? null;
-  const loop = agent ? isLoopAgent(agent) : false;
   const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
   const showCreatePr = agent ? canCreatePullRequest(agent) : false;
@@ -105,7 +97,6 @@ export function AgentSessionInfo({
 
   const resolveModelLabel = () => {
     if (agent?.model) return agent.model;
-    if (loop) return 'Settings / global default';
     if (review) return defaultReviewModel || defaultModel || 'Settings default';
     return defaultModel || '—';
   };
@@ -303,49 +294,9 @@ export function AgentSessionInfo({
 
           {agent.prompt ? (
             <div>
-              <p className="mb-2 text-sm text-on-surface-variant">
-                {loop ? 'Goal' : 'Initial prompt'}
-              </p>
+              <p className="mb-2 text-sm text-on-surface-variant">Initial prompt</p>
               <p className="rounded bg-background p-3 text-sm text-on-surface whitespace-pre-wrap">
                 {agent.prompt}
-              </p>
-            </div>
-          ) : null}
-
-          {loop && agent.loopVerbModels && Object.keys(agent.loopVerbModels).length > 0 ? (
-            <details className="rounded border border-surface-container-highest bg-background p-4">
-              <summary className="cursor-pointer text-sm font-medium text-on-surface">
-                Models for this run
-              </summary>
-              <dl className="mt-3 space-y-2 text-sm">
-                {LOOP_VERBS.filter((verb) => agent.loopVerbModels?.[verb]?.trim()).map((verb) => (
-                  <div key={verb} className="flex justify-between gap-4">
-                    <dt className="text-on-surface-variant">{LOOP_VERB_LABELS[verb].label}</dt>
-                    <dd className="code-md text-right text-on-surface">{agent.loopVerbModels?.[verb]}</dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="mt-2 text-xs text-muted">
-                Run overrides only; other steps use Settings or the fallback model.
-              </p>
-            </details>
-          ) : null}
-
-          {loop && agent.loop ? (
-            <div className="rounded border border-surface-container-highest bg-background p-4">
-              <p className="mb-2 text-sm font-medium text-on-surface">Loop progress</p>
-              <p className="text-sm text-on-surface-variant">{loopProgress}</p>
-              {agent.loop.finishRequested ? (
-                <p className="mt-2 text-xs text-muted">Finish requested — completing current step</p>
-              ) : null}
-              <p className="mt-2 text-xs text-muted">
-                Harness: {agent.loop.configSource === 'repo-override' ? 'repo override' : 'server default'}
-                {agent.loop.stepsInIteration > 0 ? (
-                  <>
-                    {' · '}
-                    {agent.loop.stepsInIteration} step(s) per iteration
-                  </>
-                ) : null}
               </p>
             </div>
           ) : null}
@@ -463,16 +414,6 @@ export function AgentSessionInfo({
                 </>
               ) : null}
               .
-            </p>
-          ) : loop && isActive ? (
-            <p className="text-sm text-on-surface-variant">
-              Loop mode runs observe → plan → act → reflect cycles until the model signals completion
-              or caps are hit. Use Finish to commit partial progress after the current step.
-            </p>
-          ) : interactive && isActive ? (
-            <p className="text-sm text-on-surface-variant">
-              Use Finish when you are ready to commit and push changes. Interactive sessions do not
-              auto-commit after each turn.
             </p>
           ) : null}
         </>

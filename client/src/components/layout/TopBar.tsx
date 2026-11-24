@@ -1,5 +1,7 @@
+import type { NavPage } from '../../navigation';
+
 export function TopBar({
-  page,
+  page: _page,
 }: { page: NavPage }) {
   return (
     <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b border-surface-container-highest bg-surface px-6">
