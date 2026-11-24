@@ -2,7 +2,7 @@
 
 **Linear:** DKA-229
 
-Batch mode is localagent-box’s **one-shot** path: a single prompt, one OpenCode session, auto commit/push, no inbox or Finish step. Sometimes the model returns a plan or overview and goes idle without editing files. The host used to mark those runs `completed`; that is now treated as a **failure** when `filesChanged === 0`.
+Batch mode is localagent-box's **one-shot** path: a single prompt, one OpenCode session, auto commit/push. A run is one turn, so follow-up work is a new batch run on the same branch. Sometimes the model returns a plan or overview and goes idle without editing files. The host used to mark those runs `completed`; that is now treated as a **failure** when `filesChanged === 0`.
 
 This document lists what we changed and further options to tighten prompt → implementation.
 
@@ -17,7 +17,7 @@ This document lists what we changed and further options to tighten prompt → im
 
 ## Implemented in DKA-229
 
-1. **Require file changes for batch success** — `resolveBatchCompletionStatus()` in `batch-run-flow.ts` mirrors interactive: `completed` only when `filesChanged > 0`.
+1. **Require file changes for batch success** — `resolveBatchCompletionStatus()` in `batch-run-flow.ts`: `completed` only when `filesChanged > 0`.
 2. **Clearer failure message** — “finished without file changes — the model may have returned an overview only”.
 3. **Stronger batch prompt** — `BATCH_RUN_CONTEXT_PROMPT` in `runner.ts` tells the model the host fails on zero edits.
 4. **Agent instructions** — `AGENTS.md`, `config/opencode-tool-instructions.md`, and per-agent `localagent-instructions.md` stress implement-in-same-run for batch.
@@ -69,5 +69,4 @@ This document lists what we changed and further options to tighten prompt → im
 ## Related docs
 
 - `docs/lessons.md` — Gemma, bash schema, SSE idle race
-- `docs/agent-session-startup-flow.md` — batch vs interactive lifecycle
 - `README.md` — batch = one-shot API default

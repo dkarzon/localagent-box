@@ -7,7 +7,6 @@ Repo-level configuration lets you override agent behavior per-repository instead
 | `.localagent-box/config.json` | Prompt overrides (system prompt + run-mode context prompts) |
 | `.localagent-box/environment.json` | Host-run workspace bootstrap (setup, runtime profiles, lockfile auto-detect) |
 | `.localagent-box/setup.sh` | Committed setup script that takes precedence over all `environment.json` sources |
-| `.localagent-box/loop.json` | Loop-agent orchestration configuration |
 
 Each file is optional. If absent, the server defaults apply.
 
@@ -20,15 +19,13 @@ Prompt and behavioural overrides that let each repository customise how agents i
 {
   "systemPrompt": "...",
   "batchContextPrompt": "...",
-  "interactiveContextPrompt": "...",
-  "loopContextPrompt": "...",
   "review": { "background": "..." }
 }
 ```
 
 ### `systemPrompt` *(string)*
 
-Replaces the system prompt for all agent runs in this repository. Priority when building a prompt: job-level system prompt → repo `systemPrompt` → server default (`SENIOR_ENGINEER_SYSTEM_PROMPT`). Affects every mode (batch, interactive, loop).
+Replaces the system prompt for all agent runs in this repository. Priority when building a prompt: job-level system prompt → repo `systemPrompt` → server default (`SENIOR_ENGINEER_SYSTEM_PROMPT`). Affects both modes (batch and review).
 
 ### `batchContextPrompt` *(string)*
 
@@ -38,15 +35,9 @@ Replaces the default batch-mode context paragraph. Default:
 
 Use to relax constraints (e.g., allow planning only) or tighten them for repo-specific conventions.
 
-### `interactiveContextPrompt` *(string)*
+### Unknown keys *(ignored with a note)*
 
-Replaces the default interactive-mode context paragraph. Default:
-
-> Interactive: follow-ups are allowed; the host commits only when the user finishes the session.
-
-### `loopContextPrompt` *(string)*
-
-Replaces the default loop-mode context paragraph, which instructs agents about multi-iteration orchestration and the completion marker format. Default begins with "Loop: unattended multi-step harness…".
+Keys other than `systemPrompt`, `batchContextPrompt`, `reviewBackground`, and `review` are not read; they are reported to the agent log as `Ignoring unknown keys in .localagent-box/config.json: a, b`. The keys from modes removed in v1 (`interactiveContextPrompt`, `loopContextPrompt`, `checkCommand`) fall in that group, so a repo file that still has them loads unchanged and gains a warning line.
 
 ### `review` *(object)*
 
@@ -168,7 +159,7 @@ Controls what happens when the setup step (or `verifyCommand`) fails:
 
 #### `setup.runOnModes` *(array, optional)*
 
-Agent modes for which the setup runs: any of `batch`, `interactive`, `loop`, `review`. When set and the agent's mode is not listed, the bootstrap is **skipped for that run** (the skip reason is logged). Omit to run the setup on every mode.
+Agent modes for which the setup runs: `batch` or `review`. When set and the agent's mode is not listed, the bootstrap is **skipped for that run** (the skip reason is logged). Omit to run the setup on every mode. A mode removed in v1 (`interactive`, `loop`) listed here is filtered out with the note `ignored removed mode <x>` instead of failing the load; any other unknown mode is rejected.
 
 ### `verifyCommand` *(string, optional)*
 
@@ -291,52 +282,7 @@ The full resolution order, in the order the worker enforces it:
 
 Treat detection as a zero-config convenience for standard stacks — `setup.command` or `profiles` remain the deterministic choice for anything unusual.
 
-## `.localagent-box/loop.json` — Loop Agent Configuration
+## Removed in v1
 
-Loop agents run in iterative cycles (ORIENT → ACT → REFLECT). This file overrides how many iterations they're allowed, when to stop, and what prompts each step receives. Replaces the server default at `config/loop.default.json`.
+`.localagent-box/loop.json` and its server default (`config/loop.default.json`) are no longer read: loop mode was removed in v1, so a repo that still carries the file is simply unaffected — it is not parsed, and the `.gitignore` entry for `.localagent-box/loop-plan.md` is no longer written. Keys belonging to modes removed in v1 are reported as notes rather than being acted on.
 
-```jsonc
-// .localagent-box/loop.json (example)
-{
-  "version": 1,
-  "maxIterations": 5,
-  "completionMarker": "LOOP_COMPLETE",
-  "failOnMaxIterations": false,
-  "initialPlanPrompt": "...{{goal}}...",
-  "steps": [
-    { "verb": "ORIENT", "prompt": "...{{goal}}{{completionMarker}}" },
-    { "verb": "ACT",    "prompt": "...{{goal}}..." },
-    { "verb": "REFLECT","prompt": "...{{goal}}{{completionMarker}}" }
-  ]
-}
-```
-
-### `version` *(number, required)*  
-Must be `1`. Schema version — rejects other values.
-
-### `maxIterations` *(number, required)*  
-Maximum number of ORIENT/ACT/REFLECT cycles before the run stops. Must be ≥ 1. Replaces server default (5).
-
-### `completionMarker` *(string, required)*  
-Token string agents emit to signal the task is done (`"LOOP_COMPLETE"` etc.). The runner watches model output for `{marker}: true`.
-
-### `failOnMaxIterations` *(boolean, optional, default false)*  
-When `true`, reaching max iterations or stalling without a completion marker **fails** the run. When `false` (default): partial file changes are committed with a warning instead of discarded.
-
-### `initialPlanPrompt` *(string | null, optional)*  
-Optional one-time prompt sent before iteration 1. Typically asks the model to survey the repo then write `.localagent-box/loop-plan.md`. Set to `null` or omit to skip planning entirely. Default is a pre-defined planning prompt in `config/loop.default.json`.
-
-### `steps` *(array, required)*  
-The ORIENT → ACT → REFLECT cycle definitions. At least one step required. Each entry:
-- **verb** (`"ORIENT"` | `"ACT"` | `"REFLECT"`) — which phase. Legacy aliases `"OBSERVE"` and `"PLAN"` map to `"ORIENT"`.
-- **prompt** (string) — template sent for that verb.
-
-### Prompt template variables  
-
-Loop step prompts support these templates (replaced at runtime):
-
-| Variable | Description |
-|---|---|
-| `{{goal}}` | Agent task description |
-| `{{iteration}}` | Current 1-based iteration number |
-| `{{completionMarker}}` | The configured completion token |

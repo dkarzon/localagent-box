@@ -5,7 +5,7 @@
 - [code-review.md](./code-review.md) — PR review mode using Open Code Review (OCR): auto-review, API, GitHub posting
 - [docker-hosting.md](./docker-hosting.md) — run the prebuilt `ghcr.io/dkarzon/localagent-box` image (required env vars, volumes, Compose)
 - [github-app-setup.md](./github-app-setup.md) — creating, installing, and configuring the GitHub App localagent-box authenticates as
-- [repo-config.md](./repo-config.md) — per-repo `.localagent-box/` configuration (loop harness overrides, etc.)
+- [repo-config.md](./repo-config.md) — per-repo `.localagent-box/` configuration
 - [../SECURITY.md](../SECURITY.md) — threat model and hardening recommendations
 - [../README.md](../README.md) — quick start, local development, and full API reference
 
@@ -22,11 +22,11 @@ These documents record decisions and planning made during development. They aren
 - [pre-release-checklist.md](./pre-release-checklist.md) — original internal build checklist
 - [one-shot-batch-options.md](./one-shot-batch-options.md)
 - [initial-build.plan.md](./plans/initial-build.plan.md)
-- [loop-handoff.plan.md](./plans/loop-handoff.plan.md)
-- [loop-verb-models.plan.md](./plans/loop-verb-models.plan.md)
-- [loop-token-efficiency.plan.md](./plans/loop-token-efficiency.plan.md)
+- [loop-handoff.plan.md](./plans/loop-handoff.plan.md) — superseded by v1 (loop mode removed)
+- [loop-verb-models.plan.md](./plans/loop-verb-models.plan.md) — superseded by v1 (loop mode removed)
+- [loop-token-efficiency.plan.md](./plans/loop-token-efficiency.plan.md) — superseded by v1 (loop mode removed)
 - [pr-code-review.plan.md](./plans/pr-code-review.plan.md)
 - [review-github-checks.plan.md](./plans/review-github-checks.plan.md) — GitHub Checks API for review agents
 - [deepseek-harness-integration.plan.md](./plans/deepseek-harness-integration.plan.md) — dual coding harness (OpenCode / DeepSeek Harness)
-- [question-tool-handling.plan.md](./plans/question-tool-handling.plan.md)
+- [question-tool-handling.plan.md](./plans/question-tool-handling.plan.md) — superseded by v1 (all runs unattended)
 - [shared-branch-queue.plan.md](./plans/shared-branch-queue.plan.md)

@@ -13,10 +13,9 @@ Before finishing:
 - Run focused tests/commands for touched areas (see commands below).
 - Fix failures you introduced; do not commit broken builds.
 - Batch agents: all work must complete in this run — verify before stopping.
-- Interactive agents: do not assume push until the user clicks Finish.
 
 ## Running under localagent-box
-- Agent runs in an isolated clone on branch `{agentBranch}`; changes commit on completion (batch) or when the user Finishes (interactive).
+- Agent runs in an isolated clone on branch `{agentBranch}`; changes commit on completion.
 - Default agent: `build` with permissions auto-approved — still prefer minimal, reviewable diffs.
 - Do not commit secrets, `.env`, or credentials.
 - Do not modify unrelated files; scope to the task.
