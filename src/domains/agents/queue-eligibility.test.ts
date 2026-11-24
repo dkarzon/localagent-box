@@ -159,4 +159,24 @@ describe('queue-eligibility', () => {
     assert.equal(findCodingPredecessor([legacy, second], second), undefined);
     assert.equal(decideQueueAction(second, [legacy, second], () => false), 'start');
   });
+
+  it('does not offer retry or start-next on a read-only legacy record', () => {
+    const legacy = agent({ agentId: 'legacy1', mode: 'interactive', status: 'failed' });
+    const state = buildAgentQueueState(legacy, [legacy, second], () => false);
+    assert.equal(state.canRetry, false);
+    assert.equal(state.canAllowSuccessors, false);
+  });
+
+  it('does not count a queued legacy record as a coding successor', () => {
+    const failed = { ...first, status: 'failed' as const };
+    const legacyQueued = agent({
+      agentId: 'legacy1',
+      mode: 'loop',
+      status: 'queued',
+      createdAt: '2026-08-16T00:00:03.000Z',
+    });
+    const state = buildAgentQueueState(failed, [failed, legacyQueued], () => false);
+    assert.equal(state.canRetry, true);
+    assert.equal(state.canAllowSuccessors, false);
+  });
 });

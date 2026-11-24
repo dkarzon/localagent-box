@@ -69,7 +69,13 @@ export function createConfigStore(
 
   function loadRaw(): AppConfig {
     try {
-      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+      const rawParsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      // A top-level JSON `null` (or any other non-object) must still fall back to
+      // defaults, as the previous spread-based load did — `Object.keys(null)` throws.
+      const parsed: Record<string, unknown> =
+        rawParsed !== null && typeof rawParsed === 'object'
+          ? (rawParsed as Record<string, unknown>)
+          : {};
       const knownKeys = new Set<string>([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
       const unknownKeys = Object.keys(parsed).filter((key) => !knownKeys.has(key));
       if (unknownKeys.length > 0) {

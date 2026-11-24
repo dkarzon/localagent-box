@@ -64,4 +64,13 @@ describe('config-store unknown keys', () => {
     assert.equal(config.opencodeModel, '');
     assert.deepEqual(warns, []);
   });
+
+  it('falls back to defaults when the top-level JSON value is null', () => {
+    const { dataDir, store, warns } = createTestStore([]);
+    fs.writeFileSync(path.join(dataDir, 'config.json'), 'null', 'utf8');
+
+    const config = store.loadConfig();
+    assert.deepEqual(config, { ...DEFAULT_CONFIG });
+    assert.deepEqual(warns, []);
+  });
 });
