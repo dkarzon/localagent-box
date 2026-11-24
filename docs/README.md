@@ -9,6 +9,10 @@
 - [../SECURITY.md](../SECURITY.md) — threat model and hardening recommendations
 - [../README.md](../README.md) — quick start, local development, and full API reference
 
+## Roadmap
+
+- [v1.plan.md](./plans/v1.plan.md) — v1: batch-only, host-run verification and repair, credential and permission hardening, on-demand run retrospectives
+
 ## Design history
 
 These documents record decisions and planning made during development. They aren't required reading to use or contribute to the project, and may describe behavior that has since changed.
