@@ -32,10 +32,6 @@ export interface CreateAgentResponse {
   agentBranch: string;
 }
 
-export interface SendMessageRequest {
-  text: unknown;
-}
-
 export interface CreatePullRequestRequest {
   title?: unknown;
   body?: unknown;

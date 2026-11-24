@@ -4,7 +4,6 @@ import { validateRepoId } from '../repos/repo.repository';
 import {
   validateAgentMode,
   validateBranchName,
-  validateMessageText,
   validatePrompt,
 } from '../../lib/validation';
 import type { AgentAutofixMetadata, AgentMode } from '../../types';
@@ -156,8 +155,4 @@ export function parseCreateAgentPayload(
     parentAgentId,
     autofix,
   };
-}
-
-export function parseMessageText(text: unknown): string {
-  return validateMessageText(text);
 }

@@ -36,7 +36,7 @@ import { formatReviewMarkdown, formatOcrSessionMarkdown } from '../../integratio
 import type { OcrReviewEnvelope } from '../../integrations/open-code-review/types';
 import { checkOutputForComplete } from '../../lib/review-github-check';
 import { CodedError, getErrorMessage } from '../../types';
-import type { Agent, AgentJob, AgentReviewMetadata, AppConfig, Repo, SpawnFn } from '../../types';
+import type { Agent, AgentReviewMetadata, AppConfig, Repo, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import type { ConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
@@ -54,9 +54,8 @@ import {
 import { createAgentQueue } from './agent-queue';
 import { decideQueueAction, buildAgentQueueState, hasActiveCodingOnBranch } from './queue-eligibility';
 import { createWorkerSpawner } from './worker-spawner';
-import { parseCreateAgentPayload, parseMessageText } from './agent.validation';
+import { parseCreateAgentPayload } from './agent.validation';
 import { appendLog } from './worker/agent-state-writer';
-import { finalizeGitChanges } from './worker/workspace-setup';
 import {
   ACTIVE_STATUSES,
   BATCH_ACTIVE_STATUSES,
@@ -85,9 +84,6 @@ export interface AgentService {
   readEvents: (agentId: string, sinceSeq?: number) => import('../../types').AgentEvent[];
   getLastEventSeq: (agentId: string) => number;
   readMessages: (agentId: string) => import('../../types').AgentMessage[];
-  sendMessage: (agentId: string, text: unknown) => Agent;
-  finishAgent: (agentId: string) => Agent;
-  commitOutstandingChanges: (agentId: string) => Promise<Agent>;
   cancelAgent: (agentId: string) => Agent;
   retryAgent: (agentId: string) => Agent;
   allowSuccessors: (agentId: string) => { agent: Agent; warning: string | null };
@@ -658,183 +654,6 @@ export function createAgentService(options: {
     queue.enqueue(agentId);
 
     return withLoopFields(withInteractiveFields(agent));
-  }
-
-  function sendMessage(agentId: string, text: unknown): Agent {
-    const agent = repository.getAgent(agentId);
-    repository.assertInteractive(agent);
-
-    if (TERMINAL_STATUSES.has(agent.status)) {
-      throw new CodedError(`Agent is already ${agent.status}`, 'NOT_ACTIVE');
-    }
-
-    if (agent.status !== 'awaiting_input') {
-      throw new CodedError('Agent is not ready for messages', 'NOT_READY');
-    }
-
-    const sanitized = parseMessageText(text);
-    repository.appendInbox(agentId, { type: 'message', text: sanitized, ts: new Date().toISOString() });
-
-    const updated = repository.update(agentId, {
-      status: 'processing',
-      messagesPreview: sanitized.slice(0, 200),
-      lastActivityAt: new Date().toISOString(),
-    });
-    return withInteractiveFields(updated!);
-  }
-
-  function finishAgent(agentId: string): Agent {
-    const agent = repository.getAgent(agentId);
-    repository.assertFinishable(agent);
-
-    if (TERMINAL_STATUSES.has(agent.status)) {
-      throw new CodedError(`Agent is already ${agent.status}`, 'NOT_ACTIVE');
-    }
-
-    if (agent.status === 'completing') {
-      throw new CodedError('Agent is already finishing', 'NOT_READY');
-    }
-
-    repository.appendInbox(agentId, { type: 'finish', ts: new Date().toISOString() });
-
-    const mode = getAgentMode(agent);
-    if (mode === 'loop') {
-      const loop = buildLoopState(agent.status, {
-        ...agent.loop,
-        finishRequested: true,
-      }, agent);
-      const updated = repository.update(agentId, {
-        loop,
-        lastActivityAt: new Date().toISOString(),
-      });
-      return withLoopFields(updated!);
-    }
-
-    const updated = repository.update(agentId, {
-      status: 'completing',
-      lastActivityAt: new Date().toISOString(),
-    });
-    return withInteractiveFields(updated!);
-  }
-
-  async function commitOutstandingChanges(agentId: string): Promise<Agent> {
-    if (!gitService) {
-      throw new CodedError('Git service is not configured', 'NOT_READY');
-    }
-
-    const agent = repository.getAgent(agentId);
-    if (getAgentMode(agent) !== 'loop') {
-      throw new CodedError('Agent is not in loop mode', 'NOT_LOOP');
-    }
-
-    if (agent.status !== 'failed') {
-      throw new CodedError('Outstanding changes can only be committed for failed loop sessions', 'NOT_READY');
-    }
-
-    if (agent.commitSha) {
-      throw new CodedError('Changes have already been committed for this session', 'ALREADY_COMMITTED');
-    }
-
-    if (!agent.loop?.canCommitOutstanding) {
-      throw new CodedError('No outstanding changes to commit', 'NO_CHANGES');
-    }
-
-    const workspaceDir = repository.getWorkspaceDir(agent.workspaceId);
-    if (!fsImpl.existsSync(workspaceDir)) {
-      throw new CodedError('Workspace is no longer available', 'WORKSPACE_MISSING');
-    }
-
-    const config = configRepository.load();
-    githubApp.assertConfigured(config);
-    gitService.applyGitConfig(config);
-
-    const repo = repoManager.getRepo(agent.repoId);
-    const logPath = repository.getLogPath(agentId);
-    appendLog(logPath, 'Committing outstanding loop changes after failed session…');
-
-    const job: AgentJob = {
-      agentId: agent.agentId,
-      workspaceId: agent.workspaceId,
-      repoId: agent.repoId,
-      mode: 'loop',
-      prompt: agent.prompt,
-      systemPrompt: agent.systemPrompt || undefined,
-      baseBranch: agent.baseBranch,
-      agentBranch: agent.agentBranch,
-      useExistingBranch: agent.useExistingBranch,
-      commitMessage: agent.commitMessage,
-      push: agent.push,
-      pushOnFailure: agent.pushOnFailure,
-      autoApprovePermissions: agent.autoApprovePermissions,
-      model: agent.model || undefined,
-      ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
-      agentTimeoutMs: getLoopAgentTimeoutMs(),
-      dataDir,
-      workspaceRoot,
-      workspaceDir,
-      logPath,
-    };
-
-    const gitResult = await finalizeGitChanges({
-      gitService,
-      githubApp,
-      config,
-      repo,
-      job,
-      logPath,
-      allowCommit: true,
-    });
-
-    if (gitResult.filesChanged === 0) {
-      throw new CodedError('No file changes to commit', 'NO_CHANGES');
-    }
-
-    const finishedAt = new Date().toISOString();
-    const warning = agent.error
-      ? `Loop failed (${agent.error}); changes committed manually`
-      : 'Loop ended without completion signal; changes committed manually';
-
-    const updated = repository.update(agentId, {
-      status: 'completed',
-      finishedAt,
-      branch: agent.agentBranch,
-      commitSha: gitResult.commitSha,
-      pushed: gitResult.pushed,
-      filesChanged: gitResult.filesChanged,
-      error: null,
-      gitStatus: null,
-      result: {
-        branch: agent.agentBranch,
-        baseBranch: agent.baseBranch,
-        workspaceId: agent.workspaceId,
-        commitSha: gitResult.commitSha,
-        pushed: gitResult.pushed,
-        filesChanged: gitResult.filesChanged,
-        warning,
-        opencodeSuccess: true,
-      },
-      loop: buildLoopState('completed', agent.loop, {
-        ...agent,
-        status: 'completed',
-        commitSha: gitResult.commitSha,
-        gitStatus: null,
-      }),
-    });
-
-    if (!updated) {
-      throw new CodedError('Agent not found', 'NOT_FOUND');
-    }
-
-    appendLog(
-      logPath,
-      `Outstanding changes committed — ${gitResult.filesChanged} file(s) changed, pushed=${gitResult.pushed}`,
-    );
-
-    sendAgentWebhook(agentId, 'agent.completed');
-
-    queue.process();
-
-    return withLoopFields(updated);
   }
 
   function cancelAgent(agentId: string): Agent {
@@ -1560,9 +1379,6 @@ export function createAgentService(options: {
     ): Promise<ManualFixBatchResult> => reviewAutofix.createManualFixBatch(reviewAgentId, findingIds),
     resumeAutomaticChain: (reviewAgentId: string): Promise<{ batchIndex: number }> =>
       reviewAutofix.resumeAutomaticChain(reviewAgentId),
-    sendMessage,
-    finishAgent,
-    commitOutstandingChanges,
     cancelAgent,
     retryAgent,
     allowSuccessors,

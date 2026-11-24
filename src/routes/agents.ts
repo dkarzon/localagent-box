@@ -135,22 +135,6 @@ const handleCreateAgent = withErrorHandling(async (req, res, ctx) => {
   sendJson(res, 201, toCreateAgentResponse(agent));
 }, secretRedact);
 
-const handleSendMessage = withErrorHandling(async (req, res, ctx, agentId) => {
-  const body = await readJsonBody(req);
-  const agent = ctx.agentManager.sendMessage(agentId, body.text);
-  sendJson(res, 200, { agent });
-});
-
-const handleFinishAgent = withErrorHandling(async (_req, res, ctx, agentId) => {
-  const agent = ctx.agentManager.finishAgent(agentId);
-  sendJson(res, 200, { agent });
-});
-
-const handleCommitOutstanding = withErrorHandling(async (_req, res, ctx, agentId) => {
-  const agent = await ctx.agentManager.commitOutstandingChanges(agentId);
-  sendJson(res, 200, { agent });
-}, secretRedact);
-
 const handleCancelAgent = withErrorHandling((_req, res, ctx, agentId) => {
   const agent = ctx.agentManager.cancelAgent(agentId);
   sendJson(res, 200, { agent });
@@ -298,37 +282,9 @@ const agentsRoute: Route = {
       return;
     }
 
-    if (messagesMatch && req.method === 'POST') {
-      if (!requireAuth(req, res)) {
-        return;
-      }
-      await handleSendMessage(req, res, ctx, messagesMatch[1]);
-      return;
-    }
-
     const eventsMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/events$/);
     if (eventsMatch && req.method === 'GET') {
       handleAgentEvents(req, res, ctx, eventsMatch[1]);
-      return;
-    }
-
-    const finishMatch = pathname.match(/^\/api\/v1\/agents\/([^/]+)\/finish$/);
-    if (finishMatch && req.method === 'POST') {
-      if (!requireAuth(req, res)) {
-        return;
-      }
-      await handleFinishAgent(req, res, ctx, finishMatch[1]);
-      return;
-    }
-
-    const commitOutstandingMatch = pathname.match(
-      /^\/api\/v1\/agents\/([^/]+)\/commit-outstanding$/,
-    );
-    if (commitOutstandingMatch && req.method === 'POST') {
-      if (!requireAuth(req, res)) {
-        return;
-      }
-      await handleCommitOutstanding(req, res, ctx, commitOutstandingMatch[1]);
       return;
     }
 

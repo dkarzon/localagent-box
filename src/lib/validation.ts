@@ -151,23 +151,6 @@ export function validateAgentMode(mode: unknown): AgentMode {
   throw validationError('mode must be "batch", "interactive", "loop", or "review"');
 }
 
-export function validateMessageText(text: unknown): string {
-  if (!text || typeof text !== 'string') {
-    throw validationError('text is required and must be a string');
-  }
-
-  const sanitized = text.trim();
-  if (!sanitized) {
-    throw validationError('text cannot be empty');
-  }
-
-  if (sanitized.length > 50000) {
-    throw validationError('text is too long');
-  }
-
-  return sanitized;
-}
-
 export function validateModel(model: unknown): string | null {
   if (model == null || model === '') {
     return null;

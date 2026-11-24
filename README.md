@@ -238,8 +238,6 @@ Mutating requests require `Authorization: Bearer <API_TOKEN>`. Default token: `l
 | `GET` | `/api/v1/agents/:agentId/logs` | No | Agent log tail (`?tail=200`, default 200) |
 | `GET` | `/api/v1/agents/:agentId/events` | No | SSE stream of agent events (`?since=` or `Last-Event-ID`) |
 | `GET` | `/api/v1/agents/:agentId/messages` | No | Transcript + events snapshot (`?since=` for event replay) |
-| `POST` | `/api/v1/agents/:agentId/messages` | Yes | Send follow-up message (interactive only) |
-| `POST` | `/api/v1/agents/:agentId/finish` | Yes | Finish interactive or loop session + commit/push |
 | `POST` | `/api/v1/agents/:agentId/retry` | Yes | Re-queue a failed or cancelled session in the same slot |
 | `POST` | `/api/v1/agents/:agentId/allow-successors` | Yes | Let later sessions on the same branch start after a failed/cancelled chunk |
 | `POST` | `/api/v1/agents/:agentId/pull-request` | Yes | Open GitHub PR for completed, pushed session |
@@ -444,16 +442,6 @@ curl "http://localhost:8080/api/v1/agents/<agentId>/logs?tail=100"
 # SSE + transcript (both modes; replay with ?since=<seq>)
 curl -N "http://localhost:8080/api/v1/agents/<agentId>/events?since=0"
 curl "http://localhost:8080/api/v1/agents/<agentId>/messages?since=0"
-
-# Interactive only (409 NOT_INTERACTIVE on batch and loop)
-curl -X POST http://localhost:8080/api/v1/agents/<agentId>/messages \
-  -H "Authorization: Bearer localagent-box" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Also add tests for the login form"}'
-
-# Interactive or loop — early finish + commit/push
-curl -X POST http://localhost:8080/api/v1/agents/<agentId>/finish \
-  -H "Authorization: Bearer localagent-box"
 
 # GitHub PR after successful batch finish or interactive Finish (requires push)
 curl -X POST http://localhost:8080/api/v1/agents/<agentId>/pull-request \
