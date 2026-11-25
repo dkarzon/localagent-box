@@ -171,7 +171,7 @@ describe('createOpenCodeV2EventAdapter', () => {
   it('feeds the existing event mapper end to end', () => {
     const mapper = createOpenCodeEventMapper();
     const mapped = translateAll(successfulTurn)
-      .map((e) => mapper.map(e, SID, 'batch').event)
+      .map((e) => mapper.map(e, SID).event)
       .filter((e): e is NonNullable<typeof e> => e !== null);
 
     const text = mapped

@@ -3,7 +3,7 @@ import {
   getOpencodeBin,
 } from '../../../integrations/opencode/runner';
 import { runSessionOrchestrator } from '../../../integrations/opencode/session-orchestrator';
-import type { AgentJob, AgentMode, AppConfig } from '../../../types';
+import type { AgentJob, AppConfig } from '../../../types';
 import {
   appendLog,
   updateAgentRecord,
@@ -18,21 +18,11 @@ export function resolveRunConfig(config: AppConfig, job: AgentJob): AppConfig {
   return config;
 }
 
-export function resolveAutoApprovePermissions(
-  config: AppConfig,
-  job: AgentJob,
-  mode: AgentMode,
-): boolean {
+export function resolveAutoApprovePermissions(config: AppConfig, job: AgentJob): boolean {
   if (job.autoApprovePermissions !== undefined) {
     return job.autoApprovePermissions;
   }
-  if (mode === 'batch') {
-    return config.batchAutoApprovePermissions !== false;
-  }
-  if (mode === 'loop') {
-    return config.loopAutoApprovePermissions !== false;
-  }
-  return config.interactiveAutoApprovePermissions === true;
+  return config.batchAutoApprovePermissions !== false;
 }
 
 /** Batch agents must produce committable file changes — overview-only runs are failures. */
@@ -85,7 +75,7 @@ export async function runBatchJob(ctx: WorkerContext): Promise<void> {
     appendLog(logPath, 'Using custom system prompt');
   }
 
-  const autoApprovePermissions = resolveAutoApprovePermissions(config, job, 'batch');
+  const autoApprovePermissions = resolveAutoApprovePermissions(config, job);
   appendLog(
     logPath,
     autoApprovePermissions
@@ -96,7 +86,6 @@ export async function runBatchJob(ctx: WorkerContext): Promise<void> {
   let opencodeSuccess = false;
   try {
     const result = await runSessionOrchestrator({
-      mode: 'batch',
       ctx,
       autoApprovePermissions,
     });

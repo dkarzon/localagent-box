@@ -133,44 +133,6 @@ export async function fetchAgentMessages(
   };
 }
 
-export async function sendAgentMessage(
-  agentId: string,
-  text: string,
-  token: string,
-): Promise<Agent> {
-  const data = await apiFetch<{ agent: Agent }>(
-    `/api/v1/agents/${encodeURIComponent(agentId)}/messages`,
-    {
-      method: 'POST',
-      headers: authHeaders(token, true),
-      body: JSON.stringify({ text }),
-    },
-  );
-  return data.agent;
-}
-
-export async function finishAgent(agentId: string, token: string): Promise<Agent> {
-  const data = await apiFetch<{ agent: Agent }>(
-    `/api/v1/agents/${encodeURIComponent(agentId)}/finish`,
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-    },
-  );
-  return data.agent;
-}
-
-export async function commitOutstandingChanges(agentId: string, token: string): Promise<Agent> {
-  const data = await apiFetch<{ agent: Agent }>(
-    `/api/v1/agents/${encodeURIComponent(agentId)}/commit-outstanding`,
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-    },
-  );
-  return data.agent;
-}
-
 export function buildEventsUrl(agentId: string, since = 0): string {
   const params = new URLSearchParams();
   if (since > 0) {

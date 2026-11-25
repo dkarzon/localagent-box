@@ -13,8 +13,6 @@ import {
 import { isValidHttpUrl } from '../lib/validation';
 import type { ConfigPartial, Route, ServerContext } from '../types';
 import { CodedError } from '../types';
-import { getLoopVerbModelsDefault } from '../services/config-store';
-import { sanitizeLoopVerbModels } from '../lib/loop-verb-models';
 import { sanitizeModelTokenCosts } from '../lib/model-cost';
 
 function assertValidHttpUrl(field: string, value: unknown): void {
@@ -88,14 +86,6 @@ const handlePutConfig = withErrorHandling(async (req, res, ctx) => {
 
   if (partial.openaiCompatibleApiKey === '' && current.openaiCompatibleApiKey) {
     delete partial.openaiCompatibleApiKey;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(body, 'loopVerbModels')) {
-    partial.loopVerbModels = {
-      ...getLoopVerbModelsDefault(),
-      ...current.loopVerbModels,
-      ...sanitizeLoopVerbModels(body.loopVerbModels),
-    };
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'modelTokenCosts')) {

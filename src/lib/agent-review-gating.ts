@@ -3,7 +3,6 @@ import type { Agent, AgentStatus } from '../types';
 const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'queued',
   'running',
-  'awaiting_input',
   'processing',
   'completing',
 ]);

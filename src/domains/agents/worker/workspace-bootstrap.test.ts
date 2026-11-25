@@ -1193,11 +1193,11 @@ describe('runWorkspaceBootstrap', () => {
       assert.equal(h.runCalls.length, 1);
     });
 
-    it('skips bootstrap for unlisted modes (review) but runs for listed modes (loop)', async () => {
+    it('skips bootstrap for unlisted modes (review) but runs for listed modes (batch)', async () => {
       const h = makeHarness();
       writeConfig(h.workspaceDir, JSON.stringify({
         version: 1,
-        setup: { command: 'npm ci', runOnModes: ['loop', 'batch'] },
+        setup: { command: 'npm ci', runOnModes: ['batch'] },
       }));
 
       const reviewState = await runBootstrap(h, {
@@ -1213,8 +1213,8 @@ describe('runWorkspaceBootstrap', () => {
       assert.deepEqual(reviewState, { status: 'skipped' });
       assert.equal(h.runCalls.length, 0);
 
-      const loopState = await runBootstrap(h, {
-        mode: 'loop',
+      const batchState = await runBootstrap(h, {
+        mode: 'batch',
         runCommand: fakeRunCommand(h, {
           command: 'npm ci',
           exitCode: 0,
@@ -1223,7 +1223,7 @@ describe('runWorkspaceBootstrap', () => {
           success: true,
         }),
       });
-      assert.equal(loopState.status, 'completed');
+      assert.equal(batchState.status, 'completed');
     });
   });
 

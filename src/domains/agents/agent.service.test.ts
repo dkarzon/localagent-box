@@ -5,7 +5,6 @@ import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import { createJsonStore } from '../../lib/json-store';
-import { buildLoopState } from '../../lib/loop-state';
 import { getLogger } from '../../lib/logger';
 import {
   CodedError,
@@ -128,7 +127,6 @@ function createTestContext(options?: {
     githubAppId: '123',
     githubAppInstallationId: '456',
     githubAppPrivateKey: 'test-key',
-    loopAutoApprovePermissions: true,
     ollamaBaseUrl: options?.ollamaChat ? 'http://localhost:11434' : undefined,
     opencodeModel: options?.ollamaChat ? 'qwen2.5-coder:7b' : undefined,
   });
@@ -277,56 +275,7 @@ afterEach(() => {
   }
 });
 
-describe('createAgentService (loop mode)', () => {
-  it('creates a loop agent with initial loop state and queues it', () => {
-    const { service } = createTestContext();
-
-    const agent = service.createAgent({
-      repoId: testRepo.repoId,
-      prompt: 'Refactor auth module',
-      mode: 'loop',
-      pushOnFailure: true,
-    });
-
-    assert.equal(agent.mode, 'loop');
-    assert.equal(agent.status, 'queued');
-    assert.equal(agent.pushOnFailure, true);
-    assert.ok(agent.loop);
-    assert.equal(agent.loop!.iteration, 1);
-    assert.equal(agent.loop!.finishRequested, false);
-    assert.equal(agent.loop!.canFinish, false);
-  });
-
-  it('persists loopMaxIterations set on creation and returns it on select', () => {
-    const { service, repository } = createTestContext();
-
-    const agent = service.createAgent({
-      repoId: testRepo.repoId,
-      prompt: 'Refactor auth module',
-      mode: 'loop',
-      loopMaxIterations: 7,
-    });
-
-    assert.equal(agent.loopMaxIterations, 7);
-    assert.equal(agent.loop?.maxIterations, 7);
-    assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, 7);
-    assert.equal(service.getAgent(agent.agentId).loopMaxIterations, 7);
-    assert.equal(service.getAgent(agent.agentId).loop?.maxIterations, 7);
-  });
-
-  it('leaves loopMaxIterations unset so the global/repo default applies', () => {
-    const { service, repository } = createTestContext();
-
-    const agent = service.createAgent({
-      repoId: testRepo.repoId,
-      prompt: 'Refactor auth module',
-      mode: 'loop',
-    });
-
-    assert.equal(agent.loopMaxIterations, undefined);
-    assert.equal(repository.findById(agent.agentId)?.loopMaxIterations, undefined);
-  });
-
+describe('createAgentService', () => {
   it('persists autofix metadata on batch agents', () => {
     const { service, repository } = createTestContext();
 
@@ -357,290 +306,18 @@ describe('createAgentService (loop mode)', () => {
       batchIndex: 0,
     });
   });
-
-  it('returns derived loop fields when fetching an active loop agent', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'loopproc0001';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'loop',
-        status: 'processing',
-        loop: buildLoopState('processing'),
-      }),
-    );
-
-    const agent = service.getAgent(agentId);
-
-    assert.equal(agent.mode, 'loop');
-    assert.ok(agent.loop);
-    assert.equal(agent.loop!.canFinish, true);
-    assert.equal(agent.loop!.finishRequested, false);
-  });
-});
-
-describe('finishAgent', () => {
-  it('sets finishRequested on loop agents without moving to completing', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'loopfinish01';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'loop',
-        status: 'processing',
-        loop: buildLoopState('processing'),
-      }),
-    );
-
-    const updated = service.finishAgent(agentId);
-
-    assert.equal(updated.status, 'processing');
-    assert.ok(updated.loop);
-    assert.equal(updated.loop!.finishRequested, true);
-
-    const inbox = fs
-      .readFileSync(repository.getInboxPath(agentId), 'utf8')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as { type: string });
-    assert.equal(inbox.at(-1)?.type, 'finish');
-  });
-
-  it('moves interactive agents to completing', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'intfinish001';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'interactive',
-        status: 'awaiting_input',
-        opencodeSessionId: 'sess-1',
-        turnCount: 1,
-      }),
-    );
-
-    const updated = service.finishAgent(agentId);
-
-    assert.equal(updated.status, 'completing');
-    assert.equal(updated.mode, 'interactive');
-  });
-
-  it('rejects batch agents with NOT_INTERACTIVE', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'batchfinish1';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'batch',
-        status: 'processing',
-      }),
-    );
-
-    assert.throws(
-      () => service.finishAgent(agentId),
-      (err: unknown) => err instanceof CodedError && err.code === 'NOT_INTERACTIVE',
-    );
-  });
-
-  it('rejects terminal loop agents with NOT_ACTIVE', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'loopdone0001';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'loop',
-        status: 'completed',
-        finishedAt: '2026-06-09T01:00:00.000Z',
-        loop: buildLoopState('completed'),
-      }),
-    );
-
-    assert.throws(
-      () => service.finishAgent(agentId),
-      (err: unknown) => err instanceof CodedError && err.code === 'NOT_ACTIVE',
-    );
-  });
-});
-
-describe('sendMessage', () => {
-  it('rejects loop agents with NOT_INTERACTIVE', () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'loopmsg00001';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'loop',
-        status: 'processing',
-        loop: buildLoopState('processing'),
-      }),
-    );
-
-    assert.throws(
-      () => service.sendMessage(agentId, 'Hello'),
-      (err: unknown) => err instanceof CodedError && err.code === 'NOT_INTERACTIVE',
-    );
-  });
-});
-
-describe('commitOutstandingChanges', () => {
-  it('commits and completes a failed loop session with outstanding changes', async () => {
-    const { service, repository, workspaceRoot } = createTestContext();
-    const agentId = 'loopcommit01';
-    const workspaceId = 'ws-loop-commit';
-    const workspaceDir = repository.getWorkspaceDir(workspaceId);
-    fs.mkdirSync(workspaceDir, { recursive: true });
-    fs.writeFileSync(path.join(workspaceDir, 'README.md'), 'loop changes', 'utf8');
-
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        workspaceId,
-        mode: 'loop',
-        status: 'failed',
-        finishedAt: '2026-06-09T01:00:00.000Z',
-        error: 'Loop reached max iterations (5) without completion signal',
-        loop: buildLoopState('failed', { iteration: 5 }, {
-          status: 'failed',
-          commitSha: null,
-          gitStatus: {
-            filesChanged: 1,
-            files: [{ path: 'README.md', kind: 'modified', statusCode: ' M' }],
-            updatedAt: '2026-06-09T01:00:00.000Z',
-          },
-        }),
-        gitStatus: {
-          filesChanged: 1,
-          files: [{ path: 'README.md', kind: 'modified', statusCode: ' M' }],
-          updatedAt: '2026-06-09T01:00:00.000Z',
-        },
-      }),
-    );
-
-    const updated = await service.commitOutstandingChanges(agentId);
-
-    assert.equal(updated.status, 'completed');
-    assert.equal(updated.commitSha, 'deadbeef1234567890');
-    assert.equal(updated.pushed, true);
-    assert.equal(updated.filesChanged, 1);
-    assert.equal(updated.error, null);
-    assert.ok(updated.result?.warning?.includes('committed manually'));
-    assert.equal(updated.loop?.canCommitOutstanding, false);
-    assert.equal(fs.readFileSync(repository.getLogPath(agentId), 'utf8').includes('Outstanding changes committed'), true);
-    assert.equal(fs.existsSync(workspaceDir), true);
-    assert.equal(workspaceRoot, path.dirname(workspaceDir));
-  });
-
-  it('does not auto-create a pull request when committing outstanding changes', async () => {
-    let createPrCalls = 0;
-    const { service, repository } = createTestContext({
-      onCreatePullRequest: () => {
-        createPrCalls += 1;
-      },
-    });
-    const agentId = 'loopcommit02';
-    const workspaceId = 'ws-loop-commit-2';
-    const workspaceDir = repository.getWorkspaceDir(workspaceId);
-    fs.mkdirSync(workspaceDir, { recursive: true });
-    fs.writeFileSync(path.join(workspaceDir, 'README.md'), 'loop changes', 'utf8');
-
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        workspaceId,
-        mode: 'loop',
-        status: 'failed',
-        autoCreatePullRequest: true,
-        finishedAt: '2026-06-09T01:00:00.000Z',
-        error: 'Loop reached max iterations (5) without completion signal',
-        loop: buildLoopState('failed', { iteration: 5 }, {
-          status: 'failed',
-          commitSha: null,
-          gitStatus: {
-            filesChanged: 1,
-            files: [{ path: 'README.md', kind: 'modified', statusCode: ' M' }],
-            updatedAt: '2026-06-09T01:00:00.000Z',
-          },
-        }),
-        gitStatus: {
-          filesChanged: 1,
-          files: [{ path: 'README.md', kind: 'modified', statusCode: ' M' }],
-          updatedAt: '2026-06-09T01:00:00.000Z',
-        },
-      }),
-    );
-
-    const updated = await service.commitOutstandingChanges(agentId);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    assert.equal(updated.pushed, true);
-    assert.equal(updated.pullRequest, null);
-    assert.equal(createPrCalls, 0);
-  });
-
-  it('rejects non-loop agents', async () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'batchcommit1';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'batch',
-        status: 'failed',
-        finishedAt: '2026-06-09T01:00:00.000Z',
-      }),
-    );
-
-    await assert.rejects(
-      () => service.commitOutstandingChanges(agentId),
-      (err: unknown) => err instanceof CodedError && err.code === 'NOT_LOOP',
-    );
-  });
-
-  it('rejects failed loop sessions without outstanding changes', async () => {
-    const { service, repository } = createTestContext();
-    const agentId = 'loopnocommit1';
-    seedAgent(
-      repository,
-      baseAgentFields({
-        agentId,
-        mode: 'loop',
-        status: 'failed',
-        finishedAt: '2026-06-09T01:00:00.000Z',
-        loop: buildLoopState('failed'),
-        gitStatus: {
-          filesChanged: 0,
-          files: [],
-          updatedAt: '2026-06-09T01:00:00.000Z',
-        },
-      }),
-    );
-
-    await assert.rejects(
-      () => service.commitOutstandingChanges(agentId),
-      (err: unknown) => err instanceof CodedError && err.code === 'NO_CHANGES',
-    );
-  });
 });
 
 describe('cancelAgent', () => {
-  it('cancels an active loop agent without committing', () => {
+  it('cancels an active batch agent without committing', () => {
     const { service, repository } = createTestContext();
-    const agentId = 'loopcancel01';
+    const agentId = 'batchcancel01';
     seedAgent(
       repository,
       baseAgentFields({
         agentId,
-        mode: 'loop',
+        mode: 'batch',
         status: 'processing',
-        loop: buildLoopState('processing'),
       }),
     );
 
@@ -1568,6 +1245,31 @@ describe('createAgentService (shared-branch queue)', () => {
     });
   });
 
+  it('rejects retrying or releasing a legacy record', () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'legacy0000009',
+        mode: 'loop',
+        status: 'failed',
+        agentBranch: 'feature/project',
+        error: 'boom',
+      }),
+    );
+
+    for (const action of [() => ctx.service.retryAgent('legacy0000009'), () => ctx.service.allowSuccessors('legacy0000009')]) {
+      assert.throws(action, (err: unknown) => {
+        assert.ok(err instanceof CodedError);
+        assert.equal(err.code, 'VALIDATION_ERROR');
+        assert.match(String(err.message), /Legacy loop sessions are read-only/);
+        return true;
+      });
+    }
+    assert.equal(ctx.service.getAgent('legacy0000009').status, 'failed');
+    assert.equal(ctx.spawned.length, 0);
+  });
+
   it('starts the next queued session after allowSuccessors on a failed predecessor', () => {
     const ctx = createTestContext();
 
@@ -1672,6 +1374,27 @@ describe('restoreOnStartup', () => {
     assert.match(failed.error || '', /Server restarted/);
     assert.equal(ctx.service.getAgent('queued0000002').status, 'queued');
     assert.equal(hasStartedWorker(ctx, 'queued0000002'), false);
+  });
+
+  it('fails a legacy record that was left in an active status', async () => {
+    const ctx = createTestContext();
+    seedAgent(
+      ctx.repository,
+      baseAgentFields({
+        agentId: 'legacy0000001',
+        mode: 'interactive',
+        status: 'awaiting_input',
+        agentBranch: 'feature/project',
+        createdAt: '2026-08-16T00:00:01.000Z',
+      }),
+    );
+
+    await ctx.service.restoreOnStartup();
+
+    const failed = ctx.service.getAgent('legacy0000001');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error || '', /Legacy interactive session stopped by v1 upgrade/);
+    assert.equal(hasStartedWorker(ctx, 'legacy0000001'), false);
   });
 
   it('starts queued sessions in createdAt order across branches', async () => {

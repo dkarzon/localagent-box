@@ -2,8 +2,6 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { buildInteractiveState } from '../../lib/interactive-state';
-import { buildLoopState } from '../../lib/loop-state';
 import { createWebhookSender } from '../../lib/webhook';
 import {
   buildDefaultPullRequestBody,
@@ -36,7 +34,7 @@ import { formatReviewMarkdown, formatOcrSessionMarkdown } from '../../integratio
 import type { OcrReviewEnvelope } from '../../integrations/open-code-review/types';
 import { checkOutputForComplete } from '../../lib/review-github-check';
 import { CodedError, getErrorMessage } from '../../types';
-import type { Agent, AgentJob, AgentReviewMetadata, AppConfig, Repo, SpawnFn } from '../../types';
+import type { Agent, AgentReviewMetadata, AppConfig, Repo, SpawnFn } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import type { ConfigRepository } from '../config/config.repository';
 import type { RepoService } from '../repos/repo.service';
@@ -54,18 +52,15 @@ import {
 import { createAgentQueue } from './agent-queue';
 import { decideQueueAction, buildAgentQueueState, hasActiveCodingOnBranch } from './queue-eligibility';
 import { createWorkerSpawner } from './worker-spawner';
-import { parseCreateAgentPayload, parseMessageText } from './agent.validation';
+import { parseCreateAgentPayload } from './agent.validation';
 import { appendLog } from './worker/agent-state-writer';
-import { finalizeGitChanges } from './worker/workspace-setup';
 import {
   ACTIVE_STATUSES,
   BATCH_ACTIVE_STATUSES,
   getAgentMode,
-  INTERACTIVE_ACTIVE_STATUSES,
-  LOOP_ACTIVE_STATUSES,
+  isLegacyMode,
   TERMINAL_STATUSES,
-  withInteractiveFields,
-  withLoopFields,
+  withDerivedAgentFields,
 } from './agent.types';
 import type { CreateAgentRequest } from './dto';
 
@@ -73,8 +68,6 @@ export {
   TERMINAL_STATUSES,
   BATCH_ACTIVE_STATUSES,
   ACTIVE_STATUSES,
-  INTERACTIVE_ACTIVE_STATUSES,
-  LOOP_ACTIVE_STATUSES,
 } from './agent.types';
 
 export interface AgentService {
@@ -85,9 +78,6 @@ export interface AgentService {
   readEvents: (agentId: string, sinceSeq?: number) => import('../../types').AgentEvent[];
   getLastEventSeq: (agentId: string) => number;
   readMessages: (agentId: string) => import('../../types').AgentMessage[];
-  sendMessage: (agentId: string, text: unknown) => Agent;
-  finishAgent: (agentId: string) => Agent;
-  commitOutstandingChanges: (agentId: string) => Promise<Agent>;
   cancelAgent: (agentId: string) => Agent;
   retryAgent: (agentId: string) => Agent;
   allowSuccessors: (agentId: string) => { agent: Agent; warning: string | null };
@@ -160,8 +150,6 @@ export function createAgentService(options: {
   workspaceRoot: string;
   maxConcurrent?: unknown;
   agentTimeoutMs?: unknown;
-  interactiveAgentTimeoutFallbackSeconds?: unknown;
-  loopAgentTimeoutFallbackSeconds?: unknown;
   repository?: AgentRepository;
 }): AgentService {
   const fsImpl = options.fs || fs;
@@ -176,32 +164,6 @@ export function createAgentService(options: {
   const workspaceRoot = options.workspaceRoot;
   const maxConcurrent = parsePositiveInt(options.maxConcurrent, 3);
   const agentTimeoutMs = parsePositiveInt(options.agentTimeoutMs, 3600000);
-  const interactiveAgentTimeoutFallbackSeconds = parsePositiveInt(
-    options.interactiveAgentTimeoutFallbackSeconds,
-    3600,
-  );
-  const loopAgentTimeoutFallbackSeconds = parsePositiveInt(
-    options.loopAgentTimeoutFallbackSeconds,
-    3600,
-  );
-
-  function getInteractiveAgentTimeoutMs(): number {
-    const config = configRepository.load();
-    const seconds = parsePositiveInt(
-      config.interactiveAgentTimeoutSeconds || interactiveAgentTimeoutFallbackSeconds,
-      interactiveAgentTimeoutFallbackSeconds,
-    );
-    return seconds * 1000;
-  }
-
-  function getLoopAgentTimeoutMs(): number {
-    const config = configRepository.load();
-    const seconds = parsePositiveInt(
-      config.loopAgentTimeoutSeconds || loopAgentTimeoutFallbackSeconds,
-      loopAgentTimeoutFallbackSeconds,
-    );
-    return seconds * 1000;
-  }
 
   const repository =
     options.repository ||
@@ -359,58 +321,6 @@ export function createAgentService(options: {
       return;
     }
 
-    const mode = getAgentMode(current);
-    const isInteractive = mode === 'interactive';
-    const isLoop = mode === 'loop';
-
-    if (isInteractive && INTERACTIVE_ACTIVE_STATUSES.has(current.status) && code === 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || 'Interactive worker exited unexpectedly',
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
-    if (isInteractive && INTERACTIVE_ACTIVE_STATUSES.has(current.status) && code !== 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || `Worker exited with code ${code}`,
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
-    if (isLoop && LOOP_ACTIVE_STATUSES.has(current.status) && code === 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || 'Loop worker exited unexpectedly',
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
-    if (isLoop && LOOP_ACTIVE_STATUSES.has(current.status) && code !== 0) {
-      repository.update(agentId, {
-        status: 'failed',
-        finishedAt,
-        error: current.error || `Worker exited with code ${code}`,
-      });
-      sendAgentWebhook(agentId, 'agent.failed');
-      void reviewAutofix.handleFixAgentFinished(agentId);
-      queue.process();
-      return;
-    }
-
     if (signal === 'SIGTERM' || signal === 'SIGKILL') {
       if (
         current.status === 'running' ||
@@ -478,8 +388,6 @@ export function createAgentService(options: {
     dataDir,
     workspaceRoot,
     agentTimeoutMs,
-    getInteractiveAgentTimeoutMs,
-    getLoopAgentTimeoutMs,
     fs: fsImpl,
     path: pathImpl,
     spawn: (options.spawn || spawn) as SpawnFn,
@@ -520,7 +428,7 @@ export function createAgentService(options: {
 
   function present(agent: Agent): Agent {
     return {
-      ...withLoopFields(withInteractiveFields(agent)),
+      ...agent,
       queue: buildAgentQueueState(agent, repository.findAll(), (id) => spawner.has(id)),
     };
   }
@@ -606,10 +514,6 @@ export function createAgentService(options: {
         payload.model?.trim() ||
         (mode === 'review' && config.reviewModel?.trim() ? config.reviewModel.trim() : null) ||
         null,
-      ...(payload.loopVerbModels ? { loopVerbModels: payload.loopVerbModels } : {}),
-      ...(payload.loopMaxIterations !== undefined
-        ? { loopMaxIterations: payload.loopMaxIterations }
-        : {}),
       status: 'queued',
       commitSha: null,
       pushed: false,
@@ -622,25 +526,6 @@ export function createAgentService(options: {
       result: null,
       pullRequest: null,
       autoCreatePullRequest: payload.autoCreatePullRequest,
-      ...(payload.mode === 'interactive'
-        ? {
-            opencodeSessionId: null,
-            turnCount: 0,
-            lastActivityAt: null,
-            awaitingInputSince: null,
-            interactive: buildInteractiveState('queued'),
-          }
-        : {}),
-      ...((mode as import('../../types').AgentMode) === 'loop'
-        ? {
-            loop: buildLoopState(
-              'queued',
-              payload.loopMaxIterations !== undefined
-                ? { maxIterations: payload.loopMaxIterations }
-                : undefined,
-            ),
-          }
-        : {}),
       ...(payload.autofix ? { autofix: payload.autofix } : {}),
       ...((mode as import('../../types').AgentMode) === 'review'
         ? {
@@ -657,184 +542,7 @@ export function createAgentService(options: {
     repository.save(agent);
     queue.enqueue(agentId);
 
-    return withLoopFields(withInteractiveFields(agent));
-  }
-
-  function sendMessage(agentId: string, text: unknown): Agent {
-    const agent = repository.getAgent(agentId);
-    repository.assertInteractive(agent);
-
-    if (TERMINAL_STATUSES.has(agent.status)) {
-      throw new CodedError(`Agent is already ${agent.status}`, 'NOT_ACTIVE');
-    }
-
-    if (agent.status !== 'awaiting_input') {
-      throw new CodedError('Agent is not ready for messages', 'NOT_READY');
-    }
-
-    const sanitized = parseMessageText(text);
-    repository.appendInbox(agentId, { type: 'message', text: sanitized, ts: new Date().toISOString() });
-
-    const updated = repository.update(agentId, {
-      status: 'processing',
-      messagesPreview: sanitized.slice(0, 200),
-      lastActivityAt: new Date().toISOString(),
-    });
-    return withInteractiveFields(updated!);
-  }
-
-  function finishAgent(agentId: string): Agent {
-    const agent = repository.getAgent(agentId);
-    repository.assertFinishable(agent);
-
-    if (TERMINAL_STATUSES.has(agent.status)) {
-      throw new CodedError(`Agent is already ${agent.status}`, 'NOT_ACTIVE');
-    }
-
-    if (agent.status === 'completing') {
-      throw new CodedError('Agent is already finishing', 'NOT_READY');
-    }
-
-    repository.appendInbox(agentId, { type: 'finish', ts: new Date().toISOString() });
-
-    const mode = getAgentMode(agent);
-    if (mode === 'loop') {
-      const loop = buildLoopState(agent.status, {
-        ...agent.loop,
-        finishRequested: true,
-      }, agent);
-      const updated = repository.update(agentId, {
-        loop,
-        lastActivityAt: new Date().toISOString(),
-      });
-      return withLoopFields(updated!);
-    }
-
-    const updated = repository.update(agentId, {
-      status: 'completing',
-      lastActivityAt: new Date().toISOString(),
-    });
-    return withInteractiveFields(updated!);
-  }
-
-  async function commitOutstandingChanges(agentId: string): Promise<Agent> {
-    if (!gitService) {
-      throw new CodedError('Git service is not configured', 'NOT_READY');
-    }
-
-    const agent = repository.getAgent(agentId);
-    if (getAgentMode(agent) !== 'loop') {
-      throw new CodedError('Agent is not in loop mode', 'NOT_LOOP');
-    }
-
-    if (agent.status !== 'failed') {
-      throw new CodedError('Outstanding changes can only be committed for failed loop sessions', 'NOT_READY');
-    }
-
-    if (agent.commitSha) {
-      throw new CodedError('Changes have already been committed for this session', 'ALREADY_COMMITTED');
-    }
-
-    if (!agent.loop?.canCommitOutstanding) {
-      throw new CodedError('No outstanding changes to commit', 'NO_CHANGES');
-    }
-
-    const workspaceDir = repository.getWorkspaceDir(agent.workspaceId);
-    if (!fsImpl.existsSync(workspaceDir)) {
-      throw new CodedError('Workspace is no longer available', 'WORKSPACE_MISSING');
-    }
-
-    const config = configRepository.load();
-    githubApp.assertConfigured(config);
-    gitService.applyGitConfig(config);
-
-    const repo = repoManager.getRepo(agent.repoId);
-    const logPath = repository.getLogPath(agentId);
-    appendLog(logPath, 'Committing outstanding loop changes after failed session…');
-
-    const job: AgentJob = {
-      agentId: agent.agentId,
-      workspaceId: agent.workspaceId,
-      repoId: agent.repoId,
-      mode: 'loop',
-      prompt: agent.prompt,
-      systemPrompt: agent.systemPrompt || undefined,
-      baseBranch: agent.baseBranch,
-      agentBranch: agent.agentBranch,
-      useExistingBranch: agent.useExistingBranch,
-      commitMessage: agent.commitMessage,
-      push: agent.push,
-      pushOnFailure: agent.pushOnFailure,
-      autoApprovePermissions: agent.autoApprovePermissions,
-      model: agent.model || undefined,
-      ...(agent.loopVerbModels ? { loopVerbModels: agent.loopVerbModels } : {}),
-      agentTimeoutMs: getLoopAgentTimeoutMs(),
-      dataDir,
-      workspaceRoot,
-      workspaceDir,
-      logPath,
-    };
-
-    const gitResult = await finalizeGitChanges({
-      gitService,
-      githubApp,
-      config,
-      repo,
-      job,
-      logPath,
-      allowCommit: true,
-    });
-
-    if (gitResult.filesChanged === 0) {
-      throw new CodedError('No file changes to commit', 'NO_CHANGES');
-    }
-
-    const finishedAt = new Date().toISOString();
-    const warning = agent.error
-      ? `Loop failed (${agent.error}); changes committed manually`
-      : 'Loop ended without completion signal; changes committed manually';
-
-    const updated = repository.update(agentId, {
-      status: 'completed',
-      finishedAt,
-      branch: agent.agentBranch,
-      commitSha: gitResult.commitSha,
-      pushed: gitResult.pushed,
-      filesChanged: gitResult.filesChanged,
-      error: null,
-      gitStatus: null,
-      result: {
-        branch: agent.agentBranch,
-        baseBranch: agent.baseBranch,
-        workspaceId: agent.workspaceId,
-        commitSha: gitResult.commitSha,
-        pushed: gitResult.pushed,
-        filesChanged: gitResult.filesChanged,
-        warning,
-        opencodeSuccess: true,
-      },
-      loop: buildLoopState('completed', agent.loop, {
-        ...agent,
-        status: 'completed',
-        commitSha: gitResult.commitSha,
-        gitStatus: null,
-      }),
-    });
-
-    if (!updated) {
-      throw new CodedError('Agent not found', 'NOT_FOUND');
-    }
-
-    appendLog(
-      logPath,
-      `Outstanding changes committed — ${gitResult.filesChanged} file(s) changed, pushed=${gitResult.pushed}`,
-    );
-
-    sendAgentWebhook(agentId, 'agent.completed');
-
-    queue.process();
-
-    return withLoopFields(updated);
+    return withDerivedAgentFields(agent);
   }
 
   function cancelAgent(agentId: string): Agent {
@@ -867,6 +575,9 @@ export function createAgentService(options: {
 
   function retryAgent(agentId: string): Agent {
     const agent = repository.getAgent(agentId);
+    if (isLegacyMode(agent)) {
+      throw new CodedError(`Legacy ${getAgentMode(agent)} sessions are read-only`, 'VALIDATION_ERROR');
+    }
     if (agent.status !== 'failed' && agent.status !== 'cancelled') {
       throw new CodedError(`Agent cannot be retried while ${agent.status}`, 'NOT_ACTIVE');
     }
@@ -902,18 +613,6 @@ export function createAgentService(options: {
       gitStatus: null,
       push,
     };
-    if (mode === 'interactive') {
-      Object.assign(patch, {
-        opencodeSessionId: null,
-        turnCount: 0,
-        lastActivityAt: null,
-        awaitingInputSince: null,
-        interactive: buildInteractiveState('queued'),
-      });
-    }
-    if (mode === 'loop') {
-      patch.loop = buildLoopState('queued');
-    }
     if (mode === 'review') {
       // Keep the previous attempt's check id until the fresh run is created,
       // so an orphaned in_progress check stays reconcilable (restoreOnStartup
@@ -954,6 +653,9 @@ export function createAgentService(options: {
 
   function allowSuccessors(agentId: string): { agent: Agent; warning: string | null } {
     const agent = repository.getAgent(agentId);
+    if (isLegacyMode(agent)) {
+      throw new CodedError(`Legacy ${getAgentMode(agent)} sessions are read-only`, 'VALIDATION_ERROR');
+    }
     if (agent.status !== 'failed' && agent.status !== 'cancelled') {
       throw new CodedError(
         `Successors can only be released after a failed or cancelled session`,
@@ -1423,26 +1125,25 @@ export function createAgentService(options: {
     let changed = false;
 
     for (const agent of agents) {
+      if (isLegacyMode(agent)) {
+        // A pre-v1 record cannot run again, so an unfinished one is closed out here
+        // instead of being left to block its branch.
+        if (!TERMINAL_STATUSES.has(agent.status)) {
+          agent.status = 'failed';
+          agent.finishedAt = new Date().toISOString();
+          agent.error = `Legacy ${getAgentMode(agent)} session stopped by v1 upgrade`;
+          changed = true;
+        }
+        continue;
+      }
       if (agent.status === 'queued') {
         continue;
       }
       const mode = getAgentMode(agent);
-      const activeStatuses =
-        mode === 'interactive'
-          ? INTERACTIVE_ACTIVE_STATUSES
-          : mode === 'loop'
-            ? LOOP_ACTIVE_STATUSES
-            : BATCH_ACTIVE_STATUSES;
-      if (activeStatuses.has(agent.status)) {
+      if (BATCH_ACTIVE_STATUSES.has(agent.status)) {
         agent.status = 'failed';
         agent.finishedAt = new Date().toISOString();
         agent.error = 'Server restarted while agent was in progress';
-        if (mode === 'interactive') {
-          agent.interactive = buildInteractiveState('failed');
-        }
-        if (mode === 'loop') {
-          agent.loop = buildLoopState('failed', agent.loop, agent);
-        }
         if (mode === 'review' && agent.review?.githubCheckRunId) {
           // Interrupted review: cancel its in-progress check run (best-effort).
           cancelReviewCheckRun(agent.agentId, agent.review);
@@ -1560,9 +1261,6 @@ export function createAgentService(options: {
     ): Promise<ManualFixBatchResult> => reviewAutofix.createManualFixBatch(reviewAgentId, findingIds),
     resumeAutomaticChain: (reviewAgentId: string): Promise<{ batchIndex: number }> =>
       reviewAutofix.resumeAutomaticChain(reviewAgentId),
-    sendMessage,
-    finishAgent,
-    commitOutstandingChanges,
     cancelAgent,
     retryAgent,
     allowSuccessors,

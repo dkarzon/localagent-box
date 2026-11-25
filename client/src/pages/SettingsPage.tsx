@@ -2,11 +2,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom';
 import { apiFetch, authHeaders } from '../api/client';
 import {
-  mergeLoopVerbModels,
   type AppConfig,
   type GithubStatus,
   type HealthResponse,
-  type LoopVerbModels,
   type LlmProviderId,
   type ModelTokenCosts,
   type StatusVariant,
@@ -56,16 +54,6 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
   const [autoReviewPullRequests, setAutoReviewPullRequests] = useState(false);
   const [ocrSkipWorkspaceBootstrap, setOcrSkipWorkspaceBootstrap] = useState(false);
   const [batchAutoApprovePermissions, setBatchAutoApprovePermissions] = useState(true);
-  const [loopAutoApprovePermissions, setLoopAutoApprovePermissions] = useState(true);
-  const [interactiveAutoApprovePermissions, setInteractiveAutoApprovePermissions] = useState(false);
-  const [interactiveAgentTimeoutSeconds, setInteractiveAgentTimeoutSeconds] = useState(3600);
-  const [loopAgentTimeoutSeconds, setLoopAgentTimeoutSeconds] = useState(3600);
-  const [loopVerbModels, setLoopVerbModels] = useState<LoopVerbModels>({
-    INITIAL_PLAN: '',
-    ORIENT: '',
-    ACT: '',
-    REFLECT: '',
-  });
   const [modelTokenCosts, setModelTokenCosts] = useState<ModelTokenCosts>({});
 
   const [githubStatus, setGithubStatus] = useState('');
@@ -97,11 +85,6 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
     setAutoReviewPullRequests(next.autoReviewPullRequests === true);
     setOcrSkipWorkspaceBootstrap(next.ocrSkipWorkspaceBootstrap === true);
     setBatchAutoApprovePermissions(next.batchAutoApprovePermissions !== false);
-    setLoopAutoApprovePermissions(next.loopAutoApprovePermissions !== false);
-    setInteractiveAutoApprovePermissions(next.interactiveAutoApprovePermissions === true);
-    setInteractiveAgentTimeoutSeconds(next.interactiveAgentTimeoutSeconds ?? 3600);
-    setLoopAgentTimeoutSeconds(next.loopAgentTimeoutSeconds ?? 3600);
-    setLoopVerbModels(mergeLoopVerbModels(next.loopVerbModels));
     setModelTokenCosts(next.modelTokenCosts ?? {});
   }, []);
 
@@ -183,11 +166,6 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
           opencodeModel: opencodeModel.trim(),
           systemPrompt: systemPrompt.trim(),
           batchAutoApprovePermissions,
-          loopAutoApprovePermissions,
-          interactiveAutoApprovePermissions,
-          interactiveAgentTimeoutSeconds,
-          loopAgentTimeoutSeconds,
-          loopVerbModels,
         };
       case 'ocr':
         return {
@@ -339,16 +317,6 @@ export function SettingsPage({ searchQuery = '' }: SettingsPageProps) {
             setSystemPrompt={setSystemPrompt}
             batchAutoApprovePermissions={batchAutoApprovePermissions}
             setBatchAutoApprovePermissions={setBatchAutoApprovePermissions}
-            loopAutoApprovePermissions={loopAutoApprovePermissions}
-            setLoopAutoApprovePermissions={setLoopAutoApprovePermissions}
-            interactiveAutoApprovePermissions={interactiveAutoApprovePermissions}
-            setInteractiveAutoApprovePermissions={setInteractiveAutoApprovePermissions}
-            interactiveAgentTimeoutSeconds={interactiveAgentTimeoutSeconds}
-            setInteractiveAgentTimeoutSeconds={setInteractiveAgentTimeoutSeconds}
-            loopAgentTimeoutSeconds={loopAgentTimeoutSeconds}
-            setLoopAgentTimeoutSeconds={setLoopAgentTimeoutSeconds}
-            loopVerbModels={loopVerbModels}
-            setLoopVerbModels={setLoopVerbModels}
             searchQuery={searchQuery}
           />
         ) : null}

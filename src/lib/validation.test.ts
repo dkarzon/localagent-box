@@ -9,15 +9,35 @@ describe('validateAgentMode', () => {
     assert.equal(validateAgentMode(''), 'batch');
   });
 
-  it('accepts batch, interactive, loop, and review', () => {
+  it('accepts batch and review', () => {
     assert.equal(validateAgentMode('batch'), 'batch');
-    assert.equal(validateAgentMode('interactive'), 'interactive');
-    assert.equal(validateAgentMode('loop'), 'loop');
     assert.equal(validateAgentMode('review'), 'review');
   });
 
+  it('rejects modes removed in v1', () => {
+    for (const mode of ['interactive', 'loop']) {
+      assert.throws(
+        () => validateAgentMode(mode),
+        (err: unknown) => {
+          assert.ok(err instanceof CodedError);
+          assert.equal(err.code, 'VALIDATION_ERROR');
+          assert.match(
+            String(err.message),
+            new RegExp(
+              `mode "${mode}" was removed in v1; use "batch" \\(follow-ups are new batch runs on the same branch\\) or "review"`,
+            ),
+          );
+          return true;
+        },
+      );
+    }
+  });
+
   it('rejects invalid mode', () => {
-    assert.throws(() => validateAgentMode('invalid'));
+    assert.throws(
+      () => validateAgentMode('invalid'),
+      /mode must be "batch" or "review"/,
+    );
   });
 });
 

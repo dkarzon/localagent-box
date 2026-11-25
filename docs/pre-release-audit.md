@@ -224,7 +224,7 @@ Worth calling out so the public narrative stays balanced:
 - **Factory-based DI:** Services are testable with injected `fs`/`spawn`.
 - **Test coverage:** Meaningful unit tests for agent flows, loop config, PR generation, OpenCode config (14 server test files).
 - **Docker basics:** Multi-stage build, non-root user, volume-backed data.
-- **README API reference:** Thorough curl examples for batch/interactive/loop modes.
+- **README API reference:** Thorough curl examples for the batch and review modes (written when the interactive and loop modes still existed; both were removed in v1).
 - **Production token guard:** Exists when `NODE_ENV=production` (needs Docker alignment).
 - **Graceful shutdown:** Implemented in `server.ts` (SIGTERM/SIGINT).
 - **License:** Root `LICENSE` (MIT) present and aligned with `package.json`.

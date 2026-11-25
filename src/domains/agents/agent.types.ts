@@ -1,46 +1,21 @@
-import { buildInteractiveState, INTERACTIVE_ACTIVE_STATUSES } from '../../lib/interactive-state';
-import { buildLoopState, LOOP_ACTIVE_STATUSES } from '../../lib/loop-state';
-import type { Agent, AgentMode, AgentStatus } from '../../types';
-
-export { INTERACTIVE_ACTIVE_STATUSES, LOOP_ACTIVE_STATUSES };
+import type { Agent, AgentMode, AgentStatus, LegacyAgentMode } from '../../types';
 
 export const TERMINAL_STATUSES = new Set<AgentStatus>(['completed', 'failed', 'cancelled']);
 export const BATCH_ACTIVE_STATUSES = new Set<AgentStatus>(['queued', 'running', 'processing', 'completing']);
-export const ACTIVE_STATUSES = new Set<AgentStatus>([
-  ...BATCH_ACTIVE_STATUSES,
-  'awaiting_input',
-  'processing',
-  'completing',
-]);
+// `awaiting_input` is legacy only: pre-v1 interactive records may still hold it, but no
+// current run can set it, so it is not an active status.
+export const ACTIVE_STATUSES = new Set<AgentStatus>([...BATCH_ACTIVE_STATUSES]);
 
-export function getAgentMode(agent: Pick<Agent, 'mode'>): AgentMode {
+export function getAgentMode(agent: Pick<Agent, 'mode'>): AgentMode | LegacyAgentMode {
   return agent.mode || 'batch';
 }
 
-export function withInteractiveFields(agent: Agent): Agent {
-  if (getAgentMode(agent) !== 'interactive') {
-    return agent;
-  }
-  return {
-    ...agent,
-    mode: 'interactive',
-    interactive: buildInteractiveState(agent.status),
-  };
-}
-
-export function withLoopFields(agent: Agent): Agent {
-  if (getAgentMode(agent) !== 'loop') {
-    return agent;
-  }
-  const loopOverrides =
-    agent.loopMaxIterations !== undefined ? { maxIterations: agent.loopMaxIterations } : {};
-  return {
-    ...agent,
-    mode: 'loop',
-    loop: buildLoopState(agent.status, { ...agent.loop, ...loopOverrides }, agent),
-  };
+/** Records created under a mode removed in v1; they are displayed but never run again. */
+export function isLegacyMode(agent: Pick<Agent, 'mode'>): boolean {
+  const mode = getAgentMode(agent);
+  return mode === 'interactive' || mode === 'loop';
 }
 
 export function withDerivedAgentFields(agent: Agent): Agent {
-  return withLoopFields(withInteractiveFields({ ...agent, gitStatus: agent.gitStatus ?? undefined }));
+  return { ...agent, gitStatus: agent.gitStatus ?? undefined };
 }

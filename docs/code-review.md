@@ -136,7 +136,7 @@ Eligible findings are sorted by severity (OCR order within a severity), split in
 
 1. The review creates the first batch agent when it completes.
 2. A successful push marks the batch's findings fixed, resolves their GitHub threads (host-side), and creates the next batch.
-3. A failure, cancellation, or finish without a push pauses the chain and leaves the failed batch's findings manually fixable.
+3. A failure, cancellation, or a run that ends without a push pauses the chain and leaves the failed batch's findings manually fixable.
 4. **Resume Remaining Batches** (UI or API) skips the failed batch and creates the next pending one.
 5. After the last successful batch, exactly one autofix-ineligible verification review is created. Verification reviews can never start another chain; their findings still allow individual Manual Fix.
 
@@ -207,7 +207,7 @@ Check-run creation/update errors are non-fatal: the review still runs and posts 
 | OCR succeeds, GitHub post fails | `completed` | `result.warning` describes the GitHub error |
 | OCR succeeds, no matching PR | `completed` | Results stored; log notes skipped GitHub post |
 
-Review agents do not support follow-up messages or **Finish** — they are single-shot.
+Review runs are single-shot: no follow-up messages.
 
 ## Environment variables
 

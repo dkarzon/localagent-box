@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type {
   AgentMode,
+  LegacyAgentMode,
   RepoEnvironmentConfig,
   RepoEnvironmentSetupConfig,
 } from '../../../types';
@@ -12,6 +13,16 @@ export const environmentConfigRelative = path.join(
 );
 
 const MAX_SETUP_TIMEOUT_MS = 1_800_000; // 30 min
+
+/** Modes a setup command can still run on; the removed ones are skipped with a note. */
+const VALID_MODES = ['batch', 'review'] as const satisfies readonly AgentMode[];
+const LEGACY_MODES: readonly LegacyAgentMode[] = ['interactive', 'loop'];
+
+export interface EnvironmentConfigResult {
+  config: RepoEnvironmentConfig;
+  /** Human-readable notes for the worker log. */
+  notes: string[];
+}
 
 function readJsonFile(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, 'utf8');
@@ -25,7 +36,7 @@ function assertObject(raw: unknown, location: string): Record<string, unknown> {
   return raw as Record<string, unknown>;
 }
 
-export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
+export function validateEnvironmentConfig(raw: unknown): EnvironmentConfigResult {
   const obj = assertObject(raw, environmentConfigRelative);
 
   if (obj.version !== 1) {
@@ -33,10 +44,10 @@ export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
   }
 
   const config: RepoEnvironmentConfig = { version: 1 };
+  const notes: string[] = [];
 
   if (obj.setup !== undefined) {
-    const setup = validateSetup(obj.setup);
-    config.setup = setup;
+    config.setup = validateSetup(obj.setup, notes);
   }
 
   if (obj.profiles !== undefined) {
@@ -82,7 +93,7 @@ export function validateEnvironmentConfig(raw: unknown): RepoEnvironmentConfig {
     config.verifyTimeoutMs = verifyTimeoutMs;
   }
 
-  return config;
+  return { config, notes };
 }
 
 function validateProfiles(raw: unknown): string[] {
@@ -98,7 +109,7 @@ function validateProfiles(raw: unknown): string[] {
   });
 }
 
-function validateSetup(raw: unknown): RepoEnvironmentSetupConfig {
+function validateSetup(raw: unknown, notes: string[]): RepoEnvironmentSetupConfig {
   const location = `${environmentConfigRelative} setup`;
   const setup = assertObject(raw, location);
 
@@ -130,13 +141,12 @@ function validateSetup(raw: unknown): RepoEnvironmentSetupConfig {
   }
 
   if (setup.runOnModes !== undefined) {
-    setupConfig.runOnModes = validateRunOnModes(setup.runOnModes);
+    setupConfig.runOnModes = validateRunOnModes(setup.runOnModes, notes);
   }
 
   return setupConfig;
 }
 
-const VALID_MODES = ['batch', 'interactive', 'loop', 'review'] as const satisfies readonly AgentMode[];
 // Errors at compile time if VALID_MODES and AgentMode drift apart (missing modes).
 export const _agentModeExhaustive: Exclude<AgentMode, (typeof VALID_MODES)[number]> extends never
   ? true
@@ -150,21 +160,28 @@ function assertValidMode(value: unknown, index: number): asserts value is AgentM
   }
 }
 
-function validateRunOnModes(raw: unknown): AgentMode[] {
+function validateRunOnModes(raw: unknown, notes: string[]): AgentMode[] {
   const location = `${environmentConfigRelative} setup runOnModes`;
   if (!Array.isArray(raw)) {
     throw new Error(`${location} must be an array of agent modes when provided`);
   }
-  return raw.map((entry, index) => {
+  const modes: AgentMode[] = [];
+  for (const [index, entry] of raw.entries()) {
+    if (LEGACY_MODES.includes(entry as LegacyAgentMode)) {
+      // A removed mode cannot run, so it is dropped instead of failing the config.
+      notes.push(`${environmentConfigRelative} setup runOnModes[${index}]: ignored removed mode ${entry}`);
+      continue;
+    }
     assertValidMode(entry, index);
-    return entry as AgentMode;
-  });
+    modes.push(entry);
+  }
+  return modes;
 }
 
 export function loadEnvironmentConfig(
   workspaceDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync'> = fs,
-): RepoEnvironmentConfig | null {
+): EnvironmentConfigResult | null {
   const repoPath = path.join(workspaceDir, environmentConfigRelative);
   if (!fsImpl.existsSync(repoPath)) {
     return null;

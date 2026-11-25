@@ -50,63 +50,63 @@ function reasoningDeltaEvent(partId: string, delta: string): OpenCodeServerEvent
   };
 }
 
-const first = mapper.map(deltaEvent('prt_1', 'Hel'), 'sess', 'batch');
+const first = mapper.map(deltaEvent('prt_1', 'Hel'), 'sess');
 assert.equal(first.event?.type, 'assistant.delta');
 assert.equal(first.event?.payload.text, 'Hel');
 assert.equal(mapper.getTextSnapshot('prt_1'), 'Hel');
 
-const second = mapper.map(deltaEvent('prt_1', 'lo'), 'sess', 'batch');
+const second = mapper.map(deltaEvent('prt_1', 'lo'), 'sess');
 assert.equal(second.event?.payload.text, 'lo');
 assert.equal(mapper.getTextSnapshot('prt_1'), 'Hello');
 
-const reasoning = mapper.map(reasoningDeltaEvent('prt_4', 'Think'), 'sess', 'batch');
+const reasoning = mapper.map(reasoningDeltaEvent('prt_4', 'Think'), 'sess');
 assert.equal(reasoning.event?.payload.text, 'Think');
 assert.equal(reasoning.event?.payload.field, 'reasoning');
 assert.equal(reasoning.debug?.source, 'reasoning-delta');
 assert.equal(mapper.getTextSnapshot('prt_4', 'reasoning'), 'Think');
 
 mapper.reset();
-const backfillOnly = mapper.map(updatedEvent('prt_2', 'Hi there'), 'sess', 'batch');
+const backfillOnly = mapper.map(updatedEvent('prt_2', 'Hi there'), 'sess');
 assert.equal(backfillOnly.event?.payload.text, 'Hi there');
 assert.equal(backfillOnly.debug?.source, 'updated-backfill');
 
-const backfillPartial = mapper.map(updatedEvent('prt_2', 'Hi there!'), 'sess', 'batch');
+const backfillPartial = mapper.map(updatedEvent('prt_2', 'Hi there!'), 'sess');
 assert.equal(backfillPartial.event?.payload.text, '!');
 assert.equal(backfillPartial.debug?.source, 'updated-backfill');
 assert.equal(mapper.getTextSnapshot('prt_2'), 'Hi there!');
 
 mapper.reset();
-const deltaThenSnapshot = mapper.map(deltaEvent('prt_3', 'One'), 'sess', 'batch');
+const deltaThenSnapshot = mapper.map(deltaEvent('prt_3', 'One'), 'sess');
 assert.equal(deltaThenSnapshot.event?.payload.text, 'One');
-const snapshotSkip = mapper.map(updatedEvent('prt_3', 'One'), 'sess', 'batch');
+const snapshotSkip = mapper.map(updatedEvent('prt_3', 'One'), 'sess');
 assert.equal(snapshotSkip.event, null);
 assert.equal(snapshotSkip.debug?.source, 'updated-skip');
 
 mapper.reset();
-const resetSnapshot = mapper.map(updatedEvent('prt_5', 'Hello'), 'sess', 'batch');
+const resetSnapshot = mapper.map(updatedEvent('prt_5', 'Hello'), 'sess');
 assert.equal(resetSnapshot.event?.payload.text, 'Hello');
-const resetReplace = mapper.map(updatedEvent('prt_5', 'Goodbye'), 'sess', 'batch');
+const resetReplace = mapper.map(updatedEvent('prt_5', 'Goodbye'), 'sess');
 assert.equal(resetReplace.event?.payload.text, 'Goodbye');
 assert.equal(resetReplace.event?.payload.replace, true);
 assert.equal(resetReplace.debug?.source, 'updated-reset');
 
 // OpenCode emits part.updated then part.delta for the same chunk — must not double-write.
 mapper.reset();
-const updatedFirst = mapper.map(updatedEvent('prt_dup', 'Hel'), 'sess', 'batch');
+const updatedFirst = mapper.map(updatedEvent('prt_dup', 'Hel'), 'sess');
 assert.equal(updatedFirst.event?.payload.text, 'Hel');
-const duplicateDelta = mapper.map(deltaEvent('prt_dup', 'Hel'), 'sess', 'batch');
+const duplicateDelta = mapper.map(deltaEvent('prt_dup', 'Hel'), 'sess');
 assert.equal(duplicateDelta.event, null, 'delta matching prior updated gap must be skipped');
 assert.equal(mapper.getTextSnapshot('prt_dup'), 'Hel');
-const afterDup = mapper.map(deltaEvent('prt_dup', 'lo'), 'sess', 'batch');
+const afterDup = mapper.map(deltaEvent('prt_dup', 'lo'), 'sess');
 assert.equal(afterDup.event?.payload.text, 'lo');
 assert.equal(mapper.getTextSnapshot('prt_dup'), 'Hello');
 
 // Interleaved updated+delta per chunk must still assemble once.
 mapper.reset();
-assert.equal(mapper.map(updatedEvent('prt_pair', 'A'), 'sess', 'batch').event?.payload.text, 'A');
-assert.equal(mapper.map(deltaEvent('prt_pair', 'A'), 'sess', 'batch').event, null);
-assert.equal(mapper.map(updatedEvent('prt_pair', 'AB'), 'sess', 'batch').event?.payload.text, 'B');
-assert.equal(mapper.map(deltaEvent('prt_pair', 'B'), 'sess', 'batch').event, null);
+assert.equal(mapper.map(updatedEvent('prt_pair', 'A'), 'sess').event?.payload.text, 'A');
+assert.equal(mapper.map(deltaEvent('prt_pair', 'A'), 'sess').event, null);
+assert.equal(mapper.map(updatedEvent('prt_pair', 'AB'), 'sess').event?.payload.text, 'B');
+assert.equal(mapper.map(deltaEvent('prt_pair', 'B'), 'sess').event, null);
 assert.equal(mapper.getTextSnapshot('prt_pair'), 'AB');
 
 function messageUpdated(
@@ -124,13 +124,13 @@ function messageUpdated(
   };
 }
 
-const midUpdate = mapper.map(messageUpdated('assistant'), 'sess', 'interactive');
+const midUpdate = mapper.map(messageUpdated('assistant'), 'sess');
 assert.equal(midUpdate.event, null, 'incomplete message.updated must not finalize');
 
-const userUpdate = mapper.map(messageUpdated('user', 2), 'sess', 'interactive');
+const userUpdate = mapper.map(messageUpdated('user', 2), 'sess');
 assert.equal(userUpdate.event, null, 'user message.updated must be ignored');
 
-const completedUpdate = mapper.map(messageUpdated('assistant', 2), 'sess', 'interactive');
+const completedUpdate = mapper.map(messageUpdated('assistant', 2), 'sess');
 assert.equal(completedUpdate.event?.type, 'assistant.message');
 
 console.log('verify-event-mapper: ok');

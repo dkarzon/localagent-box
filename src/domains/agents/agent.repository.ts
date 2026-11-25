@@ -3,7 +3,7 @@ import path from 'path';
 import type { Agent, AgentEvent, AgentMessage, ReviewAutofixPlan, ReviewFindingRecord } from '../../types';
 import type { JsonStore } from '../../lib/json-store';
 import { CodedError } from '../../types';
-import { getAgentMode, withDerivedAgentFields } from './agent.types';
+import { withDerivedAgentFields } from './agent.types';
 
 type FsLike = Pick<
   typeof import('fs'),
@@ -11,7 +11,6 @@ type FsLike = Pick<
   | 'existsSync'
   | 'writeFileSync'
   | 'readFileSync'
-  | 'appendFileSync'
   | 'rmSync'
   | 'renameSync'
   | 'unlinkSync'
@@ -28,7 +27,6 @@ export interface AgentRepository {
   list: (filters?: { repoId?: string; status?: string }) => Agent[];
   getAgentDir: (agentId: string) => string;
   getLogPath: (agentId: string) => string;
-  getInboxPath: (agentId: string) => string;
   getEventsPath: (agentId: string) => string;
   getConversationPath: (agentId: string) => string;
   getReviewResultPath: (agentId: string) => string;
@@ -42,14 +40,11 @@ export interface AgentRepository {
   readReviewAutofixPlan: (agentId: string) => ReviewAutofixPlan | null;
   writeReviewAutofixPlan: (agentId: string, plan: ReviewAutofixPlan) => void;
   getWorkspaceDir: (workspaceId: string) => string;
-  appendInbox: (agentId: string, entry: Record<string, unknown>) => void;
   readLogs: (agentId: string, tailLines?: number) => { logs: string; tail: number };
   readEvents: (agentId: string, sinceSeq?: number) => AgentEvent[];
   getLastEventSeq: (agentId: string) => number;
   readMessages: (agentId: string) => AgentMessage[];
   removeArtifacts: (agent: Agent) => void;
-  assertInteractive: (agent: Agent) => void;
-  assertFinishable: (agent: Agent) => void;
 }
 
 export function createAgentRepository(options: {
@@ -77,10 +72,6 @@ export function createAgentRepository(options: {
 
   function getLogPath(agentId: string): string {
     return pathImpl.join(getAgentDir(agentId), 'worker.log');
-  }
-
-  function getInboxPath(agentId: string): string {
-    return pathImpl.join(getAgentDir(agentId), 'inbox.jsonl');
   }
 
   function getEventsPath(agentId: string): string {
@@ -214,19 +205,6 @@ export function createAgentRepository(options: {
     return withDerivedAgentFields(agent);
   }
 
-  function assertInteractive(agent: Agent): void {
-    if (getAgentMode(agent) !== 'interactive') {
-      throw new CodedError('Agent is not in interactive mode', 'NOT_INTERACTIVE');
-    }
-  }
-
-  function assertFinishable(agent: Agent): void {
-    const mode = getAgentMode(agent);
-    if (mode !== 'interactive' && mode !== 'loop') {
-      throw new CodedError('Agent is not in interactive or loop mode', 'NOT_INTERACTIVE');
-    }
-  }
-
   return {
     findAll: loadAgents,
     findById,
@@ -260,7 +238,6 @@ export function createAgentRepository(options: {
     },
     getAgentDir,
     getLogPath,
-    getInboxPath,
     getEventsPath,
     getConversationPath,
     getReviewResultPath,
@@ -274,9 +251,6 @@ export function createAgentRepository(options: {
     readReviewAutofixPlan,
     writeReviewAutofixPlan,
     getWorkspaceDir,
-    appendInbox: (agentId, entry) => {
-      fsImpl.appendFileSync(getInboxPath(agentId), `${JSON.stringify(entry)}\n`, 'utf8');
-    },
     readLogs: (agentId, tailLines) => {
       getAgent(agentId);
       const logPath = getLogPath(agentId);
@@ -345,7 +319,5 @@ export function createAgentRepository(options: {
         fsImpl.rmSync(agentDir, { recursive: true, force: true });
       }
     },
-    assertInteractive,
-    assertFinishable,
   };
 }

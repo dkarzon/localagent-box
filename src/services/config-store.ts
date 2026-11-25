@@ -1,8 +1,27 @@
-import type { AppConfig, ConfigPartial, LoopVerbModels, PublicConfig } from '../types';
-import { loadServerDefaultLoopConfig } from '../domains/agents/worker/loop-config';
-import { normalizeLoopVerbModels } from '../lib/loop-verb-models';
+import type { AppConfig, ConfigPartial, PublicConfig } from '../types';
+import { getLogger } from '../lib/logger';
 import { sanitizeModelTokenCosts } from '../lib/model-cost';
 import { resolveOpenCodeProvider } from '../lib/llm-provider';
+
+/**
+ * Keys from modes removed in v1. They are no longer part of `AppConfig`, so a
+ * pre-v1 `config.json` that still lists them is dropped with a warning rather
+ * than being kept in memory and written back.
+ */
+export const LEGACY_CONFIG_KEYS = [
+  'interactiveAutoApprovePermissions',
+  'interactiveAgentTimeoutSeconds',
+  'loopAutoApprovePermissions',
+  'loopAgentTimeoutSeconds',
+  'loopVerbModels',
+  'loopDefaultMaxIterations',
+] as const;
+
+/**
+ * Keys `AppConfig` declares but `DEFAULT_CONFIG` does not default; a `config.json`
+ * may still set them, so they are not unknown.
+ */
+const OPTIONAL_CONFIG_KEYS = ['enabledRuntimeProfiles', 'bootstrapAutoDetect', 'globalSetupTimeoutMs'] as const;
 
 export const DEFAULT_CONFIG: AppConfig = {
   ollamaBaseUrl: '',
@@ -21,31 +40,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   gitUserEmail: '',
   webhookUrl: '',
   batchAutoApprovePermissions: true,
-  loopAutoApprovePermissions: true,
-  interactiveAutoApprovePermissions: false,
   autoCreatePullRequest: true,
   autoReviewPullRequests: false,
   reviewModel: '',
   ocrSkipWorkspaceBootstrap: false,
-  interactiveAgentTimeoutSeconds: 3600,
-  loopAgentTimeoutSeconds: 3600,
-  loopVerbModels: {
-    INITIAL_PLAN: '',
-    ORIENT: '',
-    ACT: '',
-    REFLECT: '',
-  },
   modelTokenCosts: {},
 };
-
-export function getLoopVerbModelsDefault(): LoopVerbModels {
-  return {
-    INITIAL_PLAN: '',
-    ORIENT: '',
-    ACT: '',
-    REFLECT: '',
-  };
-}
 
 export interface ConfigStore {
   loadConfig: () => AppConfig;
@@ -58,20 +58,36 @@ type FsLike = Pick<
   'readFileSync' | 'writeFileSync' | 'existsSync' | 'mkdirSync'
 >;
 
-export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
+type WarnLogger = { warn(obj: Record<string, unknown>, message: string): void };
+
+export function createConfigStore(
+  dataDir: string,
+  fs: FsLike,
+  logger: WarnLogger = getLogger(),
+): ConfigStore {
   const configPath = `${dataDir}/config.json`;
 
   function loadRaw(): AppConfig {
     try {
-      const raw = fs.readFileSync(configPath, 'utf8');
-      const parsed = { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as AppConfig;
-      // Migrate configs persisted before OBSERVE/PLAN were merged into ORIENT.
-      parsed.loopVerbModels = {
-        ...getLoopVerbModelsDefault(),
-        ...normalizeLoopVerbModels(parsed.loopVerbModels),
-      };
-      parsed.modelTokenCosts = sanitizeModelTokenCosts(parsed.modelTokenCosts);
-      return parsed;
+      const rawParsed: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      // A top-level JSON `null` (or any other non-object) must still fall back to
+      // defaults, as the previous spread-based load did — `Object.keys(null)` throws.
+      const parsed: Record<string, unknown> =
+        rawParsed !== null && typeof rawParsed === 'object'
+          ? (rawParsed as Record<string, unknown>)
+          : {};
+      const knownKeys = new Set<string>([...Object.keys(DEFAULT_CONFIG), ...OPTIONAL_CONFIG_KEYS]);
+      const unknownKeys = Object.keys(parsed).filter((key) => !knownKeys.has(key));
+      if (unknownKeys.length > 0) {
+        logger.warn({ keys: unknownKeys }, 'ignoring unknown config keys');
+      }
+
+      const config = {
+        ...DEFAULT_CONFIG,
+        ...Object.fromEntries(Object.entries(parsed).filter(([key]) => knownKeys.has(key))),
+      } as AppConfig;
+      config.modelTokenCosts = sanitizeModelTokenCosts(config.modelTokenCosts);
+      return config;
     } catch (err) {
       if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT') {
         return { ...DEFAULT_CONFIG };
@@ -122,17 +138,11 @@ export function createConfigStore(dataDir: string, fs: FsLike): ConfigStore {
       gitUserEmail: config.gitUserEmail,
       webhookUrl: config.webhookUrl,
       batchAutoApprovePermissions: config.batchAutoApprovePermissions !== false,
-      loopAutoApprovePermissions: config.loopAutoApprovePermissions !== false,
-      interactiveAutoApprovePermissions: config.interactiveAutoApprovePermissions === true,
-      interactiveAgentTimeoutSeconds: config.interactiveAgentTimeoutSeconds || 3600,
-      loopAgentTimeoutSeconds: config.loopAgentTimeoutSeconds || 3600,
       autoCreatePullRequest: config.autoCreatePullRequest !== false,
       autoReviewPullRequests: config.autoReviewPullRequests === true,
       reviewModel: config.reviewModel || '',
       ocrSkipWorkspaceBootstrap: config.ocrSkipWorkspaceBootstrap === true,
-      loopVerbModels: config.loopVerbModels,
       modelTokenCosts: config.modelTokenCosts ?? {},
-      loopDefaultMaxIterations: loadServerDefaultLoopConfig().maxIterations,
     };
   }
 

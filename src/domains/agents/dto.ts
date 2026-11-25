@@ -1,4 +1,4 @@
-import type { AgentMode } from '../../types';
+import type { AgentMode, LegacyAgentMode } from '../../types';
 
 export interface CreateAgentRequest {
   repoId: unknown;
@@ -11,8 +11,6 @@ export interface CreateAgentRequest {
   push?: unknown;
   pushOnFailure?: unknown;
   model?: unknown;
-  loopVerbModels?: unknown;
-  loopMaxIterations?: unknown;
   mode?: unknown;
   sessionId?: unknown;
   // Review-specific fields (mode: 'review')
@@ -25,15 +23,12 @@ export interface CreateAgentResponse {
   agentId: string;
   workspaceId: string;
   repoId: string;
-  mode: AgentMode;
+  /** A legacy record keeps its removed mode */
+  mode: AgentMode | LegacyAgentMode;
   status: string;
   createdAt: string;
   baseBranch: string;
   agentBranch: string;
-}
-
-export interface SendMessageRequest {
-  text: unknown;
 }
 
 export interface CreatePullRequestRequest {
@@ -50,7 +45,7 @@ export function toCreateAgentResponse(agent: {
   agentId: string;
   workspaceId: string;
   repoId: string;
-  mode?: AgentMode;
+  mode?: AgentMode | LegacyAgentMode;
   status: string;
   createdAt: string;
   baseBranch: string;

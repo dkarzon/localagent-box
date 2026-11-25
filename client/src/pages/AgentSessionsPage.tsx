@@ -3,21 +3,14 @@ import { deleteAgentSession } from '../api/agents';
 import { apiFetch, authHeaders } from '../api/client';
 import {
   getAgentMode,
-  hasNonEmptyLoopVerbModel,
-  hasResolvableLoopModel,
   isAgentActive,
   LLM_PROVIDER_LABELS,
-  LOOP_VERB_LABELS,
-  LOOP_VERB_MODELS_DEFAULT,
-  LOOP_VERBS,
-  mergeLoopVerbModels,
   queueOnBranchPrefill,
   type Agent,
   type AgentMode,
   type AgentsListResponse,
   type AppConfig,
   type HealthResponse,
-  type LoopVerbModels,
   type LlmProviderId,
   type QueueOnBranchPrefill,
   type Repo,
@@ -95,15 +88,6 @@ export function AgentSessionsPage({
   const [autoApproveExplicit, setAutoApproveExplicit] = useState(false);
   const [autoApprovePermissions, setAutoApprovePermissions] = useState(true);
   const [batchAutoApproveDefault, setBatchAutoApproveDefault] = useState(true);
-  const [loopAutoApproveDefault, setLoopAutoApproveDefault] = useState(true);
-  const [interactiveAutoApproveDefault, setInteractiveAutoApproveDefault] = useState(false);
-  const [settingsLoopVerbModels, setSettingsLoopVerbModels] =
-    useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
-  const [loopRunVerbModels, setLoopRunVerbModels] =
-    useState<LoopVerbModels>(LOOP_VERB_MODELS_DEFAULT);
-  const [loopMaxIterationsOverride, setLoopMaxIterationsOverride] = useState('');
-  const [loopDefaultMaxIterations, setLoopDefaultMaxIterations] = useState<number | null>(null);
-  const [loopOverridesOpen, setLoopOverridesOpen] = useState(false);
   const [reviewHeadBranch, setReviewHeadBranch] = useState('');
   const [reviewBackground, setReviewBackground] = useState('');
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -125,7 +109,7 @@ export function AgentSessionsPage({
     setAgentBranch(prefill.agentBranch);
     setUseExistingBranch(false);
     setPrompt('');
-    setMode((current) => (current === 'review' ? 'batch' : current));
+    setMode('batch');
     setAutoApproveExplicit(false);
     setModalOpen(true);
   }, []);
@@ -143,13 +127,7 @@ export function AgentSessionsPage({
     openQueueOnBranch(queuePrefill);
   }, [queuePrefill, openQueueOnBranch]);
 
-  const modeAutoApproveDefault =
-    mode === 'batch'
-      ? batchAutoApproveDefault
-      : mode === 'loop'
-        ? loopAutoApproveDefault
-        : interactiveAutoApproveDefault;
-  const displayedAutoApprove = autoApproveExplicit ? autoApprovePermissions : modeAutoApproveDefault;
+  const displayedAutoApprove = autoApproveExplicit ? autoApprovePermissions : batchAutoApproveDefault;
 
   useEffect(() => {
     if (!repos.length) {
@@ -193,12 +171,6 @@ export function AgentSessionsPage({
       setOpencodeProvider(config.opencodeProvider || 'ollama');
       setReviewProvider(config.reviewProvider || '');
       setBatchAutoApproveDefault(config.batchAutoApprovePermissions !== false);
-      setLoopAutoApproveDefault(config.loopAutoApprovePermissions !== false);
-      setInteractiveAutoApproveDefault(config.interactiveAutoApprovePermissions === true);
-      setSettingsLoopVerbModels(mergeLoopVerbModels(config.loopVerbModels));
-      setLoopDefaultMaxIterations(
-        typeof config.loopDefaultMaxIterations === 'number' ? config.loopDefaultMaxIterations : null,
-      );
       setConfigLoaded(true);
     } catch {
       setDefaultModel('');
@@ -207,21 +179,8 @@ export function AgentSessionsPage({
 
   useEffect(() => {
     if (!configLoaded || autoApproveExplicit) return;
-    setAutoApprovePermissions(
-      mode === 'batch'
-        ? batchAutoApproveDefault
-        : mode === 'loop'
-          ? loopAutoApproveDefault
-          : interactiveAutoApproveDefault,
-    );
-  }, [
-    configLoaded,
-    autoApproveExplicit,
-    mode,
-    batchAutoApproveDefault,
-    loopAutoApproveDefault,
-    interactiveAutoApproveDefault,
-  ]);
+    setAutoApprovePermissions(batchAutoApproveDefault);
+  }, [configLoaded, autoApproveExplicit, batchAutoApproveDefault]);
 
   const consumerProvider = useMemo<LlmProviderId>(() => {
     if (mode === 'review') {
@@ -247,8 +206,6 @@ export function AgentSessionsPage({
 
   useEffect(() => {
     if (!availableModels.length) return;
-
-    if (mode === 'loop') return;
 
     const resolvePreferredModel = (...candidates: string[]) =>
       candidates.find((candidate) => candidate && availableModels.includes(candidate)) ??
@@ -329,44 +286,8 @@ export function AgentSessionsPage({
     });
   }, [availableBranches, selectedRepo?.defaultBranch]);
 
-  const loopCanStart = useMemo(
-    () =>
-      hasResolvableLoopModel({
-        settingsVerbModels: settingsLoopVerbModels,
-        runVerbModels: loopRunVerbModels,
-        fallbackModel: model,
-        globalModel: defaultModel,
-      }),
-    [settingsLoopVerbModels, loopRunVerbModels, model, defaultModel],
-  );
-
-  const compactRunLoopVerbModels = useCallback((): LoopVerbModels | undefined => {
-    const compact: LoopVerbModels = {};
-    for (const verb of LOOP_VERBS) {
-      const value = loopRunVerbModels[verb]?.trim();
-      if (value) compact[verb] = value;
-    }
-    return Object.keys(compact).length > 0 ? compact : undefined;
-  }, [loopRunVerbModels]);
-
-  const resetLoopRunVerbModels = () => {
-    setLoopRunVerbModels(LOOP_VERB_MODELS_DEFAULT);
-    setLoopMaxIterationsOverride('');
-    setLoopOverridesOpen(false);
-  };
-
-  const copyLoopModelsFromSettings = () => {
-    setLoopRunVerbModels(mergeLoopVerbModels(settingsLoopVerbModels));
-    setLoopOverridesOpen(true);
-  };
-
-  const useFallbackForAllLoopVerbs = () => {
-    setLoopRunVerbModels(LOOP_VERB_MODELS_DEFAULT);
-  };
-
   const closeCreateModal = () => {
     setModalOpen(false);
-    resetLoopRunVerbModels();
     setAutoApproveExplicit(false);
     onQueuePrefillConsumed?.();
   };
@@ -380,7 +301,7 @@ export function AgentSessionsPage({
     !configLoaded ||
     (mode === 'review'
       ? !reviewHeadBranch.trim() || !providerReachable
-      : !hostReady || (mode === 'loop' ? !loopCanStart : !model.trim()));
+      : !hostReady || !model.trim());
 
   const startAgent = async (event: FormEvent) => {
     event.preventDefault();
@@ -411,21 +332,6 @@ export function AgentSessionsPage({
     }
 
     try {
-      const runLoopVerbModels = mode === 'loop' ? compactRunLoopVerbModels() : undefined;
-      let loopMaxIterations: number | undefined;
-      if (mode === 'loop') {
-        const trimmedOverride = loopMaxIterationsOverride.trim();
-        if (trimmedOverride) {
-          const parsed = Number(trimmedOverride);
-          if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
-            setStatus('Max iterations must be a positive whole number.');
-            setStatusVariant('error');
-            return;
-          }
-          loopMaxIterations = parsed;
-        }
-      }
-
       const result = await apiFetch<{ agentId: string; workspaceId?: string }>('/api/v1/agents', {
         method: 'POST',
         headers: authHeaders(token, true),
@@ -441,15 +347,13 @@ export function AgentSessionsPage({
               }
             : {
                 repoId: effectiveRepoId,
-                ...(mode !== 'batch' ? { mode } : {}),
+                mode: 'batch',
                 prompt: prompt.trim(),
                 baseBranch: baseBranch.trim() || 'main',
                 ...(agentBranch.trim() ? { agentBranch: agentBranch.trim() } : {}),
                 ...(useExistingBranch ? { useExistingBranch: true } : {}),
                 commitMessage: commitMessage.trim(),
                 ...(model.trim() ? { model: model.trim() } : {}),
-                ...(runLoopVerbModels ? { loopVerbModels: runLoopVerbModels } : {}),
-                ...(loopMaxIterations !== undefined ? { loopMaxIterations } : {}),
                 push,
                 pushOnFailure,
                 ...(autoApproveExplicit ? { autoApprovePermissions } : {}),
@@ -464,7 +368,6 @@ export function AgentSessionsPage({
       setReviewHeadBranch('');
       setReviewBackground('');
       setCustomRepo('');
-      resetLoopRunVerbModels();
       setAutoApproveExplicit(false);
       setModalOpen(false);
       onQueuePrefillConsumed?.();
@@ -837,25 +740,8 @@ export function AgentSessionsPage({
               </Field>
             </div>
             <Field label="Mode">
-              <Select
-                value={mode}
-                onChange={(e) => {
-                  const nextMode = e.target.value as AgentMode;
-                  setMode(nextMode);
-                  if (!autoApproveExplicit) {
-                    setAutoApprovePermissions(
-                      nextMode === 'batch'
-                        ? batchAutoApproveDefault
-                        : nextMode === 'loop'
-                          ? loopAutoApproveDefault
-                          : interactiveAutoApproveDefault,
-                    );
-                  }
-                }}
-              >
+              <Select value={mode} onChange={(e) => setMode(e.target.value as AgentMode)}>
                 <option value="batch">Batch — run once and auto-commit</option>
-                <option value="interactive">Interactive — multi-turn with Finish</option>
-                <option value="loop">Loop — config-driven observe/plan/act/reflect</option>
                 <option value="review">Review — OCR branch diff review</option>
               </Select>
             </Field>
@@ -986,132 +872,7 @@ export function AgentSessionsPage({
             ) : null}
               </>
             )}
-            {mode === 'loop' ? (
-              <div className="space-y-4">
-                <Field label="Fallback model (unset steps)">
-                  <Select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    disabled={!availableModels.length}
-                  >
-                    <option value="">Settings / global default</option>
-                    {!availableModels.length ? (
-                      <option value="" disabled>
-                        {consumerStatus?.reachable === false
-                          ? `— ${providerLabel} unreachable —`
-                          : '— no models available —'}
-                      </option>
-                    ) : (
-                      availableModels.map((entry) => (
-                        <option key={entry} value={entry}>
-                          {entry}
-                          {entry === defaultModel ? ' (global default)' : ''}
-                        </option>
-                      ))
-                    )}
-                  </Select>
-                  <p className="mt-1 text-xs text-muted">
-                    Used when this run and Settings both leave a verb blank.
-                  </p>
-                </Field>
-                <Field label="Max iterations">
-                  <TextInput
-                    type="number"
-                    min={1}
-                    step={1}
-                    inputMode="numeric"
-                    placeholder={
-                      loopDefaultMaxIterations != null
-                        ? `Default (${loopDefaultMaxIterations})`
-                        : 'Default (server / repo)'
-                    }
-                    value={loopMaxIterationsOverride}
-                    onChange={(e) => setLoopMaxIterationsOverride(e.target.value)}
-                  />
-                  <p className="mt-1 text-xs text-muted">
-                    Leave blank to use the server default
-                    {loopDefaultMaxIterations != null ? ` (${loopDefaultMaxIterations})` : ''} or a
-                    repo override from <code className="code-md">.localagent-box/loop.json</code>.
-                    Set a value here to cap this session only.
-                  </p>
-                </Field>
-                <div className="rounded border border-surface-container-highest bg-background p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-on-surface">Override step models</p>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="!px-2 !py-1 text-xs"
-                      onClick={() => setLoopOverridesOpen((open) => !open)}
-                    >
-                      {loopOverridesOpen ? 'Collapse' : 'Expand'}
-                    </Button>
-                  </div>
-                  <p className="mt-1 text-xs text-muted">
-                    Loop step models come from Settings unless you override them here. Leave
-                    overrides blank to use Settings; leave both blank to use the fallback model
-                    or global OpenCode model.
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="!px-2 !py-1 text-xs"
-                      onClick={copyLoopModelsFromSettings}
-                    >
-                      Copy from Settings
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="!px-2 !py-1 text-xs"
-                      onClick={useFallbackForAllLoopVerbs}
-                    >
-                      Use fallback for all
-                    </Button>
-                  </div>
-                  {loopOverridesOpen ? (
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      {LOOP_VERBS.map((verb) => {
-                        const { label, hint } = LOOP_VERB_LABELS[verb];
-                        const selectedModel = loopRunVerbModels[verb] ?? '';
-                        return (
-                          <Field key={verb} label={label}>
-                            <Select
-                              value={selectedModel}
-                              onChange={(e) =>
-                                setLoopRunVerbModels((prev) => ({
-                                  ...prev,
-                                  [verb]: e.target.value,
-                                }))
-                              }
-                              disabled={!availableModels.length}
-                            >
-                              <option value="">Settings default</option>
-                              {availableModels.map((entry) => (
-                                <option key={entry} value={entry}>
-                                  {entry}
-                                </option>
-                              ))}
-                            </Select>
-                            <p className="mt-1 text-xs text-muted">{hint}</p>
-                          </Field>
-                        );
-                      })}
-                    </div>
-                  ) : hasNonEmptyLoopVerbModel(loopRunVerbModels) ? (
-                    <p className="mt-3 text-xs text-on-surface-variant">
-                      {LOOP_VERBS.filter((verb) => loopRunVerbModels[verb]?.trim())
-                        .map(
-                          (verb) =>
-                            `${LOOP_VERB_LABELS[verb].label}: ${loopRunVerbModels[verb]}`
-                        )
-                        .join(' · ')}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-            ) : mode !== 'review' ? (
+            {mode !== 'review' ? (
               <Field label="Model">
                 <Select
                   required
@@ -1170,17 +931,13 @@ export function AgentSessionsPage({
               <p className="mt-1.5 text-xs text-muted">
                 {autoApproveExplicit
                   ? 'Explicit override for this agent.'
-                  : `Uses Settings default (${modeAutoApproveDefault ? 'on' : 'off'}) when not set.`}
+                  : `Uses Settings default (${batchAutoApproveDefault ? 'on' : 'off'}) when not set.`}
               </p>
             </div>
-            <Field label={mode === 'loop' ? 'Goal' : 'Prompt'}>
+            <Field label="Prompt">
               <TextArea
                 rows={4}
-                placeholder={
-                  mode === 'loop'
-                    ? 'Describe what the harness should achieve across iterations…'
-                    : 'Describe the change for the agent…'
-                }
+                placeholder="Describe the change for the agent…"
                 required
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}

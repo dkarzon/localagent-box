@@ -14,7 +14,7 @@ These are current, intentional (or at least documented) trade-offs, not necessar
 
 ### 1. Reads are unauthenticated by design
 
-Bearer token auth (`Authorization: Bearer <API_TOKEN>`, checked in `src/lib/http.ts`) is enforced on **mutating** endpoints (create/finish/delete agents, config writes, repo writes, GitHub verification). Most **`GET` endpoints are intentionally open**, including:
+Bearer token auth (`Authorization: Bearer <API_TOKEN>`, checked in `src/lib/http.ts`) is enforced on **mutating** endpoints (create and delete agents, config writes, repo writes, GitHub verification). Most **`GET` endpoints are intentionally open**, including:
 
 - `GET /api/v1/config` — returns Ollama URL, GitHub App ID/installation ID, webhook URL, and other settings (the GitHub App private key is masked as `***`)
 - `GET /api/v1/agents`, `GET /api/v1/agents/:id` — agent metadata, prompts, branches
@@ -40,7 +40,7 @@ This is done so the UI works without embedding the token in every request, and s
 
 ### 4. Agents run with full workspace filesystem access, no sandboxing
 
-Each agent run is a child Node process (spawned via `worker-spawner.ts`) that clones the target repository into a workspace directory and executes OpenCode with the configured model/provider. There is no per-agent container, chroot, seccomp profile, or network isolation — the worker inherits the host process environment and can read/write anything the host user can, within its workspace. Tool-call auto-approval defaults to **on** for batch and loop modes.
+Each agent run is a child Node process (spawned via `worker-spawner.ts`) that clones the target repository into a workspace directory and executes OpenCode with the configured model/provider. There is no per-agent container, chroot, seccomp profile, or network isolation — the worker inherits the host process environment and can read/write anything the host user can, within its workspace. Tool-call auto-approval defaults to **on** for batch runs.
 
 **Implication:** only point this at repositories and prompts you trust, on a host you're comfortable letting an LLM-driven process operate on. Treat it the same as giving a script write access to a checkout of your code — because that's what it is.
 

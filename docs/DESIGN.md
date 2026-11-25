@@ -120,7 +120,7 @@ The style utilizes **Technical Minimalism**: a focus on high information density
 
 The palette is rooted in a structured hierarchy of purples. 
 - **Primary (Deep Violet):** Used for critical actions, active states, and brand-defining markers.
-- **Secondary (Vibrant Purple):** Used for highlighting agent status and secondary interactive elements.
+- **Secondary (Vibrant Purple):** Used for highlighting agent status and secondary UI elements.
 - **Background (Soft Lavender):** Replaces traditional neutrals to create a cohesive, branded environment that reduces eye strain.
 - **Containers (White):** Pure white is reserved for high-level content areas (cards, modals, panels) to maximize contrast against the lavender backdrop.
 - **Accents:** Use a strictly monochromatic grayscale for borders and text to ensure the purple remains meaningful and indicates "system activity."

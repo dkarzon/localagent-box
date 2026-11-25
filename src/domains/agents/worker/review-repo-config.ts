@@ -82,9 +82,13 @@ export async function loadReviewRepoConfigFromBase(
   }
 
   const configText = await readFileAtRef(workspaceDir, baseRef, REPO_CONFIG_RELATIVE_PATH);
-  const overrides = configText === null ? null : parseRepoConfig(configText);
-  if (overrides) {
-    notes.push(`Loaded ${REPO_CONFIG_RELATIVE_PATH} from base branch ${baseBranch}`);
+  const parsed = configText === null ? null : parseRepoConfig(configText);
+  const overrides = parsed?.overrides ?? null;
+  if (parsed) {
+    notes.push(...parsed.notes);
+    if (overrides) {
+      notes.push(`Loaded ${REPO_CONFIG_RELATIVE_PATH} from base branch ${baseBranch}`);
+    }
   }
 
   const baseRules = await readFileAtRef(workspaceDir, baseRef, OCR_PROJECT_RULE_RELATIVE_PATH);

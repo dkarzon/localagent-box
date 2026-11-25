@@ -6,29 +6,13 @@ import { getServerEnv } from '../../../config/env';
 import { CODEGRAPH_BIN } from '../../../services/opencode-config';
 import { createRepoService } from '../../repos/repo.service';
 import { createJsonStore } from '../../../lib/json-store';
-import type { Agent, AgentGitStatus, AgentJob, AppConfig, Repo } from '../../../types';
-import type { JsonStore } from '../../../lib/json-store';
+import type { AgentJob, AppConfig, Repo } from '../../../types';
 import type { GitService } from '../../../services/git-service';
 import type { GithubAppService } from '../../../services/github-app';
-import { appendLog, readAgentStatus, updateAgentRecord } from './agent-state-writer';
+import { appendLog, updateAgentRecord } from './agent-state-writer';
 import { runWorkspaceBootstrap } from './workspace-bootstrap';
 import type { WorkerContext } from './worker-context';
 import { getAgentMode } from './worker-context';
-
-const LOCALAGENT_BOX_IGNORE_ENTRY = '.localagent-box/loop-plan.md';
-
-export function ensureLocalagentBoxIgnored(workspaceDir: string): void {
-  const gitignorePath = path.join(workspaceDir, '.gitignore');
-  if (!fs.existsSync(gitignorePath)) {
-    fs.writeFileSync(gitignorePath, LOCALAGENT_BOX_IGNORE_ENTRY + '\n', 'utf8');
-    return;
-  }
-  const content = fs.readFileSync(gitignorePath, 'utf8');
-  if (!content.includes(LOCALAGENT_BOX_IGNORE_ENTRY)) {
-    const prefix = content.endsWith('\n') ? '' : '\n';
-    fs.writeFileSync(gitignorePath, content + prefix + LOCALAGENT_BOX_IGNORE_ENTRY + '\n', 'utf8');
-  }
-}
 
 const execFileAsync = promisify(execFile);
 const CODEGRAPH_INIT_TIMEOUT_MS = 180_000;
@@ -101,12 +85,8 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   appendLog(logPath, `Base branch: ${job.baseBranch}`);
   appendLog(logPath, `Agent branch: ${job.agentBranch}`);
 
-  const currentStatus = readAgentStatus(agentsStore, job.agentId);
-  const finishAlreadyRequested =
-    getAgentMode(job) === 'interactive' && currentStatus === 'completing';
-
   updateAgentRecord(agentsStore, job.agentId, {
-    ...(finishAlreadyRequested ? {} : { status: 'running' }),
+    status: 'running',
     startedAt: new Date().toISOString(),
   });
 
@@ -145,8 +125,6 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
     );
   }
 
-  ensureLocalagentBoxIgnored(job.workspaceDir);
-
   if (isReview && config.ocrSkipWorkspaceBootstrap === true) {
     appendLog(logPath, 'Workspace bootstrap skipped: ocrSkipWorkspaceBootstrap is enabled for review runs');
   } else {
@@ -171,64 +149,18 @@ export async function prepareWorkspace(ctx: WorkerContext): Promise<void> {
   }
 }
 
-const GIT_FILE_KIND_LABEL: Record<AgentGitStatus['files'][number]['kind'], string> = {
-  added: 'added',
-  modified: 'modified',
-  deleted: 'deleted',
-  renamed: 'renamed',
-  copied: 'copied',
-  untracked: 'new',
-  unknown: 'changed',
-};
-
-export async function captureGitStatusCheckpoint({
-  gitService,
-  workspaceDir,
-  logPath,
-  agentsStore,
-  agentId,
-}: {
-  gitService: GitService;
-  workspaceDir: string;
-  logPath: string;
-  agentsStore: JsonStore<{ agents: Agent[] }>;
-  agentId: string;
-}): Promise<void> {
-  try {
-    const porcelain = await gitService.getPorcelainStatus(workspaceDir);
-    const files = gitService.parsePorcelainStatus(porcelain);
-    const filesChanged = files.length;
-    const gitStatus: AgentGitStatus = {
-      filesChanged,
-      files,
-      updatedAt: new Date().toISOString(),
-    };
-
-    updateAgentRecord(agentsStore, agentId, { gitStatus });
-
-    if (filesChanged === 0) {
-      appendLog(logPath, 'Checkpoint: no file changes in working tree');
-      return;
-    }
-
-    appendLog(logPath, `Checkpoint: ${filesChanged} changed file(s) in working tree`);
-    for (const file of files) {
-      appendLog(logPath, `  ${GIT_FILE_KIND_LABEL[file.kind]}: ${file.path}`);
-    }
-  } catch (err) {
-    appendLog(
-      logPath,
-      `Checkpoint git status failed (${err instanceof Error ? err.message : String(err)})`,
-    );
-  }
-}
-
 /**
  * Deterministic, host-generated summary of the current working-tree changes
  * (`git status --short` file list + the `git diff --stat` totals line), truncated
  * to a handful of lines. Injected into the first step of each iteration so the model
  * gets ground truth about what has changed instead of rediscovering it with tool calls.
  * Returns null when the working tree is clean or git fails.
+ *
+ * Kept as prior art for the planned Phase 1.5 escalation content
+ * (`docs/plans/v1.plan.md`, section 1.5), even though no caller remains now that the
+ * interactive/loop paths are gone. Those removals also took the git-status checkpoint
+ * with them, so nothing writes `Agent.gitStatus` any more and the `AgentGitStatus` panel
+ * plus `GET /api/v1/agents/:id/git-status` serve pre-v1 legacy records only.
  */
 export async function buildHostChangeSummary({
   gitService,

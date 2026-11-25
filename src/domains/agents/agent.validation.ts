@@ -1,10 +1,8 @@
-import { compactLoopVerbModels, sanitizeLoopVerbModels } from '../../lib/loop-verb-models';
-import { assertPositiveInteger, validationError } from '../../lib/validation';
+import { validationError } from '../../lib/validation';
 import { validateRepoId } from '../repos/repo.repository';
 import {
   validateAgentMode,
   validateBranchName,
-  validateMessageText,
   validatePrompt,
 } from '../../lib/validation';
 import type { AgentAutofixMetadata, AgentMode } from '../../types';
@@ -21,8 +19,6 @@ export interface CreateAgentPayload {
   pushOnFailure: boolean;
   autoApprovePermissions?: boolean;
   model?: string;
-  loopVerbModels?: Record<string, string>;
-  loopMaxIterations?: number;
   mode: AgentMode;
   autoCreatePullRequest?: boolean;
   // Review-specific fields (mode: 'review')
@@ -109,16 +105,6 @@ export function parseCreateAgentPayload(
     ? String(typeof body.prompt === 'string' ? body.prompt : '')
     : validatePrompt(body.prompt);
 
-  const loopVerbModels =
-    mode === 'loop' && typeof body.loopVerbModels === 'object' && body.loopVerbModels != null
-      ? compactLoopVerbModels(sanitizeLoopVerbModels(body.loopVerbModels))
-      : undefined;
-  let loopMaxIterations: number | undefined;
-  if (mode === 'loop') {
-    if (body.loopMaxIterations !== undefined) {
-      loopMaxIterations = assertPositiveInteger(body.loopMaxIterations, 'loopMaxIterations');
-    }
-  }
   const resolvedAgentBranch =
     isReview && headBranch
       ? headBranch
@@ -146,8 +132,6 @@ export function parseCreateAgentPayload(
     autoApprovePermissions:
       typeof body.autoApprovePermissions === 'boolean' ? body.autoApprovePermissions : undefined,
     model,
-    loopVerbModels,
-    loopMaxIterations,
     mode,
     autoCreatePullRequest:
       typeof body.autoCreatePullRequest === 'boolean' ? body.autoCreatePullRequest : undefined,
@@ -156,8 +140,4 @@ export function parseCreateAgentPayload(
     parentAgentId,
     autofix,
   };
-}
-
-export function parseMessageText(text: unknown): string {
-  return validateMessageText(text);
 }

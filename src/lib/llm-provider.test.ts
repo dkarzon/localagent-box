@@ -29,17 +29,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     gitUserEmail: '',
     webhookUrl: '',
     batchAutoApprovePermissions: true,
-    loopAutoApprovePermissions: true,
-    interactiveAutoApprovePermissions: false,
     reviewModel: '',
-    interactiveAgentTimeoutSeconds: 3600,
-    loopAgentTimeoutSeconds: 3600,
-    loopVerbModels: {
-      INITIAL_PLAN: '',
-      ORIENT: '',
-      ACT: '',
-      REFLECT: '',
-    },
     ...overrides,
   };
 }

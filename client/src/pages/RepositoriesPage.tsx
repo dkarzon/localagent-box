@@ -98,7 +98,7 @@ export function RepositoriesPage({ repos, onRefreshRepos, searchQuery = '' }: Re
         repo.owner.toLowerCase().includes(query) ||
         repo.name.toLowerCase().includes(query) ||
         repo.repoId.toLowerCase().includes(query) ||
-        repo.cloneUrl.toLowerCase().includes(query),
+        (repo.cloneUrl || '').toLowerCase().includes(query),
     );
   }, [repos, searchQuery]);
 

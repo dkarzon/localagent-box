@@ -26,8 +26,7 @@ export const SETTINGS_SEARCH_KEYWORDS = {
   },
   opencode: {
     defaults: ['opencode', 'model', 'provider', 'system prompt'],
-    permissions: ['opencode', 'permissions', 'auto-approve', 'timeout', 'interactive', 'loop'],
-    loop: ['loop', 'observe', 'plan', 'act', 'reflect', 'initial plan', 'model'],
+    permissions: ['opencode', 'permissions', 'auto-approve'],
   },
   ocr: {
     review: ['review', 'ocr', 'code review', 'auto-review', 'bootstrap'],

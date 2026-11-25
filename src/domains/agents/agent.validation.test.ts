@@ -46,14 +46,31 @@ describe('parseCreateAgentPayload', () => {
     assert.equal(payload.agentBranch, 'feature/existing');
   });
 
-  it('accepts loop mode', () => {
+  it('rejects a mode removed in v1', () => {
+    assert.throws(
+      () =>
+        parseCreateAgentPayload(
+          { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop' },
+          repo,
+          'abc123',
+        ),
+      (err: unknown) => {
+        assert.ok(err instanceof CodedError);
+        assert.equal(err.code, 'VALIDATION_ERROR');
+        assert.match(String(err.message), /mode "loop" was removed in v1/);
+        return true;
+      },
+    );
+  });
+
+  it('accepts batch and review modes', () => {
     const payload = parseCreateAgentPayload(
-      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop' },
+      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'batch' },
       repo,
       'abc123',
     );
 
-    assert.equal(payload.mode, 'loop');
+    assert.equal(payload.mode, 'batch');
     assert.equal(payload.prompt, 'Refactor auth');
   });
 
@@ -90,94 +107,6 @@ describe('parseCreateAgentPayload', () => {
     );
 
     assert.equal(payload.agentBranch, 'feature/existing');
-  });
-
-  it('accepts partial loopVerbModels for loop mode', () => {
-    const payload = parseCreateAgentPayload(
-      {
-        repoId: 'acme-demo',
-        prompt: 'Refactor auth',
-        mode: 'loop',
-        loopVerbModels: { ACT: 'qwen3-coder:30b', REFLECT: '' },
-      },
-      repo,
-      'abc123',
-    );
-
-    assert.equal(payload.mode, 'loop');
-    assert.deepEqual(payload.loopVerbModels, { ACT: 'qwen3-coder:30b' });
-  });
-
-  it('ignores loopVerbModels for batch mode', () => {
-    const payload = parseCreateAgentPayload(
-      {
-        repoId: 'acme-demo',
-        prompt: 'Do work',
-        mode: 'batch',
-        loopVerbModels: { ACT: 'qwen3-coder:30b' },
-      },
-      repo,
-      'abc123',
-    );
-
-    assert.equal(payload.mode, 'batch');
-    assert.equal(payload.loopVerbModels, undefined);
-  });
-
-  it('accepts loopMaxIterations for loop mode', () => {
-    const payload = parseCreateAgentPayload(
-      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop', loopMaxIterations: 42 },
-      repo,
-      'abc123',
-    );
-
-    assert.equal(payload.mode, 'loop');
-    assert.equal(payload.loopMaxIterations, 42);
-  });
-
-  it('defaults loopMaxIterations to undefined so repo/server defaults apply', () => {
-    const payload = parseCreateAgentPayload(
-      { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop' },
-      repo,
-      'abc123',
-    );
-
-    assert.equal(payload.loopMaxIterations, undefined);
-  });
-
-  it('ignores loopMaxIterations for batch mode', () => {
-    const payload = parseCreateAgentPayload(
-      {
-        repoId: 'acme-demo',
-        prompt: 'Do work',
-        mode: 'batch',
-        loopMaxIterations: 5,
-      },
-      repo,
-      'abc123',
-    );
-
-    assert.equal(payload.mode, 'batch');
-    assert.equal(payload.loopMaxIterations, undefined);
-  });
-
-  it('rejects invalid loopMaxIterations values for loop mode', () => {
-    for (const loopMaxIterations of [0, -1, 2.5, 'five', '10', Infinity]) {
-      assert.throws(
-        () =>
-          parseCreateAgentPayload(
-            { repoId: 'acme-demo', prompt: 'Refactor auth', mode: 'loop', loopMaxIterations },
-            repo,
-            'abc123',
-          ),
-        (err: unknown) => {
-          assert.ok(err instanceof CodedError);
-          assert.equal(err.code, 'VALIDATION_ERROR');
-          assert.match(String(err.message), /loopMaxIterations must be a positive integer/);
-          return true;
-        },
-      );
-    }
   });
 
   it('parses autofix metadata', () => {

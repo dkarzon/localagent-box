@@ -23,6 +23,7 @@ import {
   getAgentMode,
   getLinkedPullRequest,
   isAgentActive,
+  isLegacyAgentMode,
   isReviewAgent,
   queueOnBranchPrefill,
   type Agent,
@@ -34,7 +35,6 @@ import {
 import type { TranscriptEntry } from '../api/agent-events';
 import type { AgentFindingsResponse } from '../api/types';
 import { extractOcrTokenUsage } from '../lib/ocr-token-usage';
-import { AgentComposer } from '../components/agents/AgentComposer';
 import { AgentLogPanel } from '../components/agents/AgentLogPanel';
 import { AgentSessionInfo } from '../components/agents/AgentSessionInfo';
 import { AgentTranscript } from '../components/agents/AgentTranscript';
@@ -120,21 +120,10 @@ function buildReviewTranscriptEntries(
   return entries;
 }
 
-function composerDisabledReason(agent: Agent): string | undefined {
-  if (agent.status === 'queued' && agent.queue?.reason) return agent.queue.reason;
-  if (agent.status === 'processing') return 'The agent is processing your request…';
-  if (agent.status === 'running' || agent.status === 'queued') return 'Session is starting…';
-  if (agent.status === 'completing') return 'Finishing session — commit in progress…';
-  if (agent.status === 'completed' || agent.status === 'failed' || agent.status === 'cancelled') {
-    return 'Session has ended.';
-  }
-  return undefined;
-}
-
 export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessionPageProps) {
   const navigate = useNavigate();
   const { token } = useApiToken();
-  const session = useAgentSession({ agentId, token });
+  const session = useAgentSession({ agentId });
 
   const [logs, setLogs] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
@@ -162,8 +151,7 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
   const [mobileHeaderHeight, setMobileHeaderHeight] = useState(0);
 
   const agent = session.agent;
-  const interactive = session.interactive;
-  const loop = session.loop;
+  const legacy = agent ? isLegacyAgentMode(agent) : false;
   const review = agent ? isReviewAgent(agent) : false;
   const isActive = agent ? isAgentActive(agent) : false;
   const hasOpenPullRequest = agent?.pullRequest?.state === 'open';
@@ -564,10 +552,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     : false;
   const statusMessage = session.status || pageStatus;
   const statusVariant = session.status ? session.statusVariant : pageStatusVariant;
-  const canFinish = session.canFinish;
-  const canCommitOutstanding = session.canCommitOutstanding;
-  const canSend = Boolean(agent?.interactive?.canSendMessage);
-  const loopProgress = session.loopProgress;
   const agentMode = agent ? getAgentMode(agent) : 'batch';
   const sessionId = agentId.toUpperCase();
 
@@ -660,7 +644,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
     repoLabel,
     defaultModel,
     defaultReviewModel,
-    loopProgress,
     eventsConnected: session.eventsConnected,
     loadError: session.loadError,
     prBusy,
@@ -677,16 +660,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         <IconRefresh className="size-4" />
         Refresh
       </Button>
-      {(interactive || loop) && canFinish ? (
-        <Button variant="primary" onClick={() => session.finish()}>
-          Finish
-        </Button>
-      ) : null}
-      {loop && canCommitOutstanding ? (
-        <Button variant="primary" onClick={() => session.commitOutstanding()}>
-          Commit and push changes
-        </Button>
-      ) : null}
       {renderPrAndReviewActions(false)}
       {agent?.queue?.canRetry ? (
         <Button variant="primary" disabled={queueBusy} onClick={() => retrySession()}>
@@ -725,20 +698,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
       >
         <IconRefresh className="size-4" />
       </Button>
-      {(interactive || loop) && canFinish ? (
-        <Button variant="primary" className="!px-3 !py-1.5 text-xs" onClick={() => session.finish()}>
-          Finish
-        </Button>
-      ) : null}
-      {loop && canCommitOutstanding ? (
-        <Button
-          variant="primary"
-          className="!px-3 !py-1.5 text-xs"
-          onClick={() => session.commitOutstanding()}
-        >
-          Commit changes
-        </Button>
-      ) : null}
       {renderPrAndReviewActions(true)}
       {agent?.queue?.canRetry ? (
         <Button
@@ -826,9 +785,10 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
                 {repoLabel}
                 {' · '}
                 {agent.agentBranch || agent.branch || '—'}
-                {interactive && agent.turnCount != null ? ` · ${agent.turnCount} turn(s)` : ''}
-                {loop && loopProgress ? ` · ${loopProgress}` : ''}
               </p>
+            ) : null}
+            {legacy ? (
+              <p className="mt-1 text-xs text-muted">Legacy {agentMode} session — read-only</p>
             ) : null}
             {agent?.queue?.reason ? (
               <p className="mt-1 text-xs text-muted">{agent.queue.reason}</p>
@@ -884,16 +844,14 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
               {repoLabel}
               {' · '}
               {agent.agentBranch || agent.branch || '—'}
-              {interactive && agent.turnCount != null ? ` · ${agent.turnCount} turn(s)` : ''}
             </p>
           ) : null}
           {agent?.queue?.reason ? (
             <p className="mt-1 text-sm text-muted">{agent.queue.reason}</p>
           ) : null}
-          {loop && loopProgress ? (
+          {legacy ? (
             <p className="mt-1 text-sm text-on-surface-variant">
-              {loopProgress}
-              {agent?.loop?.finishRequested ? ' · finish after current step' : ''}
+              Legacy {agentMode} session — read-only
             </p>
           ) : null}
         </div>
@@ -933,9 +891,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
           <header className="card-header-rule sticky top-[var(--session-mobile-header-height,0px)] z-[1] flex items-center justify-between gap-4 bg-surface/80 px-6 py-4 backdrop-blur-sm lg:top-[var(--session-sticky-header-height,0px)]">
             <div className="min-w-0 flex flex-col gap-1 text-primary sm:flex-row sm:items-center sm:gap-3">
               <h3 className="text-lg">Conversation</h3>
-              {loop && loopProgress ? (
-                <span className="hidden text-xs text-on-surface-variant sm:inline">{loopProgress}</span>
-              ) : null}
             </div>
             <div className="shrink-0 flex items-center gap-3">
               {isActive ? (
@@ -957,13 +912,6 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
           </header>
 
           <AgentTranscript entries={displayTranscript} emptyMessage={transcriptEmptyMessage} />
-          {interactive ? (
-            <AgentComposer
-              canSend={canSend}
-              disabledReason={agent ? composerDisabledReason(agent) : undefined}
-              onSend={session.sendMessage}
-            />
-          ) : null}
 
           {showDebugLogs ? (
             <div className="min-w-0 shrink-0 border-t border-surface-container-highest">
