@@ -10,6 +10,12 @@ const BRANCH_WORKER_STATUSES = new Set<AgentStatus>([
 
 export type QueueDecision = 'start' | 'defer' | 'drop';
 
+/**
+ * Most recent coding record on the same branch, in creation order. A legacy record counts as a
+ * predecessor: it is read-only and can never release a successor, so it must stay the end of the
+ * chain — skipping it would expose an older record that may never release, blocking this successor
+ * forever. `predecessorAllowsStart` treats a legacy predecessor as already released.
+ */
 export function findCodingPredecessor(agents: readonly Agent[], agent: Agent): Agent | undefined {
   let predecessor: Agent | undefined;
   for (const candidate of agents) {
@@ -20,10 +26,6 @@ export function findCodingPredecessor(agents: readonly Agent[], agent: Agent): A
       continue;
     }
     if (getAgentMode(candidate) === 'review') {
-      continue;
-    }
-    // A legacy record is read-only and can never release a successor, so it must not gate the branch.
-    if (isLegacyMode(candidate)) {
       continue;
     }
     if (candidate.createdAt >= agent.createdAt) {
@@ -38,6 +40,11 @@ export function findCodingPredecessor(agents: readonly Agent[], agent: Agent): A
 
 export function predecessorAllowsStart(predecessor: Agent | undefined): boolean {
   if (!predecessor) {
+    return true;
+  }
+  // A legacy record ends the chain: `retryAgent` and `allowSuccessors` reject it, so it can never
+  // release a successor. Treat it as already released so it does not gate the branch.
+  if (isLegacyMode(predecessor)) {
     return true;
   }
   if (predecessor.status === 'completed' && predecessor.pushed) {

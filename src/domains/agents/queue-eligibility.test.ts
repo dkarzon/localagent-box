@@ -156,8 +156,46 @@ describe('queue-eligibility', () => {
 
   it('does not gate a successor on a legacy predecessor', () => {
     const legacy = agent({ agentId: 'legacy1', mode: 'loop', status: 'failed' });
-    assert.equal(findCodingPredecessor([legacy, second], second), undefined);
+    assert.equal(findCodingPredecessor([legacy, second], second)?.agentId, 'legacy1');
+    assert.equal(predecessorAllowsStart(findCodingPredecessor([legacy, second], second)), true);
     assert.equal(decideQueueAction(second, [legacy, second], () => false), 'start');
+  });
+
+  it('does not promote an unreleasable record behind a legacy predecessor', () => {
+    // `blocked` completed without a push, so it has no user action that could release it.
+    // The newer legacy record must stay the end of the chain instead of exposing `blocked`.
+    const blocked = agent({
+      agentId: 'b1',
+      status: 'completed',
+      pushed: false,
+      createdAt: '2026-08-16T00:00:01.000Z',
+    });
+    const legacy = agent({
+      agentId: 'legacy1',
+      mode: 'loop',
+      status: 'completed',
+      pushed: true,
+      createdAt: '2026-08-16T00:00:01.500Z',
+    });
+    assert.equal(findCodingPredecessor([blocked, legacy, second], second)?.agentId, 'legacy1');
+    assert.equal(decideQueueAction(second, [blocked, legacy, second], () => false), 'start');
+
+    const state = buildAgentQueueState(second, [blocked, legacy, second], () => false);
+    assert.equal(state.waitingOn, 'slot');
+    assert.equal(state.predecessorId, 'legacy1');
+  });
+
+  it('keeps a retryable predecessor ahead of an older legacy record', () => {
+    const failed = { ...first, status: 'failed' as const };
+    const legacy = agent({
+      agentId: 'legacy1',
+      mode: 'loop',
+      status: 'completed',
+      pushed: true,
+      createdAt: '2026-08-16T00:00:00.500Z',
+    });
+    assert.equal(findCodingPredecessor([legacy, failed, second], second)?.agentId, 'a1');
+    assert.equal(decideQueueAction(second, [legacy, failed, second], () => false), 'defer');
   });
 
   it('does not offer retry or start-next on a read-only legacy record', () => {
