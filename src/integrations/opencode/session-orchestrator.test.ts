@@ -238,6 +238,7 @@ function makeOrchestratorHarness() {
     prompt: 'Fix the failing test',
     baseBranch: 'main',
     agentBranch: 'localagent-agent1',
+    checksBaseBranch: 'main',
     commitMessage: 'test',
     push: false,
     pushOnFailure: false,

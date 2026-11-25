@@ -5,6 +5,8 @@ import { ACTIVE_STATUSES, getAgentMode, isLegacyMode, TERMINAL_STATUSES } from '
 const BRANCH_WORKER_STATUSES = new Set<AgentStatus>([
   'running',
   'processing',
+  'verifying',
+  'repairing',
   'completing',
 ]);
 

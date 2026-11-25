@@ -361,9 +361,12 @@ export async function runSessionOrchestrator(
   }
   const sseLockedStatuses = new Set<AgentStatus>([
     'queued',
+    'verifying',
+    'repairing',
     'completing',
     'completed',
     'failed',
+    'failed_machine',
     'cancelled',
   ]);
 

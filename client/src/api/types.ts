@@ -11,9 +11,15 @@ export type AgentStatus =
   /** Legacy only: pre-v1 interactive sessions; no run can set it */
   | 'awaiting_input'
   | 'processing'
+  /** Host-run post-run checks are running */
+  | 'verifying'
+  /** A repair turn requested after a failing check */
+  | 'repairing'
   | 'completing'
   | 'completed'
   | 'failed'
+  /** Stopped by a machine failure (timeout, OOM, disk), not by the code */
+  | 'failed_machine'
   | 'cancelled';
 
 export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
@@ -270,6 +276,43 @@ export interface AgentBootstrapState {
   error?: string;
 }
 
+/** Host-run post-run check names. */
+export type CheckName = 'build' | 'lint' | 'test' | 'verify';
+
+/** One host-run check, as recorded by the server. */
+export interface AgentCheckRun {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  signal: string | null;
+  timedOut: boolean;
+  durationMs: number;
+  outputTail: string;
+}
+
+/** One verification pass: `attempt` 0 is after the task turn, 1..n after repair n. */
+export interface AgentVerificationAttempt {
+  attempt: number;
+  startedAt: string;
+  finishedAt: string;
+  checks: AgentCheckRun[];
+  passed: boolean;
+  failureKind?: 'code' | 'machine';
+  machineReason?: string;
+  /** Filled by 1.5 */
+  diffStat?: string;
+  /** Filled by 1.5 */
+  assistantText?: string;
+}
+
+/** Host-run verification state; mirrors the server-side record. */
+export interface AgentVerification {
+  state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
+  configSource: 'base' | 'none';
+  maxRepairAttempts: number;
+  attempts: AgentVerificationAttempt[];
+}
+
 export interface AgentsListResponse {
   agents: Agent[];
   overallTokenUsage: OverallTokenUsage;
@@ -308,6 +351,8 @@ export interface Agent {
   allowSuccessors?: boolean;
   /** Host-run workspace bootstrap (setup command) before the agent starts */
   bootstrap?: AgentBootstrapState;
+  /** Host-run checks after the model's turn */
+  verification?: AgentVerification | null;
   queue?: AgentQueueState;
 }
 
@@ -351,13 +396,20 @@ export const BATCH_ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'queued',
   'running',
   'processing',
+  'verifying',
+  'repairing',
   'completing',
 ]);
 
 // `awaiting_input` is legacy only, so it is not an active status.
 export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([...BATCH_ACTIVE_AGENT_STATUSES]);
 
-export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>(['completed', 'failed', 'cancelled']);
+export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>([
+  'completed',
+  'failed',
+  'failed_machine',
+  'cancelled',
+]);
 
 export function getAgentMode(agent: Agent): AgentMode | LegacyAgentMode {
   return agent.mode || 'batch';

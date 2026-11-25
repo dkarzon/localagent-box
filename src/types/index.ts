@@ -290,9 +290,15 @@ export type AgentStatus =
   /** Legacy only: pre-v1 interactive sessions; no run can set it any more */
   | 'awaiting_input'
   | 'processing'
+  /** Host-run post-run checks are executing (v1 1.1) */
+  | 'verifying'
+  /** A repair turn requested after a failing check (v1 1.2) */
+  | 'repairing'
   | 'completing'
   | 'completed'
   | 'failed'
+  /** Failed because of the machine (timeout, OOM, disk), not because of the code */
+  | 'failed_machine'
   | 'cancelled';
 
 export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
@@ -386,6 +392,15 @@ export interface RepoEnvironmentSetupConfig {
   runOnModes?: AgentMode[];
 }
 
+/** Post-run host checks in the `checks` block of `environment.json` (v1 1.1). */
+export interface RepoCheckConfig {
+  build?: string;
+  lint?: string;
+  test?: string;
+  /** Defaults to `verifyTimeoutMs`, then 600000. */
+  timeoutMs?: number;
+}
+
 /**
  * Parsed .localagent-box/environment.json content.
  * Unknown top-level keys are ignored by the loader.
@@ -415,6 +430,15 @@ export interface RepoEnvironmentConfig {
    * (or `DEFAULT_SETUP_TIMEOUT_MS` when the setup block has none).
    */
   verifyTimeoutMs?: number;
+  /**
+   * Host-run checks after the model's turn (v1 1.1), read from the base branch
+   * so a run cannot change the checks it is verified under.
+   */
+  checks?: RepoCheckConfig;
+  /** Repair turns allowed after a failing check, 0–3, default 2 (v1 1.2) */
+  repairAttempts?: number;
+  /** Allow a draft PR when checks fail; default false (v1 1.2) */
+  draftPrOnFailure?: boolean;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
@@ -453,6 +477,48 @@ export interface AgentBootstrapState {
    * `verifyCommand` was configured or has not run yet.
    */
   verifyExitCode?: number;
+}
+
+/** Names of the host-run post-turn checks (v1 1.1). */
+export type CheckName = 'build' | 'lint' | 'test' | 'verify';
+
+/** One host-run check: the exit status plus the output tail the host keeps. */
+export interface AgentCheckRun {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  /** Signal the process died on (string, not NodeJS.Signals, so the record stays JSON-safe). */
+  signal: string | null;
+  timedOut: boolean;
+  durationMs: number;
+  outputTail: string;
+}
+
+/**
+ * One verification pass over the workspace: `attempt` 0 is after the task turn,
+ * 1..n after repair n. Checks stop at the first failure.
+ */
+export interface AgentVerificationAttempt {
+  attempt: number;
+  startedAt: string;
+  finishedAt: string;
+  checks: AgentCheckRun[];
+  passed: boolean;
+  failureKind?: 'code' | 'machine';
+  machineReason?: string;
+  /** Filled by 1.5 */
+  diffStat?: string;
+  /** Filled by 1.5 (truncated to 4000 chars) */
+  assistantText?: string;
+}
+
+/** Host-run verification state for the run, persisted on the agent record. */
+export interface AgentVerification {
+  state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
+  /** Where the check config came from; checks are never read from the working tree. */
+  configSource: 'base' | 'none';
+  maxRepairAttempts: number;
+  attempts: AgentVerificationAttempt[];
 }
 
 export interface Agent {
@@ -508,6 +574,8 @@ export interface Agent {
   tokenUsage?: AgentTokenUsage;
   /** Host-run workspace bootstrap (setup command) before the agent starts */
   bootstrap?: AgentBootstrapState;
+  /** Host-run checks after the model's turn (v1 1.1) */
+  verification?: AgentVerification | null;
   /** Derived wait/retry info; not persisted */
   queue?: AgentQueueState;
 }
@@ -524,6 +592,11 @@ export interface AgentJob {
   agentBranch: string;
   /** When true, clone and checkout agentBranch instead of creating a new branch from baseBranch */
   useExistingBranch?: boolean;
+  /**
+   * Branch the post-run check config is read from (v1 1.1): the repo default
+   * when the run works on an existing branch, otherwise `baseBranch`.
+   */
+  checksBaseBranch: string;
   commitMessage: string;
   push: boolean;
   pushOnFailure: boolean;

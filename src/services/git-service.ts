@@ -33,6 +33,16 @@ export interface GitService {
   ) => Promise<void>;
   /** True when `origin` advertises `refs/heads/<branchName>` (ls-remote). */
   remoteBranchExists: (targetDir: string, branchName: string) => Promise<boolean>;
+  /**
+   * Make `refs/remotes/origin/<branchName>` readable. A `--single-branch` clone
+   * has no remote ref for another branch, so it is fetched at depth 1 when
+   * missing. Never throws: when the ref cannot be made available the caller is
+   * told and the run proceeds without that branch's config.
+   */
+  ensureRemoteRef: (
+    targetDir: string,
+    branchName: string,
+  ) => Promise<{ available: boolean; fetched: boolean; message?: string }>;
   getPorcelainStatus: (targetDir: string) => Promise<string>;
   /** `git diff --stat <baseRef>` (default HEAD) — deterministic working-tree change summary; '' on failure. */
   getDiffStat: (targetDir: string, baseRef?: string) => Promise<string>;
@@ -246,6 +256,37 @@ export function createGitService(options: {
         execErr.stderr || execErr.message || 'Git ls-remote failed',
       );
       throw new Error(message || 'Git ls-remote failed');
+    }
+  }
+
+  async function ensureRemoteRef(targetDir: string, branchName: string) {
+    const ref = `refs/remotes/origin/${branchName}`;
+    const env = gitEnv();
+
+    try {
+      await execFileAsyncImpl('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+        cwd: targetDir,
+        timeout: 60000,
+        env,
+      });
+      return { available: true, fetched: false };
+    } catch {
+      // The single-branch clone does not have it; fetch it shallowly.
+    }
+
+    try {
+      await execFileAsyncImpl('git', ['fetch', '--depth', '1', 'origin', `${branchName}:${ref}`], {
+        cwd: targetDir,
+        timeout: CLONE_TIMEOUT_MS,
+        env,
+      });
+      return { available: true, fetched: true };
+    } catch (err) {
+      const execErr = err as { stderr?: string; message?: string };
+      const message = githubApp.redactSecrets(
+        execErr.stderr || execErr.message || 'Git fetch failed',
+      );
+      return { available: false, fetched: false, message: message || 'Git fetch failed' };
     }
   }
 
@@ -499,6 +540,7 @@ export function createGitService(options: {
     createBranch,
     fetchAndCheckoutBranch,
     remoteBranchExists,
+    ensureRemoteRef,
     getPorcelainStatus,
     getDiffStat,
     parsePorcelainStatus,

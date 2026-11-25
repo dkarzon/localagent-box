@@ -5,7 +5,7 @@ Repo-level configuration lets you override agent behavior per-repository instead
 | File | Purpose |
 |---|---|
 | `.localagent-box/config.json` | Prompt overrides (system prompt + run-mode context prompts) |
-| `.localagent-box/environment.json` | Host-run workspace bootstrap (setup, runtime profiles, lockfile auto-detect) |
+| `.localagent-box/environment.json` | Host-run workspace bootstrap (setup, runtime profiles, lockfile auto-detect) and post-run checks |
 | `.localagent-box/setup.sh` | Committed setup script that takes precedence over all `environment.json` sources |
 
 Each file is optional. If absent, the server defaults apply.
@@ -168,6 +168,38 @@ Post-setup smoke test run **after** a successful setup command (and before the a
 ### `verifyTimeoutMs` *(number, optional)*
 
 Timeout in milliseconds for `verifyCommand`. Same constraints as `setup.timeoutMs` (positive integer, max `1800000`). Defaults to the setup timeout — i.e. `setup.timeoutMs` when set, otherwise `600000` (10 min).
+
+### Post-run checks — `checks` *(object, optional)*
+
+Host-run commands executed **after** the model's turn, from the workspace, in `build` → `lint` → `test` order, stopping at the first failure. The run is only reported as successful when these pass, so a run that changes files but fails a check ends as `failed` (or `failed_machine` for a timeout, OOM kill, full disk, or a missing command).
+
+```jsonc
+// .localagent-box/environment.json (example)
+{
+  "version": 1,
+  "checks": {
+    "build": "npm run build",
+    "lint": "npm run lint",
+    "test": "npm test",
+    "timeoutMs": 900000
+  }
+}
+```
+
+- Each command must be a non-empty string when provided; `timeoutMs` is a positive integer no greater than `1800000` (30 min) and defaults to `verifyTimeoutMs`, then `600000` (10 min).
+- If none of `build`, `lint`, `test` is configured but `verifyCommand` is set, that command runs as a single check named `verify`.
+- Nothing configured → the run is recorded as `unverified`; the Checks panel and the PR test plan say so.
+- **Read from the base branch**, not the working tree: a run cannot change the checks it is verified under. The base branch is `repo.defaultBranch` for a run on an existing branch, otherwise the branch the run was created from.
+
+The output tail kept per check is the last 200 lines.
+
+### `repairAttempts` *(number, optional, default 2)*
+
+Repair turns allowed after a failing check, 0–3. Machine failures never use one.
+
+### `draftPrOnFailure` *(boolean, optional, default false)*
+
+Allow a draft pull request when checks fail.
 
 ### Post-setup summary
 

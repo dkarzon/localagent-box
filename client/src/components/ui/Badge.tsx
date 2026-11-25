@@ -10,7 +10,9 @@ type BadgeVariant =
   | 'error'
   | 'neutral'
   | 'processing'
-  | 'completing';
+  | 'completing'
+  | 'info'
+  | 'danger';
 
 const variantStyles: Record<BadgeVariant, string> = {
   running: 'border-success/30 bg-success-container text-on-success-container',
@@ -23,6 +25,8 @@ const variantStyles: Record<BadgeVariant, string> = {
   neutral: 'border-surface-container-highest bg-surface-container text-on-surface-variant',
   processing: 'border-success/30 bg-success-container text-on-success-container',
   completing: 'border-primary/30 bg-primary-container text-on-primary-container',
+  info: 'border-secondary/30 bg-secondary-container text-on-secondary-container',
+  danger: 'border-error/30 bg-error-container text-on-error-container',
 };
 
 interface BadgeProps {
@@ -53,8 +57,13 @@ export function agentStatusVariant(status: string): BadgeVariant {
       return 'queued';
     case 'processing':
       return 'processing';
+    case 'verifying':
+    case 'repairing':
+      return 'info';
     case 'completing':
       return 'completing';
+    case 'failed_machine':
+      return 'danger';
     case 'failed':
     case 'cancelled':
       return 'failed';
@@ -68,6 +77,8 @@ export function agentStatusPulse(status: string): boolean {
     status === 'running' ||
     status === 'queued' ||
     status === 'processing' ||
+    status === 'verifying' ||
+    status === 'repairing' ||
     status === 'completing'
   );
 }

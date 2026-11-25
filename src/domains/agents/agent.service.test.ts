@@ -221,6 +221,7 @@ function createTestContext(options?: {
     createBranch: async () => {},
     fetchAndCheckoutBranch: async () => {},
     remoteBranchExists: async () => false,
+    ensureRemoteRef: async () => ({ available: true, fetched: false }),
     getPorcelainStatus: async () => ' M src/changed.ts',
     getDiffStat: async () => ' src/changed.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)',
     parsePorcelainStatus: () => [{ path: 'src/changed.ts', kind: 'modified', statusCode: ' M' }],

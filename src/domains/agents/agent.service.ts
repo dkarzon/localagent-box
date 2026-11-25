@@ -388,6 +388,13 @@ export function createAgentService(options: {
     dataDir,
     workspaceRoot,
     agentTimeoutMs,
+    getRepo: (repoId) => {
+      try {
+        return repoManager.getRepo(repoId);
+      } catch {
+        return undefined;
+      }
+    },
     fs: fsImpl,
     path: pathImpl,
     spawn: (options.spawn || spawn) as SpawnFn,

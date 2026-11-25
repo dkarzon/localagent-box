@@ -142,6 +142,8 @@ const SUCCESS: WorkspaceCommandResult = {
   outputTail: 'ok',
   timedOut: false,
   success: true,
+  signal: null,
+  durationMs: 0,
 };
 
 function runBootstrap(
@@ -179,6 +181,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'added 12 packages',
         timedOut: false,
         success: true,
+        signal: null,
+        durationMs: 0,
       }),
     });
 
@@ -199,6 +203,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'ok',
         timedOut: false,
         success: true,
+        signal: null,
+        durationMs: 0,
       }),
     });
 
@@ -218,6 +224,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'ok',
         timedOut: false,
         success: true,
+        signal: null,
+        durationMs: 0,
       }),
     });
 
@@ -261,6 +269,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'setup-script-ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -286,6 +296,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -306,6 +318,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -326,6 +340,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -346,6 +362,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'failure in setup.sh',
           timedOut: false,
           success: false,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -371,6 +389,8 @@ describe('runWorkspaceBootstrap', () => {
             outputTail: 'failure in setup.sh',
             timedOut: false,
             success: false,
+            signal: null,
+            durationMs: 0,
           }),
         });
       } catch (err) {
@@ -410,6 +430,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'added 12 packages',
         timedOut: false,
         success: true,
+        signal: null,
+        durationMs: 0,
       }),
     });
 
@@ -454,6 +476,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'ok',
         timedOut: false,
         success: true,
+        signal: null,
+        durationMs: 0,
       }),
     });
 
@@ -472,6 +496,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'ok',
         timedOut: false,
         success: true,
+        signal: null,
+        durationMs: 0,
       }),
     });
 
@@ -493,6 +519,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'npm ERR! Missing script: "prepare"',
         timedOut: false,
         success: false,
+        signal: null,
+        durationMs: 0,
       }),
     };
 
@@ -521,6 +549,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: 'npm ERR! Missing script: "prepare"',
         timedOut: false,
         success: false,
+        signal: null,
+        durationMs: 0,
       }),
     };
     let caught: unknown;
@@ -556,6 +586,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: '',
         timedOut: true,
         success: false,
+        signal: null,
+        durationMs: 0,
       }),
     };
     const state = await runBootstrap(h, opts);
@@ -587,6 +619,8 @@ describe('runWorkspaceBootstrap', () => {
         outputTail: '',
         timedOut: true,
         success: false,
+        signal: null,
+        durationMs: 0,
       }),
     };
     try {
@@ -641,6 +675,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'added 12 packages',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -675,6 +711,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -703,6 +741,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -725,6 +765,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -748,6 +790,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -769,6 +813,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -793,6 +839,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -814,6 +862,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -837,6 +887,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -865,6 +917,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -886,6 +940,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -908,6 +964,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'npm ERR! missing',
           timedOut: false,
           success: false,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -950,6 +1008,8 @@ describe('runWorkspaceBootstrap', () => {
       outputTail,
       timedOut: false,
       success: true,
+      signal: null,
+      durationMs: 0,
     });
 
     it('runs the verify command after a successful setup and records the outcome', async () => {
@@ -1032,7 +1092,7 @@ describe('runWorkspaceBootstrap', () => {
         runCommand: setupAndVerifyCommand(
           h,
           success('npm ci', 'ok'),
-          { command: 'npm test', exitCode: 1, outputTail: 'npm ERR! test failed', timedOut: false, success: false },
+          { command: 'npm test', exitCode: 1, outputTail: 'npm ERR! test failed', timedOut: false, signal: null, durationMs: 0, success: false },
         ),
       });
 
@@ -1067,7 +1127,7 @@ describe('runWorkspaceBootstrap', () => {
           runCommand: setupAndVerifyCommand(
             h,
             success('npm ci', 'ok'),
-            { command: 'npm test', exitCode: 1, outputTail: 'npm ERR! test failed', timedOut: false, success: false },
+            { command: 'npm test', exitCode: 1, outputTail: 'npm ERR! test failed', timedOut: false, signal: null, durationMs: 0, success: false },
           ),
         });
       } catch (err) {
@@ -1099,7 +1159,7 @@ describe('runWorkspaceBootstrap', () => {
         runCommand: setupAndVerifyCommand(
           h,
           success('npm ci', 'ok'),
-          { command: 'npm test', exitCode: 124, outputTail: '', timedOut: true, success: false },
+          { command: 'npm test', exitCode: 124, outputTail: '', timedOut: true, signal: null, durationMs: 0, success: false },
         ),
       });
 
@@ -1163,6 +1223,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -1185,6 +1247,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
 
@@ -1208,6 +1272,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
       assert.deepEqual(reviewState, { status: 'skipped' });
@@ -1221,6 +1287,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
       });
       assert.equal(batchState.status, 'completed');
@@ -1260,6 +1328,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
         prepareCache: async (cacheDir) => {
           prepareDirs.push(cacheDir);
@@ -1293,6 +1363,8 @@ describe('runWorkspaceBootstrap', () => {
           outputTail: 'ok',
           timedOut: false,
           success: true,
+          signal: null,
+          durationMs: 0,
         }),
         prepareCache: async (cacheDir) => {
           prepareDirs.push(cacheDir);
