@@ -297,6 +297,8 @@ export type AgentStatus =
   | 'completing'
   | 'completed'
   | 'failed'
+  /** Checks still failing after the repair attempts were used up (v1 1.2) */
+  | 'needs_attention'
   /** Failed because of the machine (timeout, OOM, disk), not because of the code */
   | 'failed_machine'
   | 'cancelled';
@@ -518,6 +520,11 @@ export interface AgentVerification {
   /** Where the check config came from; checks are never read from the working tree. */
   configSource: 'base' | 'none';
   maxRepairAttempts: number;
+  /**
+   * Resolved `draftPrOnFailure`, kept on the record so the server can decide about
+   * a draft PR without the workspace (v1 1.2).
+   */
+  draftPrOnFailure?: boolean;
   attempts: AgentVerificationAttempt[];
 }
 
@@ -542,6 +549,8 @@ export interface Agent {
   /** Distinct models invoked during the run (read by PR content generation) */
   modelsUsed?: string[] | null;
   status: AgentStatus;
+  /** Repair turn in progress (1-based); set when a code failure sends the model back to work */
+  repairAttempt?: number;
   /** Legacy interactive-session fields; kept so pre-v1 records still read */
   opencodeSessionId?: string | null;
   turnCount?: number;

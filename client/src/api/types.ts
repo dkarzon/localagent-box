@@ -18,6 +18,8 @@ export type AgentStatus =
   | 'completing'
   | 'completed'
   | 'failed'
+  /** Checks still failing after the repair attempts were used up */
+  | 'needs_attention'
   /** Stopped by a machine failure (timeout, OOM, disk), not by the code */
   | 'failed_machine'
   | 'cancelled';
@@ -310,6 +312,8 @@ export interface AgentVerification {
   state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
   configSource: 'base' | 'none';
   maxRepairAttempts: number;
+  /** True when the repo allows a draft PR for a failing run */
+  draftPrOnFailure?: boolean;
   attempts: AgentVerificationAttempt[];
 }
 
@@ -322,6 +326,8 @@ export interface Agent {
   agentId: string;
   repoId: string;
   status: AgentStatus | string;
+  /** Repair turn in progress (1-based), from the host verification loop */
+  repairAttempt?: number;
   mode?: AgentMode | LegacyAgentMode;
   workspaceId?: string;
   prompt?: string;
@@ -407,6 +413,7 @@ export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([...BATCH_ACTIVE_AGENT
 export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>([
   'completed',
   'failed',
+  'needs_attention',
   'failed_machine',
   'cancelled',
 ]);
@@ -525,12 +532,10 @@ export function isAgentActive(agent: Agent): boolean {
 }
 
 export function canCreatePullRequest(agent: Agent): boolean {
-  return (
-    agent.status === 'completed' &&
-    agent.result?.opencodeSuccess === true &&
-    agent.pushed === true &&
-    !agent.pullRequest
-  );
+  if (agent.pushed !== true || agent.pullRequest) return false;
+  if (agent.status === 'completed') return agent.result?.opencodeSuccess === true;
+  // Failed checks only get a draft PR when the repo asked for one.
+  return agent.status === 'needs_attention' && agent.verification?.draftPrOnFailure === true;
 }
 
 export function buildGitHubPullRequestUrl(

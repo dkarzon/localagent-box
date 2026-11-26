@@ -4,6 +4,7 @@ import type { AgentCheckRun, RepoEnvironmentConfig } from '../../../types';
 import type { RunWorkspaceCommandOptions, WorkspaceCommandResult } from './workspace-command';
 import {
   buildCheckList,
+  buildRepairPrompt,
   checkResultBlock,
   classifyFailure,
   resolveCheckTimeoutMs,
@@ -303,6 +304,35 @@ describe('checkResultBlock', () => {
   });
 });
 
+describe('buildRepairPrompt', () => {
+  const failingCheck: AgentCheckRun = {
+    name: 'test',
+    command: 'npm test',
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    durationMs: 4200,
+    outputTail: '1 test failed',
+  };
+
+  it('names the attempt, shows the failing check and forbids changing the check', () => {
+    assert.equal(
+      buildRepairPrompt({ attempt: 2, max: 2, failingCheck }),
+      [
+        'Host-run checks failed after your changes (repair attempt 2 of 2).',
+        '',
+        '## Failed check (host-run: `npm test`)',
+        'exit=1',
+        '1 test failed',
+        '',
+        'Fix the cause so this command passes. Do not change the check command or the',
+        'check configuration. Do not commit or push; the host does that. When done,',
+        'briefly state what you changed and why.',
+      ].join('\n'),
+    );
+  });
+});
+
 describe('resolveVerificationSettings', () => {
   it('uses the base config and reports where it came from', () => {
     const settings = resolveVerificationSettings({
@@ -315,6 +345,15 @@ describe('resolveVerificationSettings', () => {
     assert.equal(settings.maxRepairAttempts, 1);
     assert.equal(settings.maxOutputLines, 200);
     assert.equal(settings.timeoutMs, 600_000);
+    assert.equal(settings.draftPrOnFailure, false);
+  });
+
+  it('resolves draftPrOnFailure from the base config', () => {
+    assert.equal(
+      resolveVerificationSettings({ version: 1, checks: { test: 'npm test' }, draftPrOnFailure: true })
+        .draftPrOnFailure,
+      true,
+    );
   });
 
   it('reports `none` when no config is available', () => {
@@ -322,5 +361,6 @@ describe('resolveVerificationSettings', () => {
     assert.deepEqual(settings.checks, []);
     assert.equal(settings.configSource, 'none');
     assert.equal(settings.maxRepairAttempts, 2);
+    assert.equal(settings.draftPrOnFailure, false);
   });
 });

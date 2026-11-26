@@ -50,3 +50,52 @@ Timeout and cancel behaviour are unchanged.
 - Judgement call beyond the brief: `resolveTurnAssistantText` now takes a turn state
   (`messageTexts` + `streamedAssistantText`) instead of a single snapshot, because a turn
   can contain several assistant messages.
+
+# v1 Phase 1 — item 1.2: repair loop
+
+Scope: a failing host-run check sends the model back to work on the same session, up to the
+repo's repair budget. The host still decides whether a check passed; the model only fixes.
+
+## Steps
+
+1. `buildRepairPrompt({ attempt, max, failingCheck })` in `worker/verification.ts` builds the
+   follow-up text from `formatCommandResultBlock`, with the two constraints the model must not
+   cross: do not change the check, do not commit or push.
+
+2. `runBatchJob`'s `onTurnComplete` hook now verifies after **every** turn, not only turn 0:
+   `verifying` while the checks run, then either `passed`, `machine_failure`, or a repair
+   decision (`repairing` + `repairAttempt` n on the record) that returns the follow-up. The
+   repair model is the run model until item 5.1 adds a role model.
+
+3. Machine failures stop immediately (`classifyFailure` rows: timeout, OOM, disk full, missing
+   command) and never consume an attempt; a cancelled run is re-read before the checks so a
+   repair turn is never sent after cancellation, and the poll loop already refuses to run past
+   the timeout.
+
+4. Exhausted attempts leave `verification.state = 'failed'`, and the completion status is
+   `needs_attention` (added to `AgentStatus`, `TERMINAL_STATUSES`, `sseLockedStatuses`, the
+   client sets and the danger badge). The branch is still committed and pushed, and
+   `predecessorAllowsStart` treats `needs_attention && pushed` like `completed && pushed` so a
+   follow-up run on the branch can start.
+
+5. `verification.draftPrOnFailure` is resolved from the base config and stored on the record, so
+   `canCreatePullRequest` (server and client) can allow a draft PR for `needs_attention` without
+   the workspace.
+
+6. `handleWorkerExit` sends `agent.needs_attention` for that status and `agent.failed` for
+   `failed_machine`, and opens the draft PR when `draftPrOnFailure` is set.
+
+## Review
+
+- `npm test` (822), `npm run build` and `npx tsc -p client` pass.
+- `batch-run-flow.test.ts` drives `runBatchJob` through the 1.0 fake runner with an injected
+  `runChecks`: fail → fail → pass completes with three attempts; fail ×3 with max 2 gives
+  `needs_attention` after two repair turns; a timeout gives `failed_machine` with no follow-up
+  sent; `repairAttempts: 0` sends none at all. The test also asserts the status the record held
+  during each check run and the `repairAttempt` recorded before each repair turn.
+- `classifyFailure` rows are covered by `verification.test.ts` (1.1); `buildRepairPrompt` has its
+  own test for the exact injected text.
+- `queue-eligibility.test.ts` covers a `needs_attention` predecessor (pushed → start, not pushed
+  → defer), and `agent-pull-request.test.ts` the draft PR gate.
+- Assumptions: `repairAttempt` is stored on the record (needed by the 6.1 progress file and the
+  UI); `needs_attention` is not retryable in this item — resume is 6.2.

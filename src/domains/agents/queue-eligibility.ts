@@ -49,7 +49,7 @@ export function predecessorAllowsStart(predecessor: Agent | undefined): boolean 
   if (isLegacyMode(predecessor)) {
     return true;
   }
-  if (predecessor.status === 'completed' && predecessor.pushed) {
+  if ((predecessor.status === 'completed' || predecessor.status === 'needs_attention') && predecessor.pushed) {
     return true;
   }
   if (
@@ -132,6 +132,9 @@ export function hasActiveCodingOnBranch(
 }
 
 function predecessorWaitReason(predecessor: Agent): string {
+  if (predecessor.status === 'needs_attention') {
+    return `Waiting for ${predecessor.agentId} (needs_attention) — a person needs to resolve that run`;
+  }
   if (predecessor.status === 'failed' || predecessor.status === 'cancelled') {
     return `Waiting for ${predecessor.agentId} (${predecessor.status}) — retry that session or start next`;
   }

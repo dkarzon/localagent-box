@@ -60,6 +60,8 @@ export interface VerificationSettings {
   timeoutMs: number;
   maxOutputLines: number;
   maxRepairAttempts: number;
+  /** Resolved `draftPrOnFailure`; stored on the record so the server needs no workspace. */
+  draftPrOnFailure: boolean;
   configSource: 'base' | 'none';
 }
 
@@ -69,6 +71,7 @@ export function resolveVerificationSettings(config: RepoEnvironmentConfig | null
     timeoutMs: resolveCheckTimeoutMs(config),
     maxOutputLines: CHECK_OUTPUT_TAIL_LINES,
     maxRepairAttempts: resolveMaxRepairAttempts(config),
+    draftPrOnFailure: config?.draftPrOnFailure === true,
     configSource: config ? 'base' : 'none',
   };
 }
@@ -187,4 +190,24 @@ export function checkResultBlock(run: AgentCheckRun, heading: string): string {
     success: !run.timedOut && run.exitCode === 0,
   };
   return formatCommandResultBlock(result, heading);
+}
+
+/**
+ * Follow-up turn for a code failure (v1 1.2). Machine failures never reach this:
+ * they are infrastructure, so there is nothing the model could fix.
+ */
+export function buildRepairPrompt(params: {
+  attempt: number;
+  max: number;
+  failingCheck: AgentCheckRun;
+}): string {
+  return [
+    `Host-run checks failed after your changes (repair attempt ${params.attempt} of ${params.max}).`,
+    '',
+    checkResultBlock(params.failingCheck, 'Failed check'),
+    '',
+    'Fix the cause so this command passes. Do not change the check command or the',
+    'check configuration. Do not commit or push; the host does that. When done,',
+    'briefly state what you changed and why.',
+  ].join('\n');
 }

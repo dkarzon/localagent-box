@@ -370,14 +370,27 @@ export function createAgentService(options: {
           void reviewAutofix.startAutomaticChain(agentId);
         }
       }
-    } else if (current?.status === 'failed') {
+    } else if (
+      current?.status === 'failed' ||
+      current?.status === 'failed_machine' ||
+      current?.status === 'needs_attention'
+    ) {
       // Interrupted review: cancel its in-progress check run (best-effort),
       // so a required check does not stay in_progress on GitHub.
       if (current.review?.githubCheckRunId) {
         cancelReviewCheckRun(agentId, current.review);
       }
-      sendAgentWebhook(agentId, 'agent.failed');
+      sendAgentWebhook(
+        agentId,
+        current.status === 'needs_attention' ? 'agent.needs_attention' : 'agent.failed',
+      );
       void reviewAutofix.handleFixAgentFinished(agentId);
+      // A run that used up its repair attempts can still get a draft PR when the
+      // repo set `draftPrOnFailure`; the flag is on the record, so the worker's
+      // workspace is not needed here.
+      if (current.status === 'needs_attention' && current.verification?.draftPrOnFailure) {
+        void handleAutoCreatePullRequest(agentId);
+      }
     }
 
     queue.process();

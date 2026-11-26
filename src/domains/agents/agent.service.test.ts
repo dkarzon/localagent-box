@@ -1910,4 +1910,75 @@ describe('createAgentService (per-repo webhook endpoint)', () => {
 
     assert.equal(deliveries.length, 0);
   });
+
+  it('sends agent.needs_attention for a run whose repair attempts ran out', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({ webhookSender });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'needs_attention',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+      verification: {
+        state: 'failed',
+        configSource: 'base',
+        maxRepairAttempts: 2,
+        draftPrOnFailure: false,
+        attempts: [],
+      },
+    });
+    ctx.spawned[0].emitExit(1);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal((deliveries[0].data as { event: string }).event, 'agent.needs_attention');
+  });
+
+  it('sends agent.failed for a machine failure', () => {
+    const { webhookSender, deliveries } = makeWebhookCapture();
+    const ctx = createTestContext({ webhookSender });
+    ctx.configRepository.save({ webhookUrl: 'https://hooks.example.com/global-agent' });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'failed_machine',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+      verification: {
+        state: 'machine_failure',
+        configSource: 'base',
+        maxRepairAttempts: 2,
+        draftPrOnFailure: false,
+        attempts: [],
+      },
+    });
+    ctx.spawned[0].emitExit(1);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal((deliveries[0].data as { event: string }).event, 'agent.failed');
+  });
+
+  it('opens the draft PR for a needs_attention run only when draftPrOnFailure is set', async () => {
+    let created = false;
+    const ctx = createTestContext({ onCreatePullRequest: () => { created = true; } });
+
+    const agent = ctx.service.createAgent({ repoId: testRepo.repoId, prompt: 'Refactor auth' });
+    ctx.repository.update(agent.agentId, {
+      status: 'needs_attention',
+      pushed: true,
+      finishedAt: new Date().toISOString(),
+      verification: {
+        state: 'failed',
+        configSource: 'base',
+        maxRepairAttempts: 2,
+        draftPrOnFailure: true,
+        attempts: [],
+      },
+    });
+    ctx.spawned[0].emitExit(1);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(created, true);
+  });
 });

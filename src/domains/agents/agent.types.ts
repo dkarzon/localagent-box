@@ -3,6 +3,8 @@ import type { Agent, AgentMode, AgentStatus, LegacyAgentMode } from '../../types
 export const TERMINAL_STATUSES = new Set<AgentStatus>([
   'completed',
   'failed',
+  /** Repair attempts used up: pushed, waiting for a person (v1 1.2) */
+  'needs_attention',
   'failed_machine',
   'cancelled',
 ]);

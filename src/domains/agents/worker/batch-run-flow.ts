@@ -8,6 +8,11 @@ import {
   type TurnFollowUp,
 } from '../../../integrations/opencode/session-orchestrator';
 import type {
+  CreateOpenCodeSessionRunnerOptions,
+  OpenCodeSessionRunner,
+} from '../../../integrations/opencode/session-runner';
+import type {
+  Agent,
   AgentJob,
   AgentVerification,
   AppConfig,
@@ -16,12 +21,18 @@ import type {
 import {
   appendLog,
   appendLogBlock,
+  readAgentStatus,
   updateAgentRecord,
 } from './agent-state-writer';
 import { loadEnvironmentConfigFromBase } from './git-ref-files';
 import { finalizeGitChanges } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
-import { checkResultBlock, resolveVerificationSettings, runChecks } from './verification';
+import {
+  buildRepairPrompt,
+  checkResultBlock,
+  resolveVerificationSettings,
+  runChecks,
+} from './verification';
 
 export function resolveRunConfig(config: AppConfig, job: AgentJob): AppConfig {
   if (job.model) {
@@ -41,19 +52,20 @@ export function resolveAutoApprovePermissions(config: AppConfig, job: AgentJob):
  * Completion status once host verification is in play. A check failure is the
  * run's failure even when files changed, because the host — not the model —
  * decides whether the work is good. Machine failures are reported separately so
- * they are never mistaken for a code failure.
+ * they are never mistaken for a code failure, and a code failure that used up its
+ * repair attempts becomes `needs_attention` for a person to look at (v1 1.2).
  */
 export function resolveBatchCompletionStatus(options: {
   opencodeSuccess: boolean;
   pushOnFailure: boolean;
   filesChanged: number;
   verification?: AgentVerification;
-}): 'completed' | 'failed' | 'failed_machine' {
+}): 'completed' | 'failed' | 'failed_machine' | 'needs_attention' {
   if (options.verification?.state === 'machine_failure') {
     return 'failed_machine';
   }
   if (options.verification?.state === 'failed') {
-    return 'failed';
+    return 'needs_attention';
   }
   if (options.filesChanged > 0 && (options.opencodeSuccess || options.pushOnFailure)) {
     return 'completed';
@@ -74,7 +86,9 @@ export function resolveBatchFailureMessage(options: {
     return `Machine failure: ${lastAttempt?.machineReason ?? 'unknown'} in ${failingCheck.name}`;
   }
   if (options.verification?.state === 'failed' && failingCheck) {
-    return `Checks failed: ${failingCheck.name} exit ${failingCheck.exitCode}`;
+    const repairs = (lastAttempt?.attempt ?? 0);
+    const base = `Checks failed: ${failingCheck.name} exit ${failingCheck.exitCode}`;
+    return repairs > 0 ? `${base} after ${repairs} repair attempt(s)` : base;
   }
 
   if (options.opencodeSuccess && options.filesChanged === 0) {
@@ -124,7 +138,20 @@ async function loadCheckConfig(ctx: WorkerContext): Promise<RepoEnvironmentConfi
   return result.config;
 }
 
-export async function runBatchJob(ctx: WorkerContext): Promise<void> {
+/**
+ * Test seams for a batch run. Every host-owned boundary a repair-loop test needs is
+ * injectable, so a test can script outcomes without a real workspace or session.
+ */
+export interface BatchRunDeps {
+  /** Check config from the base branch; defaults to reading it with git. */
+  loadCheckConfig?: (ctx: WorkerContext) => Promise<RepoEnvironmentConfig | null>;
+  /** Host-run checks; defaults to `runChecks`. */
+  runChecks?: typeof runChecks;
+  /** Session runner handed to the orchestrator (see 1.0); defaults to the real one. */
+  createRunner?: (options: CreateOpenCodeSessionRunnerOptions) => OpenCodeSessionRunner;
+}
+
+export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): Promise<void> {
   const { job, logPath, config, agentsStore, gitService, githubApp } = ctx;
   const repo = ctx.repo;
   if (!repo) {
@@ -145,11 +172,14 @@ export async function runBatchJob(ctx: WorkerContext): Promise<void> {
       : 'Tool permissions: auto-approve disabled',
   );
 
-  const settings = resolveVerificationSettings(await loadCheckConfig(ctx));
+  const settings = resolveVerificationSettings(
+    await (deps.loadCheckConfig ?? loadCheckConfig)(ctx),
+  );
   const verification: AgentVerification = {
     state: 'unverified',
     configSource: settings.configSource,
     maxRepairAttempts: settings.maxRepairAttempts,
+    draftPrOnFailure: settings.draftPrOnFailure,
     attempts: [],
   };
 
@@ -159,49 +189,101 @@ export async function runBatchJob(ctx: WorkerContext): Promise<void> {
     appendLog(
       logPath,
       `Checks: ${settings.checks.map((check) => check.name).join(', ')} ` +
-        `(timeout ${settings.timeoutMs}ms, config from base branch ${job.checksBaseBranch})`,
+        `(timeout ${settings.timeoutMs}ms, repair attempts ${settings.maxRepairAttempts}, ` +
+        `config from base branch ${job.checksBaseBranch})`,
     );
   }
 
-  /**
-   * Host verification after the task turn. Repair turns arrive in 1.2, so for
-   * now a failing check ends the run with `null`.
-   */
-  async function onTurnComplete(turn: CompletedTurn): Promise<TurnFollowUp | null> {
-    if (settings.checks.length === 0 || turn.index !== 0) {
-      return null;
-    }
-
+  const persistVerification = (patch: Partial<Agent> = {}) =>
     updateAgentRecord(agentsStore, job.agentId, {
-      status: 'verifying',
+      ...patch,
+      verification,
       lastActivityAt: new Date().toISOString(),
     });
 
-    const attempt = await runChecks(job.workspaceDir, settings.checks, {
-      attempt: verification.attempts.length,
-      timeoutMs: settings.timeoutMs,
-      maxOutputLines: settings.maxOutputLines,
-    });
+  /**
+   * Host verification after each turn. A code failure earns a repair turn while
+   * attempts remain; a machine failure stops immediately, and exhausted attempts
+   * end the run as needs_attention. The poll loop checks cancellation and the
+   * timeout before calling this, so no repair turn runs past either.
+   */
+  async function onTurnComplete(turn: CompletedTurn): Promise<TurnFollowUp | null> {
+    if (settings.checks.length === 0) {
+      return null;
+    }
 
+    if (readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
+      appendLog(logPath, `Checks skipped after turn ${turn.index} — the run was cancelled`);
+      return null;
+    }
+
+    persistVerification({ status: 'verifying' });
+    const attempt = await (deps.runChecks ?? runChecks)(
+      job.workspaceDir,
+      settings.checks,
+      {
+        attempt: verification.attempts.length,
+        timeoutMs: settings.timeoutMs,
+        maxOutputLines: settings.maxOutputLines,
+      },
+    );
     verification.attempts.push(attempt);
-    verification.state = attempt.passed
-      ? 'passed'
-      : attempt.failureKind === 'machine'
-        ? 'machine_failure'
-        : 'failed';
 
-    updateAgentRecord(agentsStore, job.agentId, { verification });
-
-    const stoppedAt = attempt.checks.at(-1);
+    const failingCheck = attempt.checks.at(-1);
     appendLogBlock(
       logPath,
       `Verification attempt ${attempt.attempt} — ${attempt.passed
         ? 'all checks passed'
-        : `stopped at ${stoppedAt?.name ?? 'unknown'} (${attempt.failureKind ?? 'code'})`}`,
+        : `stopped at ${failingCheck?.name ?? 'unknown'} (${attempt.failureKind ?? 'code'})`}`,
       attempt.checks.map((run) => checkResultBlock(run, `Check ${run.name}`)).join('\n\n'),
     );
 
-    return null;
+    if (attempt.passed) {
+      verification.state = 'passed';
+      persistVerification();
+      return null;
+    }
+
+    if (attempt.failureKind === 'machine') {
+      verification.state = 'machine_failure';
+      persistVerification();
+      appendLog(
+        logPath,
+        `Machine failure (${attempt.machineReason ?? 'unknown'}) in ${failingCheck?.name ?? 'a check'} — ` +
+          'no repair turn; the code is not the problem',
+      );
+      return null;
+    }
+
+    if (!failingCheck) {
+      return null;
+    }
+
+    verification.state = 'failed';
+    const repairsUsed = verification.attempts.length - 1;
+    if (repairsUsed >= settings.maxRepairAttempts) {
+      persistVerification();
+      appendLog(
+        logPath,
+        `Repair attempts exhausted (${repairsUsed} of ${settings.maxRepairAttempts}) — ` +
+          'the run needs attention',
+      );
+      return null;
+    }
+
+    const repairAttempt = repairsUsed + 1;
+    persistVerification({ status: 'repairing', repairAttempt });
+    appendLog(
+      logPath,
+      `Repair attempt ${repairAttempt} of ${settings.maxRepairAttempts} — sending the failing check back to the model`,
+    );
+    return {
+      followUp: buildRepairPrompt({
+        attempt: repairAttempt,
+        max: settings.maxRepairAttempts,
+        failingCheck,
+      }),
+    };
   }
 
   let opencodeSuccess = false;
@@ -210,6 +292,7 @@ export async function runBatchJob(ctx: WorkerContext): Promise<void> {
       ctx,
       autoApprovePermissions,
       onTurnComplete,
+      ...(deps.createRunner ? { createRunner: deps.createRunner } : {}),
     });
 
     if (result.outcome === 'cancelled') {

@@ -171,7 +171,7 @@ Timeout in milliseconds for `verifyCommand`. Same constraints as `setup.timeoutM
 
 ### Post-run checks — `checks` *(object, optional)*
 
-Host-run commands executed **after** the model's turn, from the workspace, in `build` → `lint` → `test` order, stopping at the first failure. The run is only reported as successful when these pass, so a run that changes files but fails a check ends as `failed` (or `failed_machine` for a timeout, OOM kill, full disk, or a missing command).
+Host-run commands executed **after** the model's turn, from the workspace, in `build` → `lint` → `test` order, stopping at the first failure. The run is only reported as successful when these pass. A code failure earns a repair turn (see `repairAttempts`); when those run out the run ends as `needs_attention` with the branch pushed, and a machine failure (timeout, OOM kill, full disk, or a missing command) ends as `failed_machine` without a repair turn.
 
 ```jsonc
 // .localagent-box/environment.json (example)
@@ -195,11 +195,11 @@ The output tail kept per check is the last 200 lines.
 
 ### `repairAttempts` *(number, optional, default 2)*
 
-Repair turns allowed after a failing check, 0–3. Machine failures never use one.
+Repair turns allowed after a failing check, 0–3. The host sends the failing check's result block back to the model with a short instruction to fix the cause without changing the check, and re-runs the checks after that turn. Machine failures never use a repair attempt.
 
 ### `draftPrOnFailure` *(boolean, optional, default false)*
 
-Allow a draft pull request when checks fail.
+Allow a draft pull request when checks fail. It applies to a run that ended `needs_attention` (repair attempts used up); machine failures never get a PR.
 
 ### Post-setup summary
 

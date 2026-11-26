@@ -62,6 +62,7 @@ export function agentStatusVariant(status: string): BadgeVariant {
       return 'info';
     case 'completing':
       return 'completing';
+    case 'needs_attention':
     case 'failed_machine':
       return 'danger';
     case 'failed':

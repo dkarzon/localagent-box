@@ -366,6 +366,7 @@ export async function runSessionOrchestrator(
     'completing',
     'completed',
     'failed',
+    'needs_attention',
     'failed_machine',
     'cancelled',
   ]);

@@ -27,12 +27,14 @@ export function mapGitHubPullRequest(pr: GitHubPullRequestResponse): AgentPullRe
 }
 
 export function canCreatePullRequest(agent: Agent): boolean {
-  return (
-    agent.status === 'completed' &&
-    agent.result?.opencodeSuccess === true &&
-    agent.pushed === true &&
-    !agent.pullRequest
-  );
+  if (!agent.pushed || agent.pullRequest) {
+    return false;
+  }
+  if (agent.status === 'completed') {
+    return agent.result?.opencodeSuccess === true;
+  }
+  // Checks still failing: a draft PR is opened only when the repo asked for one (v1 1.2).
+  return agent.status === 'needs_attention' && agent.verification?.draftPrOnFailure === true;
 }
 
 export function buildDefaultPullRequestTitle(agent: Agent): string {
