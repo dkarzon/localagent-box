@@ -144,6 +144,12 @@ describe('buildHostTestPlanSection', () => {
     );
   });
 
+  it('says the config was unreadable, not absent, when the base branch could not be read', () => {
+    const section = buildHostTestPlanSection(failedVerification({ configSource: 'unavailable', attempts: [] }));
+    assert.match(section, /⚠️ Unverified — the check config could not be read from the base branch/);
+    assert.doesNotMatch(section, /no build\/lint\/test checks are configured/);
+  });
+
   it('states that nothing was verified when the configured checks never ran', () => {
     assert.match(
       buildHostTestPlanSection(failedVerification({ state: 'unverified' })),

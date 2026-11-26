@@ -563,7 +563,7 @@ describe('runBatchJob repair loop', () => {
     const { runner, prompts } = makeFakeRunner(pollsForTurns(3), ['turn 0 text', 'turn 1 text', 'turn 2 text']);
 
     await runBatchJob(ctx, {
-      loadCheckConfig: async () => checkConfig,
+      loadCheckConfig: async () => ({ config: checkConfig }),
       runChecks: makeRunChecks(
         [
           attemptResult(0, checkRun(), { kind: 'code' }),
@@ -612,7 +612,7 @@ describe('runBatchJob repair loop', () => {
     await assert.rejects(
       () =>
         runBatchJob(ctx, {
-          loadCheckConfig: async () => checkConfig,
+          loadCheckConfig: async () => ({ config: checkConfig }),
           runChecks: makeRunChecks(
             [
               attemptResult(0, checkRun(), { kind: 'code' }),
@@ -661,7 +661,7 @@ describe('runBatchJob repair loop', () => {
     await assert.rejects(
       () =>
         runBatchJob(ctx, {
-          loadCheckConfig: async () => checkConfig,
+          loadCheckConfig: async () => ({ config: checkConfig }),
           runChecks: makeRunChecks(
             [
               attemptResult(
@@ -698,7 +698,7 @@ describe('runBatchJob repair loop', () => {
     await assert.rejects(
       () =>
         runBatchJob(ctx, {
-          loadCheckConfig: async () => ({ ...checkConfig, repairAttempts: 0 }),
+          loadCheckConfig: async () => ({ config: { ...checkConfig, repairAttempts: 0 } }),
           runChecks: makeRunChecks([attemptResult(0, checkRun(), { kind: 'code' })], calls, record),
           createRunner: () => runner,
         }),
@@ -719,7 +719,7 @@ describe('runBatchJob repair loop', () => {
     await assert.rejects(
       () =>
         runBatchJob(ctx, {
-          loadCheckConfig: async () => checkConfig,
+          loadCheckConfig: async () => ({ config: checkConfig }),
           runChecks: makeRunChecks([attemptResult(0, checkRun(), { kind: 'code' })], calls, record),
           createRunner: () => runner,
           // The checks finished after the run's time limit.
@@ -736,6 +736,49 @@ describe('runBatchJob repair loop', () => {
     assert.match(fs.readFileSync(job.logPath, 'utf8'), /run time limit .* was reached during the checks/);
   });
 
+  it('verifies a repair that reverted every change instead of asking for a no-change explanation', async () => {
+    // Turn 0 changes a file; the repair turn reverts it, so the tree is clean from then on.
+    const { ctx, record } = makeBatchHarness([' M src/changed.ts', '']);
+    const calls: CheckCall[] = [];
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
+
+    await assert.rejects(
+      () =>
+        runBatchJob(ctx, {
+          loadCheckConfig: async () => ({ config: checkConfig }),
+          runChecks: makeRunChecks(
+            [attemptResult(0, checkRun(), { kind: 'code' }), attemptResult(1, null)],
+            calls,
+            record,
+          ),
+          createRunner: () => runner,
+        }),
+      /without file changes/,
+    );
+
+    const agent = record();
+    assert.equal(agent.status, 'failed');
+    assert.equal(agent.noChange ?? null, null);
+    assert.equal(agent.verification?.attempts.length, 2, 'the reverted tree was checked');
+    assert.equal(prompts.length, 2);
+    assert.ok(prompts.every((prompt) => !/without changing any files/.test(prompt)));
+  });
+
+  it('records an unreadable base branch as unavailable config', async () => {
+    const { ctx, record } = makeBatchHarness();
+    const { runner } = makeFakeRunner(pollsForTurns(1));
+
+    await runBatchJob(ctx, {
+      loadCheckConfig: async () => ({ config: null, available: false }),
+      createRunner: () => runner,
+    });
+
+    const agent = record();
+    assert.equal(agent.status, 'completed');
+    assert.equal(agent.verification?.state, 'unverified');
+    assert.equal(agent.verification?.configSource, 'unavailable');
+  });
+
   it('ends as cancelled when the run is cancelled while the checks run', async () => {
     const { ctx, record } = makeBatchHarness();
     const calls: CheckCall[] = [];
@@ -743,7 +786,7 @@ describe('runBatchJob repair loop', () => {
     const failing = makeRunChecks([attemptResult(0, checkRun(), { kind: 'code' })], calls, record);
 
     await runBatchJob(ctx, {
-      loadCheckConfig: async () => checkConfig,
+      loadCheckConfig: async () => ({ config: checkConfig }),
       runChecks: async (...args) => {
         const attempt = await failing(...args);
         // The server cancels the run while the checks are running.
@@ -782,7 +825,7 @@ describe('runBatchJob zero-change completion gate', () => {
 
     const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
     await runBatchJob(ctx, {
-      loadCheckConfig: async () => null,
+      loadCheckConfig: async () => ({ config: null }),
       createRunner: () => runner,
     });
 
@@ -805,7 +848,7 @@ describe('runBatchJob zero-change completion gate', () => {
     const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
 
     await assert.rejects(
-      () => runBatchJob(ctx, { loadCheckConfig: async () => null, createRunner: () => runner }),
+      () => runBatchJob(ctx, { loadCheckConfig: async () => ({ config: null }), createRunner: () => runner }),
       /No changes and no valid explanation/,
     );
 
@@ -824,7 +867,7 @@ describe('runBatchJob zero-change completion gate', () => {
     const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
 
     await runBatchJob(ctx, {
-      loadCheckConfig: async () => checkConfig,
+      loadCheckConfig: async () => ({ config: checkConfig }),
       runChecks: makeRunChecks([attemptResult(0, null)], calls, record),
       createRunner: () => runner,
     });

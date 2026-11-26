@@ -115,6 +115,20 @@ describe('finalizeGitChanges — agent-made commits', () => {
     assert.equal(git(t.origin, 'rev-parse', 'feature'), result.commitSha);
   });
 
+  it('counts a file the agent committed and then edited again once', async () => {
+    const t = setup();
+    await t.gitService.markRunStart(t.workspaceDir);
+
+    fs.writeFileSync(path.join(t.workspaceDir, 'a.txt'), 'a\n');
+    git(t.workspaceDir, 'add', '-A');
+    git(t.workspaceDir, 'commit', '-m', 'agent did this');
+    fs.writeFileSync(path.join(t.workspaceDir, 'a.txt'), 'a2\n');
+
+    const result = await t.finalize();
+
+    assert.equal(result.filesChanged, 1);
+  });
+
   it('still reports no changes when the agent neither edited nor committed', async () => {
     const t = setup();
     await t.gitService.markRunStart(t.workspaceDir);

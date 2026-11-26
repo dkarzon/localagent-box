@@ -363,4 +363,10 @@ describe('resolveVerificationSettings', () => {
     assert.equal(settings.maxRepairAttempts, 2);
     assert.equal(settings.draftPrOnFailure, false);
   });
+
+  it('reports `unavailable` when the base branch could not be read', () => {
+    const settings = resolveVerificationSettings(null, false);
+    assert.deepEqual(settings.checks, []);
+    assert.equal(settings.configSource, 'unavailable');
+  });
 });

@@ -62,17 +62,24 @@ export interface VerificationSettings {
   maxRepairAttempts: number;
   /** Resolved `draftPrOnFailure`; stored on the record so the server needs no workspace. */
   draftPrOnFailure: boolean;
-  configSource: 'base' | 'none';
+  configSource: 'base' | 'none' | 'unavailable';
 }
 
-export function resolveVerificationSettings(config: RepoEnvironmentConfig | null): VerificationSettings {
+/**
+ * `available` is false when the base branch could not be read: no checks run, and the
+ * record says the config was unreadable rather than absent.
+ */
+export function resolveVerificationSettings(
+  config: RepoEnvironmentConfig | null,
+  available = true,
+): VerificationSettings {
   return {
     checks: buildCheckList(config),
     timeoutMs: resolveCheckTimeoutMs(config),
     maxOutputLines: CHECK_OUTPUT_TAIL_LINES,
     maxRepairAttempts: resolveMaxRepairAttempts(config),
     draftPrOnFailure: config?.draftPrOnFailure === true,
-    configSource: config ? 'base' : 'none',
+    configSource: !available ? 'unavailable' : config ? 'base' : 'none',
   };
 }
 

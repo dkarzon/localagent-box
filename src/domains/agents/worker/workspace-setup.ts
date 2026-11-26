@@ -285,9 +285,12 @@ export async function finalizeGitChanges({
     appendLog(logPath, `No uncommitted changes; using agent commit ${commitSha ?? '(unknown)'}`);
   }
 
-  // Files changed across the whole run (agent commits + our commit): `commitAll`
-  // commits exactly the uncommitted files, so the pre-commit count already holds.
-  const filesChanged = changes.filesChanged;
+  // Files changed across the whole run (agent commits + our commit). With agent commits,
+  // count again after committing: a file the agent committed and then edited again is in
+  // both pre-commit counts but is one changed file.
+  const filesChanged = changes.agentCommits > 0
+    ? ((await gitService.getCommitsSinceRunStart(job.workspaceDir))?.filesChanged ?? changes.filesChanged)
+    : changes.filesChanged;
 
   let pushed = false;
   if (job.push) {

@@ -310,7 +310,8 @@ export interface AgentVerificationAttempt {
 /** Host-run verification state; mirrors the server-side record. */
 export interface AgentVerification {
   state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
-  configSource: 'base' | 'none';
+  /** `unavailable`: the base branch could not be read, so no checks ran */
+  configSource: 'base' | 'none' | 'unavailable';
   maxRepairAttempts: number;
   /** True when the repo allows a draft PR for a failing run */
   draftPrOnFailure?: boolean;

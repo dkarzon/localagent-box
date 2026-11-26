@@ -134,10 +134,10 @@ export function logOpenCodeRunContext(
  * cannot rewrite the checks it is verified under. The batch clone is
  * `--single-branch`, so the base branch ref is fetched first.
  */
-async function loadCheckConfig(ctx: WorkerContext): Promise<RepoEnvironmentConfig | null> {
+async function loadCheckConfig(ctx: WorkerContext): Promise<CheckConfigLoad> {
   const { job, logPath, gitService } = ctx;
   if (!job.checksBaseBranch) {
-    return null;
+    return { config: null };
   }
 
   const ref = await gitService.ensureRemoteRef(job.workspaceDir, job.checksBaseBranch);
@@ -146,7 +146,7 @@ async function loadCheckConfig(ctx: WorkerContext): Promise<RepoEnvironmentConfi
       logPath,
       `Checks: base branch ${job.checksBaseBranch} could not be read (${ref.message || 'git fetch failed'})`,
     );
-    return null;
+    return { config: null, available: false };
   }
   if (ref.fetched) {
     appendLog(logPath, `Checks: fetched base branch ${job.checksBaseBranch} at depth 1`);
@@ -156,7 +156,14 @@ async function loadCheckConfig(ctx: WorkerContext): Promise<RepoEnvironmentConfi
   for (const note of result.notes) {
     appendLog(logPath, note);
   }
-  return result.config;
+  return { config: result.config, available: result.available };
+}
+
+/** Check config read from the base branch; `available: false` when that branch could not be read. */
+export interface CheckConfigLoad {
+  config: RepoEnvironmentConfig | null;
+  /** Defaults to true. */
+  available?: boolean;
 }
 
 /**
@@ -165,7 +172,7 @@ async function loadCheckConfig(ctx: WorkerContext): Promise<RepoEnvironmentConfi
  */
 export interface BatchRunDeps {
   /** Check config from the base branch; defaults to reading it with git. */
-  loadCheckConfig?: (ctx: WorkerContext) => Promise<RepoEnvironmentConfig | null>;
+  loadCheckConfig?: (ctx: WorkerContext) => Promise<CheckConfigLoad>;
   /** Host-run checks; defaults to `runChecks`. */
   runChecks?: typeof runChecks;
   /** Session runner handed to the orchestrator (see 1.0); defaults to the real one. */
@@ -195,9 +202,8 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
       : 'Tool permissions: auto-approve disabled',
   );
 
-  const settings = resolveVerificationSettings(
-    await (deps.loadCheckConfig ?? loadCheckConfig)(ctx),
-  );
+  const checkConfig = await (deps.loadCheckConfig ?? loadCheckConfig)(ctx);
+  const settings = resolveVerificationSettings(checkConfig.config, checkConfig.available ?? true);
   const verification: AgentVerification = {
     state: 'unverified',
     configSource: settings.configSource,
@@ -206,7 +212,9 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
     attempts: [],
   };
 
-  if (settings.checks.length === 0) {
+  if (settings.configSource === 'unavailable') {
+    appendLog(logPath, 'Checks: base branch config unavailable — the run is recorded as unverified');
+  } else if (settings.checks.length === 0) {
     appendLog(logPath, 'Checks: none configured — the run is recorded as unverified');
   } else {
     appendLog(
@@ -281,8 +289,11 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
       return null;
     }
 
+    // The gate is for a run that never changed anything. Once a check attempt exists the
+    // run did make changes, so a repair that reverts them all is verified like any other
+    // turn and cannot complete on a no-change explanation.
     const changes = await detectWorkspaceChanges(ctx);
-    if (changes.filesChanged === 0) {
+    if (changes.filesChanged === 0 && verification.attempts.length === 0) {
       return completeZeroChangeTurn(turn);
     }
 

@@ -293,7 +293,9 @@ export function AgentSessionInfo({
               <p className="mb-3 text-xs text-muted">
                 {verification.configSource === 'base'
                   ? 'Config from the base branch'
-                  : 'No checks configured'}
+                  : verification.configSource === 'unavailable'
+                    ? 'Base branch could not be read — no checks ran'
+                    : 'No checks configured'}
                 {verification.maxRepairAttempts > 0
                   ? ` · up to ${verification.maxRepairAttempts} repair attempt(s)`
                   : ''}

@@ -533,8 +533,11 @@ export interface AgentVerificationAttempt {
 /** Host-run verification state for the run, persisted on the agent record. */
 export interface AgentVerification {
   state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
-  /** Where the check config came from; checks are never read from the working tree. */
-  configSource: 'base' | 'none';
+  /**
+   * Where the check config came from; checks are never read from the working tree.
+   * `unavailable`: the base branch could not be read, so whether checks exist is unknown.
+   */
+  configSource: 'base' | 'none' | 'unavailable';
   maxRepairAttempts: number;
   /**
    * Resolved `draftPrOnFailure`, kept on the record so the server can decide about

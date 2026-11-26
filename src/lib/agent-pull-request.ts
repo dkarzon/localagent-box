@@ -132,6 +132,11 @@ export function buildHostTestPlanSection(
   verification: AgentVerification | null | undefined,
   status?: AgentStatus,
 ): string {
+  if (verification?.configSource === 'unavailable') {
+    return buildUnverifiedTestPlan(
+      'the check config could not be read from the base branch, so no checks ran.',
+    );
+  }
   if (!verification || verification.configSource === 'none') {
     return buildUnverifiedTestPlan(
       'no build/lint/test checks are configured for this repo (`.localagent-box/environment.json` on the base branch).',

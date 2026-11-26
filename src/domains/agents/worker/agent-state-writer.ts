@@ -36,6 +36,11 @@ export function appendLogBlock(logPath: string, header: string, body: string): v
   }
 }
 
+/**
+ * Worker-side record update. Only the server cancels a run, so the worker never moves a
+ * record out of `cancelled`: a status write that races a cancel (for example while host
+ * checks run) keeps the cancel and applies the rest of the patch.
+ */
 export function updateAgentRecord(
   agentsStore: JsonStore<{ agents: Agent[] }>,
   agentId: string,
@@ -48,6 +53,9 @@ export function updateAgentRecord(
     return;
   }
   const merged = { ...agents[index], ...patch };
+  if (agents[index].status === 'cancelled') {
+    merged.status = 'cancelled';
+  }
   agents[index] = merged;
   agentsStore.save({ agents });
 }

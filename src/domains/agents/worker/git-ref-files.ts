@@ -49,6 +49,8 @@ export async function readFileAtRef(
 
 export interface EnvironmentConfigFromBaseResult {
   config: RepoEnvironmentConfig | null;
+  /** False when the base branch could not be read, as opposed to having no config file. */
+  available: boolean;
   /** Human-readable notes for the worker log. */
   notes: string[];
 }
@@ -72,15 +74,15 @@ export async function loadEnvironmentConfigFromBase(
     notes.push(
       `Warning: base branch ${baseBranch} is not available in the workspace; running checks without repository config`,
     );
-    return { config: null, notes };
+    return { config: null, available: false, notes };
   }
 
   const configText = await readFileAtRef(workspaceDir, baseRef, ENVIRONMENT_CONFIG_REPOSITORY_PATH);
   if (configText === null) {
-    return { config: null, notes };
+    return { config: null, available: true, notes };
   }
 
   const parsed = parseEnvironmentConfig(configText);
   notes.push(`Loaded ${ENVIRONMENT_CONFIG_REPOSITORY_PATH} from base branch ${baseBranch}`);
-  return { config: parsed.config, notes: [...notes, ...parsed.notes] };
+  return { config: parsed.config, available: true, notes: [...notes, ...parsed.notes] };
 }

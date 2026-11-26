@@ -70,15 +70,17 @@ describe('loadEnvironmentConfigFromBase', () => {
 
   it('returns null when the base branch has no environment.json', async () => {
     const dir = makeRepo(null, headConfig);
-    const { config, notes } = await loadEnvironmentConfigFromBase(dir, 'main');
+    const { config, notes, available } = await loadEnvironmentConfigFromBase(dir, 'main');
     assert.equal(config, null);
+    assert.equal(available, true, 'no config file is not the same as an unreadable branch');
     assert.deepEqual(notes, []);
   });
 
   it('fails closed when the base branch is not in the workspace', async () => {
     const dir = makeRepo(baseConfig, headConfig);
-    const { config, notes } = await loadEnvironmentConfigFromBase(dir, 'does-not-exist');
+    const { config, notes, available } = await loadEnvironmentConfigFromBase(dir, 'does-not-exist');
     assert.equal(config, null);
+    assert.equal(available, false);
     assert.ok(notes.some((note) => note.startsWith('Warning: base branch does-not-exist')));
   });
 
