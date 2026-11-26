@@ -710,6 +710,57 @@ describe('runBatchJob repair loop', () => {
     assert.equal(prompts.length, 1);
     assert.equal(record().escalation?.summary, 'test failing with no repair attempts allowed');
   });
+
+  it('sends no repair turn once the checks have used up the run time limit', async () => {
+    const { ctx, job, record } = makeBatchHarness();
+    const calls: CheckCall[] = [];
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(1));
+
+    await assert.rejects(
+      () =>
+        runBatchJob(ctx, {
+          loadCheckConfig: async () => checkConfig,
+          runChecks: makeRunChecks([attemptResult(0, checkRun(), { kind: 'code' })], calls, record),
+          createRunner: () => runner,
+          // The checks finished after the run's time limit.
+          now: () => Date.now() + job.agentTimeoutMs! + 1_000,
+        }),
+      /Checks failed: test exit 1/,
+    );
+
+    const agent = record();
+    assert.equal(agent.status, 'needs_attention');
+    assert.equal(agent.pushed, true, 'the finished work is pushed rather than lost to a timeout');
+    assert.equal(agent.repairAttempt, undefined);
+    assert.equal(prompts.length, 1, 'no repair turn was sent');
+    assert.match(fs.readFileSync(job.logPath, 'utf8'), /run time limit .* was reached during the checks/);
+  });
+
+  it('ends as cancelled when the run is cancelled while the checks run', async () => {
+    const { ctx, record } = makeBatchHarness();
+    const calls: CheckCall[] = [];
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(1));
+    const failing = makeRunChecks([attemptResult(0, checkRun(), { kind: 'code' })], calls, record);
+
+    await runBatchJob(ctx, {
+      loadCheckConfig: async () => checkConfig,
+      runChecks: async (...args) => {
+        const attempt = await failing(...args);
+        // The server cancels the run while the checks are running.
+        const data = ctx.agentsStore.load();
+        data.agents[0] = { ...data.agents[0], status: 'cancelled' };
+        ctx.agentsStore.save(data);
+        return attempt;
+      },
+      createRunner: () => runner,
+    });
+
+    const agent = record();
+    assert.equal(agent.status, 'cancelled');
+    assert.equal(agent.pushed, false);
+    assert.equal(agent.repairAttempt, undefined);
+    assert.equal(prompts.length, 1, 'no repair turn was sent after the cancel');
+  });
 });
 
 function writeNoChangeArtefact(workspaceDir: string, body: unknown): void {

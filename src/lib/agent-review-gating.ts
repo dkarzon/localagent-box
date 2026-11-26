@@ -4,6 +4,8 @@ const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'queued',
   'running',
   'processing',
+  'verifying',
+  'repairing',
   'completing',
 ]);
 

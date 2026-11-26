@@ -707,6 +707,13 @@ export async function runSessionOrchestrator(
             turns.push(turn);
 
             const next = onTurnComplete ? await onTurnComplete(turn) : null;
+            // The hook can run for minutes (host checks); a cancel that arrived meanwhile
+            // must end the run as cancelled, not as a completed turn or a new prompt.
+            if (onTurnComplete && readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
+              appendLog(logPath, `Agent cancelled after turn ${turn.index} — aborting OpenCode session`);
+              await sessionRunner.abort(sessionId);
+              return { outcome: 'cancelled', sessionId, turns };
+            }
             if (!next?.followUp.trim()) {
               return { outcome: 'turn_complete', sessionId, turns };
             }

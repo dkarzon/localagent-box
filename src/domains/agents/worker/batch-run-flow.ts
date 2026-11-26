@@ -1,6 +1,9 @@
 import {
   buildModelFlag,
   getOpencodeBin,
+  isAgentRunTimedOut,
+  parseTimeoutMs,
+  resolveAgentRunStartedAtMs,
 } from '../../../integrations/opencode/runner';
 import {
   runSessionOrchestrator,
@@ -23,6 +26,7 @@ import { RUN_START_REF } from '../../../services/git-service';
 import {
   appendLog,
   appendLogBlock,
+  readAgentRecord,
   readAgentStatus,
   updateAgentRecord,
 } from './agent-state-writer';
@@ -166,6 +170,8 @@ export interface BatchRunDeps {
   runChecks?: typeof runChecks;
   /** Session runner handed to the orchestrator (see 1.0); defaults to the real one. */
   createRunner?: (options: CreateOpenCodeSessionRunnerOptions) => OpenCodeSessionRunner;
+  /** Clock for the run time limit; defaults to `Date.now`. */
+  now?: () => number;
 }
 
 export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): Promise<void> {
@@ -210,6 +216,14 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
         `config from base branch ${job.checksBaseBranch})`,
     );
   }
+
+  // Same start time and limit the orchestrator enforces, so the hook can tell when the
+  // checks have used up the run's time and a repair turn could no longer finish.
+  const runStartedAtMs = resolveAgentRunStartedAtMs(
+    readAgentRecord(agentsStore, job.agentId)?.startedAt,
+  );
+  const runTimeoutMs = parseTimeoutMs(job.agentTimeoutMs);
+  const now = deps.now ?? Date.now;
 
   const persistVerification = (patch: Partial<Agent> = {}) =>
     updateAgentRecord(agentsStore, job.agentId, {
@@ -257,8 +271,9 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
   /**
    * Host verification after each turn. A code failure earns a repair turn while
    * attempts remain; a machine failure stops immediately, and exhausted attempts
-   * end the run as needs_attention. The poll loop checks cancellation and the
-   * timeout before calling this, so no repair turn runs past either.
+   * end the run as needs_attention. Checks can run for minutes, so cancellation and
+   * the run time limit are checked again before a repair turn is sent: a run out of
+   * time ends as needs_attention with its work pushed, instead of timing out mid-repair.
    */
   async function onTurnComplete(turn: CompletedTurn): Promise<TurnFollowUp | null> {
     if (readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
@@ -332,6 +347,20 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
         logPath,
         `Repair attempts exhausted (${repairsUsed} of ${settings.maxRepairAttempts}) — ` +
           'the run needs attention',
+      );
+      return null;
+    }
+
+    if (readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
+      appendLog(logPath, `No repair turn after attempt ${attempt.attempt} — the run was cancelled`);
+      return null;
+    }
+    if (isAgentRunTimedOut(runStartedAtMs, runTimeoutMs, now())) {
+      persistVerification();
+      appendLog(
+        logPath,
+        `No repair turn after attempt ${attempt.attempt} — the run time limit ` +
+          `(${Math.round(runTimeoutMs / 1000)}s) was reached during the checks; the run needs attention`,
       );
       return null;
     }
