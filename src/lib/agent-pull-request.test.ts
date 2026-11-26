@@ -84,6 +84,13 @@ describe('canCreatePullRequest', () => {
     assert.equal(canCreatePullRequest(agent({ status: 'needs_attention' })), false);
   });
 
+  it('does not open a PR for a run that completed on a no-change explanation', () => {
+    assert.equal(
+      canCreatePullRequest(agent({ result: { ...agent().result!, noChange: true } })),
+      false,
+    );
+  });
+
   it('does not open a PR for a machine failure', () => {
     assert.equal(
       canCreatePullRequest(

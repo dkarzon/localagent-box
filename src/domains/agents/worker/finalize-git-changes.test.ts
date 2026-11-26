@@ -5,9 +5,10 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, it } from 'node:test';
 import { createGitService } from '../../../services/git-service';
+import { excludeWorkspaceInfrastructureFromGit } from '../../../services/opencode-config';
 import type { GithubAppService } from '../../../services/github-app';
 import type { AgentJob, AppConfig, Repo } from '../../../types';
-import { finalizeGitChanges } from './workspace-setup';
+import { detectWorkspaceChanges, finalizeGitChanges } from './workspace-setup';
 
 const roots: string[] = [];
 
@@ -69,7 +70,7 @@ function setup() {
       allowCommit: true,
     });
 
-  return { origin, workspaceDir, gitService, finalize, logPath };
+  return { origin, workspaceDir, gitService, job, finalize, logPath };
 }
 
 afterEach(() => {
@@ -149,5 +150,37 @@ describe('finalizeGitChanges — agent-made commits', () => {
     const result = await t.finalize();
 
     assert.equal(result.filesChanged, 0);
+  });
+});
+
+describe('detectWorkspaceChanges', () => {
+  it('counts agent commits and working-tree changes together', async () => {
+    const t = setup();
+    await t.gitService.markRunStart(t.workspaceDir);
+
+    fs.writeFileSync(path.join(t.workspaceDir, 'a.txt'), 'a\n');
+    git(t.workspaceDir, 'add', '-A');
+    git(t.workspaceDir, 'commit', '-m', 'agent did this');
+    fs.writeFileSync(path.join(t.workspaceDir, 'b.txt'), 'b\n');
+
+    assert.deepEqual(await detectWorkspaceChanges({ job: t.job, gitService: t.gitService }), {
+      filesChanged: 2,
+      uncommittedFiles: 1,
+      agentCommits: 1,
+      committedFiles: 1,
+    });
+  });
+
+  it('does not count an artefact excluded from git, so a write-only turn stays zero-change', async () => {
+    const t = setup();
+    await t.gitService.markRunStart(t.workspaceDir);
+    excludeWorkspaceInfrastructureFromGit(t.workspaceDir);
+
+    fs.mkdirSync(path.join(t.workspaceDir, '.localagent-box', 'artefacts'), { recursive: true });
+    fs.writeFileSync(path.join(t.workspaceDir, '.localagent-box', 'artefacts', 'no-change.json'), '{}\n');
+
+    const changes = await detectWorkspaceChanges({ job: t.job, gitService: t.gitService });
+    assert.equal(changes.filesChanged, 0);
+    assert.match(fs.readFileSync(path.join(t.workspaceDir, '.git', 'info', 'exclude'), 'utf8'), /\.localagent-box\/artefacts\//);
   });
 });

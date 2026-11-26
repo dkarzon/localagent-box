@@ -317,6 +317,16 @@ export interface AgentVerification {
   attempts: AgentVerificationAttempt[];
 }
 
+/** Why a batch run ended with no file changes; mirrors the server schema. */
+export type NoChangeReason = 'already_done' | 'not_applicable' | 'blocked' | 'unclear_task';
+
+/** Accepted explanation for a run that changed no files (v1 1.3). */
+export interface AgentNoChangeExplanation {
+  reason: NoChangeReason;
+  explanation: string;
+  evidence: string[];
+}
+
 export interface AgentsListResponse {
   agents: Agent[];
   overallTokenUsage: OverallTokenUsage;
@@ -349,7 +359,13 @@ export interface Agent {
   messagesPreview?: string | null;
   gitStatus?: AgentGitStatus | null;
   autoApprovePermissions?: boolean;
-  result?: { warning?: string; commitSha?: string | null; opencodeSuccess?: boolean };
+  result?: {
+    warning?: string;
+    commitSha?: string | null;
+    opencodeSuccess?: boolean;
+    /** True when the run completed on a no-change explanation. */
+    noChange?: boolean;
+  };
   pullRequest?: AgentPullRequest | null;
   parentAgentId?: string | null;
   review?: AgentReviewMetadata | null;
@@ -359,6 +375,8 @@ export interface Agent {
   bootstrap?: AgentBootstrapState;
   /** Host-run checks after the model's turn */
   verification?: AgentVerification | null;
+  /** Accepted explanation for a run that changed no files (v1 1.3) */
+  noChange?: AgentNoChangeExplanation | null;
   queue?: AgentQueueState;
 }
 
@@ -533,6 +551,8 @@ export function isAgentActive(agent: Agent): boolean {
 
 export function canCreatePullRequest(agent: Agent): boolean {
   if (agent.pushed !== true || agent.pullRequest) return false;
+  // A no-change completion has nothing on the branch to open a PR for.
+  if (agent.result?.noChange) return false;
   if (agent.status === 'completed') return agent.result?.opencodeSuccess === true;
   // Failed checks only get a draft PR when the repo asked for one.
   return agent.status === 'needs_attention' && agent.verification?.draftPrOnFailure === true;

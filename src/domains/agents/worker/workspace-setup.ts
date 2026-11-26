@@ -207,6 +207,39 @@ export async function buildHostChangeSummary({
   }
 }
 
+/** What the host counts as this run's work, before anything is committed. */
+export interface WorkspaceChanges {
+  filesChanged: number;
+  /** Working-tree changes still to be committed. */
+  uncommittedFiles: number;
+  /** Commits the agent made itself since the run started. */
+  agentCommits: number;
+  /** Files those commits changed; an empty commit counts as none. */
+  committedFiles: number;
+}
+
+/**
+ * Read-only change detection, shared by the completion gate (v1 1.3) and the commit
+ * step. Agent commits count even when the working tree is clean, because the agent
+ * may have committed through its shell tool.
+ */
+export async function detectWorkspaceChanges(
+  ctx: Pick<WorkerContext, 'job' | 'gitService'>,
+): Promise<WorkspaceChanges> {
+  const porcelain = await ctx.gitService.getPorcelainStatus(ctx.job.workspaceDir);
+  const uncommittedFiles = ctx.gitService.countChangedFiles(porcelain);
+  // Null when the start marker is missing (workspaces prepared before it existed).
+  const agentCommits = await ctx.gitService.getCommitsSinceRunStart(ctx.job.workspaceDir);
+  const committedFiles = agentCommits?.filesChanged ?? 0;
+
+  return {
+    filesChanged: committedFiles + uncommittedFiles,
+    uncommittedFiles,
+    agentCommits: agentCommits?.commits ?? 0,
+    committedFiles,
+  };
+}
+
 export async function finalizeGitChanges({
   gitService,
   githubApp,
@@ -228,29 +261,23 @@ export async function finalizeGitChanges({
     return { commitSha: null, pushed: false, filesChanged: 0 };
   }
 
-  const porcelain = await gitService.getPorcelainStatus(job.workspaceDir);
-  const uncommittedFiles = gitService.countChangedFiles(porcelain);
-  // Commits the agent created itself since the run started (null when the
-  // start marker is missing, e.g. workspaces prepared before this existed).
-  const agentCommits = await gitService.getCommitsSinceRunStart(job.workspaceDir);
-  // Commits whose net diff is empty (e.g. commit + revert) don't count.
-  const hasAgentCommits = (agentCommits?.commits ?? 0) > 0 && (agentCommits?.filesChanged ?? 0) > 0;
+  const changes = await detectWorkspaceChanges({ job, gitService });
 
-  if (uncommittedFiles === 0 && !hasAgentCommits) {
+  if (changes.filesChanged === 0) {
     appendLog(logPath, 'No file changes detected after OpenCode run');
     return { commitSha: null, pushed: false, filesChanged: 0 };
   }
 
-  if (hasAgentCommits) {
+  if (changes.agentCommits > 0 && changes.committedFiles > 0) {
     appendLog(
       logPath,
-      `Agent created ${agentCommits!.commits} commit(s) itself (${agentCommits!.filesChanged} file(s) changed)`,
+      `Agent created ${changes.agentCommits} commit(s) itself (${changes.committedFiles} file(s) changed)`,
     );
   }
 
   let commitSha: string | null;
-  if (uncommittedFiles > 0) {
-    appendLog(logPath, `Committing ${uncommittedFiles} changed file(s)…`);
+  if (changes.uncommittedFiles > 0) {
+    appendLog(logPath, `Committing ${changes.uncommittedFiles} changed file(s)…`);
     commitSha = await gitService.commitAll(job.workspaceDir, job.commitMessage);
     appendLog(logPath, `Created commit ${commitSha}`);
   } else {
@@ -258,11 +285,9 @@ export async function finalizeGitChanges({
     appendLog(logPath, `No uncommitted changes; using agent commit ${commitSha ?? '(unknown)'}`);
   }
 
-  // Files changed across the whole run (agent commits + our commit); fall
-  // back to the uncommitted count when the start marker is unavailable.
-  const filesChanged = hasAgentCommits
-    ? ((await gitService.getCommitsSinceRunStart(job.workspaceDir))?.filesChanged ?? uncommittedFiles)
-    : uncommittedFiles;
+  // Files changed across the whole run (agent commits + our commit): `commitAll`
+  // commits exactly the uncommitted files, so the pre-commit count already holds.
+  const filesChanged = changes.filesChanged;
 
   let pushed = false;
   if (job.push) {

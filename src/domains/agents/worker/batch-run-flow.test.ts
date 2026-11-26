@@ -7,6 +7,7 @@ import type { OpenCodeSessionRunner } from '../../../integrations/opencode/sessi
 import type { GithubAppService } from '../../../services/github-app';
 import type { GitService } from '../../../services/git-service';
 import { createJsonStore, type JsonStore } from '../../../lib/json-store';
+import { NO_CHANGE_ARTEFACT_PATH } from '../../../lib/schemas/no-change';
 import type {
   Agent,
   AgentCheckRun,
@@ -436,7 +437,7 @@ const checkConfig: RepoEnvironmentConfig = {
   repairAttempts: 2,
 };
 
-function makeBatchHarness() {
+function makeBatchHarness(porcelainOutputs: string[] = [' M src/changed.ts']) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-run-'));
   const dataDir = path.join(root, 'data');
   const agentDir = path.join(dataDir, 'agents', 'agent1');
@@ -499,8 +500,11 @@ function makeBatchHarness() {
 
   const gitService = {
     ensureRemoteRef: async () => ({ available: true, fetched: false }),
-    getPorcelainStatus: async () => ' M src/changed.ts',
-    countChangedFiles: () => 1,
+    // Scripted per call so the completion gate and the commit step see the same tree;
+    // the last scripted state persists for later calls.
+    getPorcelainStatus: async () =>
+      porcelainOutputs.length > 1 ? porcelainOutputs.shift()! : porcelainOutputs[0] ?? '',
+    countChangedFiles: (porcelain: string) => porcelain.split('\n').filter((line) => line.trim()).length,
     getCommitsSinceRunStart: async () => ({ commits: 0, filesChanged: 0 }),
     commitAll: async () => 'deadbeef1234567890',
     getHeadSha: async () => 'deadbeef1234567890',
@@ -652,5 +656,100 @@ describe('runBatchJob repair loop', () => {
     assert.equal(record().status, 'needs_attention');
     assert.equal(record().repairAttempt, undefined);
     assert.equal(prompts.length, 1);
+  });
+});
+
+function writeNoChangeArtefact(workspaceDir: string, body: unknown): void {
+  const target = path.join(workspaceDir, NO_CHANGE_ARTEFACT_PATH);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(body));
+}
+
+describe('runBatchJob zero-change completion gate', () => {
+  const explanation = 'The branch already carries the fix, so no edit was needed here.';
+
+  it('asks once, then completes on a valid explanation with nothing committed or pushed', async () => {
+    const { ctx, job, record } = makeBatchHarness(['', '']);
+    writeNoChangeArtefact(job.workspaceDir, {
+      reason: 'already_done',
+      explanation,
+      evidence: ['src/a.test.ts'],
+    });
+
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
+    await runBatchJob(ctx, {
+      loadCheckConfig: async () => null,
+      createRunner: () => runner,
+    });
+
+    const agent = record();
+    assert.equal(agent.status, 'completed');
+    assert.equal(agent.result?.noChange, true);
+    assert.equal(agent.noChange?.reason, 'already_done');
+    assert.equal(agent.noChange?.explanation, explanation);
+    assert.deepEqual(agent.noChange?.evidence, ['src/a.test.ts']);
+    assert.equal(agent.filesChanged, 0);
+    assert.equal(agent.commitSha, null);
+    assert.equal(agent.pushed, false);
+    assert.equal(prompts.length, 2, 'the gate sends one follow-up, then stops');
+    assert.match(prompts[1], /You finished without changing any files/);
+    assert.match(fs.readFileSync(job.logPath, 'utf8'), /No-change explanation accepted \(already_done\)/);
+  });
+
+  it('sends the follow-up only once and fails when no explanation is accepted', async () => {
+    const { ctx, record } = makeBatchHarness(['', '']);
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
+
+    await assert.rejects(
+      () => runBatchJob(ctx, { loadCheckConfig: async () => null, createRunner: () => runner }),
+      /No changes and no valid explanation/,
+    );
+
+    const agent = record();
+    assert.equal(agent.status, 'failed');
+    assert.equal(agent.result?.noChange, false);
+    assert.equal(agent.noChange, null);
+    assert.equal(agent.pushed, false);
+    assert.equal(prompts.length, 2, 'asked on turn 0 only');
+    assert.match(prompts[1], /You finished without changing any files/);
+  });
+
+  it('runs the checks when the model edits files after the gate asked', async () => {
+    const { ctx, record } = makeBatchHarness(['', ' M src/a.ts']);
+    const calls: CheckCall[] = [];
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(2));
+
+    await runBatchJob(ctx, {
+      loadCheckConfig: async () => checkConfig,
+      runChecks: makeRunChecks([attemptResult(0, null)], calls, record),
+      createRunner: () => runner,
+    });
+
+    const agent = record();
+    assert.equal(agent.status, 'completed');
+    assert.equal(agent.result?.noChange, false);
+    assert.equal(agent.noChange, null);
+    assert.equal(agent.filesChanged, 1);
+    assert.equal(agent.pushed, true);
+    assert.deepEqual(calls.map((call) => call.attempt), [0]);
+    assert.equal(prompts.length, 2);
+  });
+
+  it('keeps an accepted explanation as a completion with no changes', () => {
+    assert.equal(
+      resolveBatchCompletionStatus({
+        opencodeSuccess: true,
+        pushOnFailure: false,
+        filesChanged: 0,
+        verification: {
+          state: 'unverified',
+          configSource: 'none',
+          maxRepairAttempts: 2,
+          attempts: [],
+        },
+        noChangeExplanation: { reason: 'blocked', explanation, evidence: [] },
+      }),
+      'completed',
+    );
   });
 });

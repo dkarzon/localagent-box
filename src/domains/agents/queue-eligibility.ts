@@ -49,6 +49,11 @@ export function predecessorAllowsStart(predecessor: Agent | undefined): boolean 
   if (isLegacyMode(predecessor)) {
     return true;
   }
+  // A no-change completion pushed nothing because there was nothing to push, so it
+  // must not hold the branch (v1 1.3).
+  if (predecessor.status === 'completed' && predecessor.result?.noChange) {
+    return true;
+  }
   if ((predecessor.status === 'completed' || predecessor.status === 'needs_attention') && predecessor.pushed) {
     return true;
   }

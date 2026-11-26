@@ -30,6 +30,10 @@ export function canCreatePullRequest(agent: Agent): boolean {
   if (!agent.pushed || agent.pullRequest) {
     return false;
   }
+  // A run that completed on its no-change explanation has no branch work to review.
+  if (agent.result?.noChange) {
+    return false;
+  }
   if (agent.status === 'completed') {
     return agent.result?.opencodeSuccess === true;
   }

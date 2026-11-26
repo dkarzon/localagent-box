@@ -8,6 +8,7 @@ import {
   resolveProviderHost,
 } from '../lib/llm-provider';
 import { hasModelTokenCost, normalizeRate, resolveModelTokenCost } from '../lib/model-cost';
+import { ARTEFACTS_DIR } from '../lib/schemas/no-change';
 import type { AgentJob, AppConfig, LlmProviderId, ModelTokenCost } from '../types';
 
 /** Legacy workspace filename — excluded from agent commits if still present. */
@@ -317,6 +318,9 @@ function loadBundledToolInstructions(fsImpl: Pick<typeof fs, 'existsSync' | 'rea
 /** Written into the workspace by `codegraph init`; must never land in agent commits. */
 export const CODEGRAPH_DATA_DIR = '.codegraph/';
 
+/** Agent-written artefacts are host-read only, so they must never be committed. */
+export const ARTEFACTS_DATA_DIR = `${ARTEFACTS_DIR}/`;
+
 /** Keep infrastructure files (legacy instructions copies, MCP graph data) out of agent commits. */
 export function excludeWorkspaceInfrastructureFromGit(
   workspaceDir: string,
@@ -334,7 +338,7 @@ export function excludeWorkspaceInfrastructureFromGit(
   } catch {
     existing = '';
   }
-  const missing = [OPENCODE_TOOL_INSTRUCTIONS_FILE, CODEGRAPH_DATA_DIR].filter(
+  const missing = [OPENCODE_TOOL_INSTRUCTIONS_FILE, CODEGRAPH_DATA_DIR, ARTEFACTS_DATA_DIR].filter(
     (entry) => !existing.includes(entry),
   );
   if (missing.length === 0) {

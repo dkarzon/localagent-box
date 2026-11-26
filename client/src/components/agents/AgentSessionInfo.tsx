@@ -6,6 +6,7 @@ import type {
   AgentTokenUsage,
   AgentVerification,
   AgentVerificationAttempt,
+  NoChangeReason,
 } from '../../api/types';
 import {
   canCreatePullRequest,
@@ -41,6 +42,13 @@ const VERIFICATION_STATE_LABELS: Record<AgentVerification['state'], string> = {
   passed: 'Passed',
   failed: 'Failed',
   machine_failure: 'Machine failure',
+};
+
+const NO_CHANGE_REASON_LABELS: Record<NoChangeReason, string> = {
+  already_done: 'Already done',
+  not_applicable: 'Not applicable',
+  blocked: 'Blocked',
+  unclear_task: 'Unclear task',
 };
 
 function verificationStatusVariant(
@@ -141,6 +149,7 @@ export function AgentSessionInfo({
   // Set only by batch runs: review runs are not verified by host checks.
   const verification = agent?.verification ?? null;
   const showChecks = Boolean(verification);
+  const noChange = agent?.noChange ?? null;
 
   const resolveModelLabel = () => {
     if (agent?.model) return agent.model;
@@ -345,6 +354,30 @@ export function AgentSessionInfo({
                   </li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+
+          {noChange ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-on-surface">No changes</p>
+                <Badge variant="neutral">{NO_CHANGE_REASON_LABELS[noChange.reason]}</Badge>
+              </div>
+              <p className="text-xs text-muted">
+                Completed on the agent&apos;s explanation — nothing was committed and no PR was opened.
+              </p>
+              <p className="code-md mt-2 whitespace-pre-wrap break-words text-on-surface">
+                {noChange.explanation}
+              </p>
+              {noChange.evidence.length > 0 ? (
+                <ul className="mt-2 space-y-1">
+                  {noChange.evidence.map((entry) => (
+                    <li key={entry} className="code-md break-all text-on-surface-variant">
+                      {entry}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
 

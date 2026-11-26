@@ -14,6 +14,7 @@ import type {
 import type {
   Agent,
   AgentJob,
+  AgentNoChangeExplanation,
   AgentVerification,
   AppConfig,
   RepoEnvironmentConfig,
@@ -25,7 +26,8 @@ import {
   updateAgentRecord,
 } from './agent-state-writer';
 import { loadEnvironmentConfigFromBase } from './git-ref-files';
-import { finalizeGitChanges } from './workspace-setup';
+import { buildNoChangeExplanationPrompt, readNoChangeArtefact } from './no-change-gate';
+import { detectWorkspaceChanges, finalizeGitChanges } from './workspace-setup';
 import type { WorkerContext } from './worker-context';
 import {
   buildRepairPrompt,
@@ -54,13 +56,20 @@ export function resolveAutoApprovePermissions(config: AppConfig, job: AgentJob):
  * decides whether the work is good. Machine failures are reported separately so
  * they are never mistaken for a code failure, and a code failure that used up its
  * repair attempts becomes `needs_attention` for a person to look at (v1 1.2).
+ * A run that changed no files can still complete through the zero-change gate's
+ * accepted explanation (v1 1.3).
  */
 export function resolveBatchCompletionStatus(options: {
   opencodeSuccess: boolean;
   pushOnFailure: boolean;
   filesChanged: number;
   verification?: AgentVerification;
+  /** Explanation the gate accepted; completes a run with no changes. */
+  noChangeExplanation?: AgentNoChangeExplanation | null;
 }): 'completed' | 'failed' | 'failed_machine' | 'needs_attention' {
+  if (options.noChangeExplanation) {
+    return 'completed';
+  }
   if (options.verification?.state === 'machine_failure') {
     return 'failed_machine';
   }
@@ -78,7 +87,13 @@ export function resolveBatchFailureMessage(options: {
   pushOnFailure: boolean;
   filesChanged: number;
   verification?: AgentVerification;
+  /** Set when the zero-change gate was reached and no explanation was accepted (v1 1.3). */
+  noChangeRejected?: boolean;
 }): string {
+  if (options.noChangeRejected) {
+    return 'No changes and no valid explanation';
+  }
+
   const lastAttempt = options.verification?.attempts.at(-1);
   const failingCheck = lastAttempt?.checks.at(-1);
 
@@ -202,18 +217,59 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
     });
 
   /**
+   * Zero-change completion gate (v1 1.3). An idle turn with no changes earns one
+   * follow-up: implement the task, or explain why nothing was needed. The explanation
+   * is host-validated, so the model cannot turn a prose-only exit into a success.
+   */
+  const zeroChangeGate = {
+    asked: false,
+    explanation: null as AgentNoChangeExplanation | null,
+    rejected: false,
+  };
+
+  function completeZeroChangeTurn(turn: CompletedTurn): TurnFollowUp | null {
+    if (!zeroChangeGate.asked) {
+      zeroChangeGate.asked = true;
+      appendLog(logPath, `Turn ${turn.index} changed no files — asking for an explanation`);
+      return { followUp: buildNoChangeExplanationPrompt() };
+    }
+
+    const artefact = readNoChangeArtefact(job.workspaceDir);
+    if (artefact.status === 'valid' && artefact.explanation) {
+      zeroChangeGate.explanation = artefact.explanation;
+      appendLogBlock(
+        logPath,
+        `No-change explanation accepted (${artefact.explanation.reason})`,
+        artefact.explanation.explanation,
+      );
+      return null;
+    }
+
+    // TODO(3.2): one corrective retry comes first. The plain-text fallback in the brief
+    // only applies while there is no validator, which this file is.
+    zeroChangeGate.rejected = true;
+    appendLog(logPath, `No changes and no valid explanation: ${artefact.errors.join('; ')}`);
+    return null;
+  }
+
+  /**
    * Host verification after each turn. A code failure earns a repair turn while
    * attempts remain; a machine failure stops immediately, and exhausted attempts
    * end the run as needs_attention. The poll loop checks cancellation and the
    * timeout before calling this, so no repair turn runs past either.
    */
   async function onTurnComplete(turn: CompletedTurn): Promise<TurnFollowUp | null> {
-    if (settings.checks.length === 0) {
+    if (readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
+      appendLog(logPath, `Checks skipped after turn ${turn.index} — the run was cancelled`);
       return null;
     }
 
-    if (readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
-      appendLog(logPath, `Checks skipped after turn ${turn.index} — the run was cancelled`);
+    const changes = await detectWorkspaceChanges(ctx);
+    if (changes.filesChanged === 0) {
+      return completeZeroChangeTurn(turn);
+    }
+
+    if (settings.checks.length === 0) {
       return null;
     }
 
@@ -332,15 +388,20 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
     throw new Error('OpenCode failed');
   }
 
-  const gitResult = await finalizeGitChanges({
-    gitService,
-    githubApp,
-    config,
-    repo,
-    job,
-    logPath,
-    allowCommit: shouldCommit,
-  });
+  // A run that completed on its explanation has nothing of its own to commit, so the
+  // host commits and pushes nothing and no PR is opened for it (v1 1.3).
+  const explainedNoChange = zeroChangeGate.explanation !== null;
+  const gitResult = explainedNoChange
+    ? { commitSha: null, pushed: false, filesChanged: 0 }
+    : await finalizeGitChanges({
+        gitService,
+        githubApp,
+        config,
+        repo,
+        job,
+        logPath,
+        allowCommit: shouldCommit,
+      });
 
   const finishedAt = new Date().toISOString();
   const warnings: string[] = [];
@@ -348,7 +409,9 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
   if (!opencodeSuccess && job.pushOnFailure) {
     warnings.push('OpenCode failed but changes were committed per pushOnFailure');
   }
-  if (gitResult.filesChanged === 0) {
+  if (explainedNoChange) {
+    warnings.push('Completed on the no-change explanation');
+  } else if (gitResult.filesChanged === 0) {
     warnings.push('No file changes to commit');
   }
 
@@ -357,6 +420,7 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
     pushOnFailure: job.pushOnFailure,
     filesChanged: gitResult.filesChanged,
     verification,
+    noChangeExplanation: zeroChangeGate.explanation,
   });
   const failureMessage = status === 'completed'
     ? null
@@ -365,6 +429,7 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
         pushOnFailure: job.pushOnFailure,
         filesChanged: gitResult.filesChanged,
         verification,
+        noChangeRejected: zeroChangeGate.rejected,
       });
 
   updateAgentRecord(agentsStore, job.agentId, {
@@ -376,6 +441,7 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
     filesChanged: gitResult.filesChanged,
     error: failureMessage,
     verification,
+    noChange: zeroChangeGate.explanation,
     result: {
       branch: job.agentBranch,
       baseBranch: job.baseBranch,
@@ -385,6 +451,7 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
       filesChanged: gitResult.filesChanged,
       warning: warnings.length ? warnings.join('; ') : null,
       opencodeSuccess,
+      noChange: explainedNoChange,
     },
   });
 
@@ -395,7 +462,9 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
 
   appendLog(
     logPath,
-    `Agent completed — ${gitResult.filesChanged} file(s) changed, pushed=${gitResult.pushed}`,
+    explainedNoChange
+      ? 'Agent completed — no file changes, nothing committed or pushed'
+      : `Agent completed — ${gitResult.filesChanged} file(s) changed, pushed=${gitResult.pushed}`,
   );
   if (gitResult.commitSha) {
     appendLog(logPath, `Commit: ${gitResult.commitSha}`);

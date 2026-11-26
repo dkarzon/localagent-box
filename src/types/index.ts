@@ -235,6 +235,20 @@ export interface AgentAutofixMetadata {
   batchIndex?: number;
 }
 
+/** Why a batch run ended with no file changes (v1 1.3). */
+export type NoChangeReason = 'already_done' | 'not_applicable' | 'blocked' | 'unclear_task';
+
+/**
+ * The agent's accepted explanation for a zero-change run (v1 1.3). Written by the
+ * model as `.localagent-box/artefacts/no-change.json` and validated by the host.
+ */
+export interface AgentNoChangeExplanation {
+  reason: NoChangeReason;
+  explanation: string;
+  /** File paths or commands the explanation rests on; at most 10. */
+  evidence: string[];
+}
+
 export interface AgentResult {
   branch: string;
   baseBranch: string;
@@ -244,6 +258,8 @@ export interface AgentResult {
   filesChanged: number;
   warning: string | null;
   opencodeSuccess: boolean;
+  /** True when the run completed on a no-change explanation instead of edits. */
+  noChange?: boolean;
 }
 
 export type AgentMode = 'batch' | 'review';
@@ -585,6 +601,8 @@ export interface Agent {
   bootstrap?: AgentBootstrapState;
   /** Host-run checks after the model's turn (v1 1.1) */
   verification?: AgentVerification | null;
+  /** Accepted explanation for a run that changed no files (v1 1.3) */
+  noChange?: AgentNoChangeExplanation | null;
   /** Derived wait/retry info; not persisted */
   queue?: AgentQueueState;
 }
