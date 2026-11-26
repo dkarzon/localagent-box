@@ -652,6 +652,124 @@ describe('createPullRequest', () => {
     assert.match(capturedBody, /Local Agent Box session/);
   });
 
+  it('replaces the model-written test plan with the checks the host ran', async () => {
+    const agentId = 'completed00005';
+    let capturedBody = '';
+
+    const { service, repository } = createTestContext({
+      ollamaChat: {
+        generateText: async () => ({
+          text: '{"title":"Add webhook retry backoff","body":"## Summary\\n- Added retries.\\n\\n## Test plan\\n- [ ] Run the webhook tests"}',
+        }),
+      },
+      capturePullRequest: ({ body }) => {
+        capturedBody = body;
+      },
+    });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'needs_attention',
+        agentBranch: 'localagent/retry-webhook',
+        branch: 'localagent/retry-webhook',
+        commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent/retry-webhook',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: 'deadbeef1234567890abcdef1234567890abcdef',
+          pushed: true,
+          filesChanged: 2,
+          warning: null,
+          opencodeSuccess: true,
+        },
+        verification: {
+          state: 'failed',
+          configSource: 'base',
+          maxRepairAttempts: 2,
+          draftPrOnFailure: true,
+          attempts: [
+            {
+              attempt: 0,
+              startedAt: '2026-06-09T00:04:00.000Z',
+              finishedAt: '2026-06-09T00:04:30.000Z',
+              checks: [
+                {
+                  name: 'test',
+                  command: 'npm test',
+                  exitCode: 1,
+                  signal: null,
+                  timedOut: false,
+                  durationMs: 30_000,
+                  outputTail: '1 test failed',
+                },
+              ],
+              passed: false,
+              failureKind: 'code',
+            },
+          ],
+        },
+      }),
+    );
+
+    await service.createPullRequest(agentId);
+
+    assert.doesNotMatch(capturedBody, /- \[ \] Run the webhook tests/);
+    assert.match(capturedBody, /\| test \| `npm test` \| ❌ exit 1 \| 1 \|/);
+    assert.match(capturedBody, /Repair attempts: 0 of 2/);
+    assert.match(capturedBody, /\*\*Checks still failing — this draft PR needs attention\.\*\*/);
+    assert.ok(capturedBody.indexOf('## Test plan') < capturedBody.indexOf('Local Agent Box session'));
+  });
+
+  it('adds the host test plan to an explicit body override', async () => {
+    const agentId = 'completed00006';
+    let capturedBody = '';
+
+    const { service, repository } = createTestContext({
+      capturePullRequest: ({ body }) => {
+        capturedBody = body;
+      },
+    });
+
+    seedAgent(
+      repository,
+      baseAgentFields({
+        agentId,
+        mode: 'batch',
+        status: 'completed',
+        pushed: true,
+        finishedAt: '2026-06-09T00:05:00.000Z',
+        result: {
+          branch: 'localagent-test',
+          baseBranch: 'main',
+          workspaceId: 'ws-test',
+          commitSha: null,
+          pushed: true,
+          filesChanged: 1,
+          warning: null,
+          opencodeSuccess: true,
+        },
+      }),
+    );
+
+    await service.createPullRequest(agentId, {
+      title: 'Manual title',
+      body: 'Manual notes for the reviewer.',
+    });
+
+    assert.match(capturedBody, /Manual notes for the reviewer\./);
+    assert.match(capturedBody, /^## Test plan$/m);
+    assert.match(
+      capturedBody,
+      /⚠️ Unverified — no build\/lint\/test checks are configured for this repo/,
+    );
+  });
+
   it('auto-spawns review agent when auto-review is enabled', async () => {
     const agentId = 'completedreview1';
     const { service, repository, configRepository } = createTestContext();

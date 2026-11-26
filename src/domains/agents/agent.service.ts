@@ -6,6 +6,7 @@ import { createWebhookSender } from '../../lib/webhook';
 import {
   buildDefaultPullRequestBody,
   buildDefaultPullRequestTitle,
+  buildPullRequestBodyWithHostTestPlan,
   canCreatePullRequest,
   mapGitHubPullRequest,
 } from '../../lib/agent-pull-request';
@@ -805,10 +806,7 @@ export function createAgentService(options: {
     if (title && body) {
       source = 'override';
       log.debug({ agentId: agent.agentId, source }, 'Using explicit PR title and body overrides');
-      return { title, body };
-    }
-
-    if (!ollamaChat) {
+    } else if (!ollamaChat) {
       log.warn(
         { agentId: agent.agentId },
         'PR content service unavailable (ollamaChat not injected); using defaults',
@@ -906,7 +904,11 @@ export function createAgentService(options: {
     }
 
     const resolvedTitle = title || buildDefaultPullRequestTitle(agent);
-    const resolvedBody = body || buildDefaultPullRequestBody(agent, base);
+    // Whatever produced the content, the test plan comes from the checks the host ran (v1 1.4).
+    const resolvedBody = buildPullRequestBodyWithHostTestPlan(
+      agent,
+      body || buildDefaultPullRequestBody(agent, base),
+    );
 
     if (source === 'default') {
       log.info(

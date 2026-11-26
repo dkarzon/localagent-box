@@ -99,3 +99,47 @@ repo's repair budget. The host still decides whether a check passed; the model o
   → defer), and `agent-pull-request.test.ts` the draft PR gate.
 - Assumptions: `repairAttempt` is stored on the record (needed by the 6.1 progress file and the
   UI); `needs_attention` is not retryable in this item — resume is 6.2.
+
+# v1 Phase 1 — item 1.4: honest PR test plan
+
+Scope: the PR's `## Test plan` says what the host actually ran, not what the model claims. The
+generation prompt asks for a summary only, and the single exit of `resolvePullRequestContent`
+replaces whatever test plan a model or a caller wrote.
+
+## Steps
+
+1. `buildPullRequestGenerationPrompt` asks for `## Summary` only and states never to include a test
+   plan, because the host writes that section from its own checks.
+
+2. `buildHostTestPlanSection(verification, status?)` in `lib/agent-pull-request.ts`:
+   - no checks configured (`configSource: 'none'`), or checks configured but no attempt recorded, →
+     the `⚠️ Unverified` note;
+   - otherwise `## Test plan`, then a Check / Command / Result / Attempts table with one row per check
+     from the **last** attempt — Result is `✅ passed`, `❌ exit N` or `⏱ timed out`, and Attempts is
+     the number of attempts in which that check ran (a check skipped by the stop-at-first-failure rule
+     counts only the attempts where it ran);
+   - then `Repair attempts: n of max`, where attempt 0 is the task turn so repairs are the attempts
+     after it, and the `**Checks still failing — this draft PR needs attention.**` line for
+     `needs_attention`. `status` is optional: with no status passed, `state: 'failed'` is read as
+     needing attention, which is the status the repair loop reports for it.
+
+3. `stripModelTestPlanSection` removes a model `## Test plan` from the heading to the next `## `
+   heading or `---` rule, and `buildPullRequestBodyWithHostTestPlan` puts the host section in front of
+   the metadata `---` block. `buildDefaultPullRequestBody` now writes that `---` rule itself, so the
+   insertion point is the same shape for every content source.
+
+4. `resolvePullRequestContent` has one exit: the explicit-override branch no longer returns early, so
+   override, LLM, assistant summary and default bodies all get the host section.
+
+## Review
+
+- `npm test` (864), `npm run build` and `npx tsc -p client` pass.
+- `agent-pull-request.test.ts` covers the unverified cases, a passed run that needed a repair (with the
+  Attempts count for a check that only ran on the second attempt), a failing run flagged for attention,
+  a timed-out check, and stripping a model-written plan.
+- `pr-content-generator.test.ts` covers the prompt rule and every content source (llm, assistant
+  summary, default, explicit override) getting the section before the metadata block.
+- `agent.service.test.ts` asserts it through `createPullRequest`: the model's checklist is gone from the
+  created PR body and the host table is in its place.
+- Assumptions: Attempts counts the attempts where a check ran rather than the attempt number; pipes in
+  a command are escaped so the table stays readable.
