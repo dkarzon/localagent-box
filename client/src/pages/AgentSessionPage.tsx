@@ -866,6 +866,13 @@ export function AgentSessionPage({ agentId, repos, onQueueAnother }: AgentSessio
         <StatusMessage message={statusMessage} variant={statusVariant} className="mb-4" mono />
       ) : null}
 
+      {agent?.escalation ? (
+        <div className="mb-4 rounded border border-error/30 bg-error-container p-3">
+          <p className="label-md normal-case tracking-wide text-on-error-container">Escalation</p>
+          <p className="mt-1 text-sm text-on-error-container">{agent.escalation.summary}</p>
+        </div>
+      ) : null}
+
       <div className="grid min-w-0 flex-1 gap-5 lg:grid-cols-[280px_1fr] lg:items-stretch">
         <aside className="card-surface hidden h-fit space-y-6 p-6 lg:sticky lg:top-[calc(var(--session-sticky-header-height,0px)+1.5rem)] lg:block">
           <AgentSessionInfo {...sessionInfoProps} />

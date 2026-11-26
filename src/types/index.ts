@@ -524,9 +524,9 @@ export interface AgentVerificationAttempt {
   passed: boolean;
   failureKind?: 'code' | 'machine';
   machineReason?: string;
-  /** Filled by 1.5 */
+  /** Working-tree `git diff --stat` against the run-start ref, captured before the checks ran */
   diffStat?: string;
-  /** Filled by 1.5 (truncated to 4000 chars) */
+  /** What the agent said in the turn that produced the change (truncated to 4000 chars) */
   assistantText?: string;
 }
 
@@ -542,6 +542,35 @@ export interface AgentVerification {
    */
   draftPrOnFailure?: boolean;
   attempts: AgentVerificationAttempt[];
+}
+
+/** One attempt as an escalation reports it: what the agent changed and what it said. */
+export interface AgentEscalationAttempt {
+  attempt: number;
+  diffStat: string;
+  assistantText: string;
+  /** Check this attempt stopped at; absent when the attempt passed */
+  failedCheck?: CheckName;
+}
+
+/** The failing check an escalation reports, trimmed to what a person needs to act on. */
+export interface AgentEscalationFailingCheck {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  outputTail: string;
+}
+
+/**
+ * What a person is told when the host could not verify the run on its own
+ * (v1 1.5): present only for `needs_attention` and `failed_machine`, and carried
+ * by webhook payloads as part of `agent`.
+ */
+export interface AgentEscalation {
+  /** One line, e.g. "test still failing after 2 repair attempts" */
+  summary: string;
+  failingCheck: AgentEscalationFailingCheck;
+  attempts: AgentEscalationAttempt[];
 }
 
 export interface Agent {
@@ -601,6 +630,8 @@ export interface Agent {
   bootstrap?: AgentBootstrapState;
   /** Host-run checks after the model's turn (v1 1.1) */
   verification?: AgentVerification | null;
+  /** Escalation for a run the host could not verify (v1 1.5); present for needs_attention / failed_machine */
+  escalation?: AgentEscalation | null;
   /** Accepted explanation for a run that changed no files (v1 1.3) */
   noChange?: AgentNoChangeExplanation | null;
   /** Derived wait/retry info; not persisted */

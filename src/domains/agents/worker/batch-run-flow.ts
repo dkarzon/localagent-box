@@ -19,12 +19,14 @@ import type {
   AppConfig,
   RepoEnvironmentConfig,
 } from '../../../types';
+import { RUN_START_REF } from '../../../services/git-service';
 import {
   appendLog,
   appendLogBlock,
   readAgentStatus,
   updateAgentRecord,
 } from './agent-state-writer';
+import { buildEscalation, truncateForRecord } from './escalation';
 import { loadEnvironmentConfigFromBase } from './git-ref-files';
 import { buildNoChangeExplanationPrompt, readNoChangeArtefact } from './no-change-gate';
 import { detectWorkspaceChanges, finalizeGitChanges } from './workspace-setup';
@@ -273,6 +275,11 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
       return null;
     }
 
+    // Escalation content (v1 1.5): the diff and the agent's own words for this turn,
+    // captured before the checks run so they describe the agent's work, not build output.
+    const diffStat = truncateForRecord(await gitService.getDiffStat(job.workspaceDir, RUN_START_REF));
+    const assistantText = truncateForRecord(turn.assistantText);
+
     persistVerification({ status: 'verifying' });
     const attempt = await (deps.runChecks ?? runChecks)(
       job.workspaceDir,
@@ -283,6 +290,8 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
         maxOutputLines: settings.maxOutputLines,
       },
     );
+    attempt.diffStat = diffStat;
+    attempt.assistantText = assistantText;
     verification.attempts.push(attempt);
 
     const failingCheck = attempt.checks.at(-1);
@@ -432,6 +441,11 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
         noChangeRejected: zeroChangeGate.rejected,
       });
 
+  const escalation =
+    status === 'needs_attention' || status === 'failed_machine'
+      ? buildEscalation(verification, status)
+      : null;
+
   updateAgentRecord(agentsStore, job.agentId, {
     status,
     finishedAt,
@@ -441,6 +455,7 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
     filesChanged: gitResult.filesChanged,
     error: failureMessage,
     verification,
+    escalation,
     noChange: zeroChangeGate.explanation,
     result: {
       branch: job.agentBranch,
@@ -457,6 +472,9 @@ export async function runBatchJob(ctx: WorkerContext, deps: BatchRunDeps = {}): 
 
   if (failureMessage) {
     appendLog(logPath, failureMessage);
+    if (escalation) {
+      appendLog(logPath, `Escalation: ${escalation.summary}`);
+    }
     throw new Error(failureMessage);
   }
 

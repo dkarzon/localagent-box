@@ -19,6 +19,7 @@ import { IconLink, IconLogs, IconRefresh } from '../icons';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Form';
 import { AgentGitStatus } from './AgentGitStatus';
+import { MarkdownMessage } from './MarkdownMessage';
 import { Link } from 'react-router-dom';
 
 function bootstrapStatusVariant(
@@ -351,6 +352,24 @@ export function AgentSessionInfo({
                         </li>
                       ))}
                     </ul>
+                    {attempt.diffStat ? (
+                      <>
+                        <p className="label-md mt-2 normal-case tracking-wide text-muted">
+                          Diff stat
+                        </p>
+                        <p className="code-md mt-1 whitespace-pre-wrap break-all text-on-surface-variant">
+                          {attempt.diffStat}
+                        </p>
+                      </>
+                    ) : null}
+                    {attempt.assistantText ? (
+                      <div className="mt-2">
+                        <p className="label-md normal-case tracking-wide text-muted">
+                          Agent&apos;s reasoning
+                        </p>
+                        <MarkdownMessage text={attempt.assistantText} />
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>

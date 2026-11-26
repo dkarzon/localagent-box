@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import type { OpenCodeSessionRunner } from '../../../integrations/opencode/session-runner';
+import type { OpenCodeServerEvent, OpenCodeSessionRunner } from '../../../integrations/opencode/session-runner';
 import type { GithubAppService } from '../../../services/github-app';
 import type { GitService } from '../../../services/git-service';
 import { createJsonStore, type JsonStore } from '../../../lib/json-store';
@@ -406,10 +406,14 @@ function makeRunChecks(
 }
 
 /** Fake session runner: each turn goes busy then idle, so the host sees it complete. */
-function makeFakeRunner(polls: Array<Record<string, { type?: string }>>) {
+function makeFakeRunner(
+  polls: Array<Record<string, { type?: string }>>,
+  assistantTexts: string[] = [],
+) {
   const prompts: string[] = [];
   const queue = [...polls];
   const sessionId = 'ses_fake';
+  let onEvent: ((event: OpenCodeServerEvent) => void) | undefined;
   const runner: OpenCodeSessionRunner = {
     port: 0,
     baseUrl: 'http://127.0.0.1:0',
@@ -418,12 +422,24 @@ function makeFakeRunner(polls: Array<Record<string, { type?: string }>>) {
     createSession: async () => ({ id: sessionId }),
     sendPromptAsync: async (_sessionId, body) => {
       prompts.push(body.parts.map((part) => part.text).join('\n\n'));
+      const assistantText = assistantTexts[prompts.length - 1];
+      if (assistantText && onEvent) {
+        // The prompt is accepted first; the turn's text streams afterwards.
+        await new Promise((resolve) => setImmediate(resolve));
+        onEvent({
+          type: 'message.part.delta',
+          properties: { partID: `part_${prompts.length}`, field: 'text', delta: assistantText },
+        });
+      }
     },
     replyPermission: async () => {},
     cancelForm: async () => {},
     getSessionStatusMap: async () => queue.shift() ?? {},
     abort: async () => {},
-    subscribeEvents: () => ({ unsubscribe: () => {}, ready: Promise.resolve() }),
+    subscribeEvents: (event) => {
+      onEvent = event;
+      return { unsubscribe: () => {}, ready: Promise.resolve() };
+    },
     dispose: async () => {},
   };
   return { runner, prompts };
@@ -436,6 +452,9 @@ const checkConfig: RepoEnvironmentConfig = {
   checks: { test: 'npm test' },
   repairAttempts: 2,
 };
+
+/** `git diff --stat` against the run-start ref, as the escalation records it. */
+const fakeDiffStat = 'src/a.test.ts | 2 ++\n 1 file changed, 2 insertions(+)';
 
 function makeBatchHarness(porcelainOutputs: string[] = [' M src/changed.ts']) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-run-'));
@@ -506,6 +525,7 @@ function makeBatchHarness(porcelainOutputs: string[] = [' M src/changed.ts']) {
       porcelainOutputs.length > 1 ? porcelainOutputs.shift()! : porcelainOutputs[0] ?? '',
     countChangedFiles: (porcelain: string) => porcelain.split('\n').filter((line) => line.trim()).length,
     getCommitsSinceRunStart: async () => ({ commits: 0, filesChanged: 0 }),
+    getDiffStat: async () => fakeDiffStat,
     commitAll: async () => 'deadbeef1234567890',
     getHeadSha: async () => 'deadbeef1234567890',
     pushBranch: async () => {},
@@ -540,7 +560,7 @@ describe('runBatchJob repair loop', () => {
   it('repairs until the checks pass and completes with every attempt recorded', async () => {
     const { ctx, record } = makeBatchHarness();
     const calls: CheckCall[] = [];
-    const { runner, prompts } = makeFakeRunner(pollsForTurns(3));
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(3), ['turn 0 text', 'turn 1 text', 'turn 2 text']);
 
     await runBatchJob(ctx, {
       loadCheckConfig: async () => checkConfig,
@@ -572,12 +592,22 @@ describe('runBatchJob repair loop', () => {
     assert.equal(prompts.length, 3);
     assert.match(prompts[1], /repair attempt 1 of 2/);
     assert.match(prompts[2], /repair attempt 2 of 2/);
+    // Each attempt records what the agent changed and said, captured before its checks ran.
+    assert.ok(
+      agent.verification?.attempts.every((attempt) => attempt.diffStat === fakeDiffStat),
+      'every attempt carries the diff stat',
+    );
+    assert.deepEqual(
+      agent.verification?.attempts.map((attempt) => attempt.assistantText),
+      ['turn 0 text', 'turn 1 text', 'turn 2 text'],
+    );
+    assert.equal(agent.escalation, null, 'a run the host verified has nothing to escalate');
   });
 
   it('reports needs_attention once the repair attempts are used up', async () => {
-    const { ctx, record } = makeBatchHarness();
+    const { ctx, job, record } = makeBatchHarness();
     const calls: CheckCall[] = [];
-    const { runner, prompts } = makeFakeRunner(pollsForTurns(3));
+    const { runner, prompts } = makeFakeRunner(pollsForTurns(3), ['turn 0 text', 'turn 1 text', 'turn 2 text']);
 
     await assert.rejects(
       () =>
@@ -603,6 +633,24 @@ describe('runBatchJob repair loop', () => {
     assert.equal(agent.pushed, true, 'the branch is still pushed for a person to look at');
     assert.deepEqual(calls.map((call) => call.repairAttempt), [undefined, 1, 2]);
     assert.equal(prompts.length, 3, 'two repair turns, then the run stops');
+
+    // The escalation is what a person receives: one line, the check that stopped
+    // the run, and what each attempt changed and said.
+    const escalation = agent.escalation;
+    assert.ok(escalation);
+    assert.equal(escalation.summary, 'test still failing after 2 repair attempt(s)');
+    assert.equal(escalation.attempts.length, 3);
+    assert.deepEqual(escalation.attempts.map((entry) => entry.attempt), [0, 1, 2]);
+    assert.ok(escalation.attempts.every((entry) => entry.diffStat.length > 0), 'each attempt has a diff stat');
+    assert.deepEqual(
+      escalation.attempts.map((entry) => entry.assistantText),
+      ['turn 0 text', 'turn 1 text', 'turn 2 text'],
+    );
+    assert.equal(escalation.failingCheck.command, 'npm test');
+    assert.match(
+      fs.readFileSync(job.logPath, 'utf8'),
+      /Escalation: test still failing after 2 repair attempt\(s\)/,
+    );
   });
 
   it('stops immediately on a machine failure without a repair turn', async () => {
@@ -636,6 +684,10 @@ describe('runBatchJob repair loop', () => {
     assert.equal(agent.verification?.attempts[0]?.machineReason, 'timeout');
     assert.equal(agent.repairAttempt, undefined, 'a machine failure never earns a repair turn');
     assert.equal(prompts.length, 1, 'no follow-up was sent');
+    assert.ok(agent.escalation);
+    assert.equal(agent.escalation.summary, 'Machine failure (timeout) during test');
+    assert.equal(agent.escalation.attempts.length, 1);
+    assert.equal(agent.escalation.attempts[0]?.diffStat, fakeDiffStat);
   });
 
   it('records no repair turn when the repo allows none', async () => {
@@ -656,6 +708,7 @@ describe('runBatchJob repair loop', () => {
     assert.equal(record().status, 'needs_attention');
     assert.equal(record().repairAttempt, undefined);
     assert.equal(prompts.length, 1);
+    assert.equal(record().escalation?.summary, 'test failing with no repair attempts allowed');
   });
 });
 

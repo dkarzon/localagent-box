@@ -143,3 +143,40 @@ replaces whatever test plan a model or a caller wrote.
   created PR body and the host table is in its place.
 - Assumptions: Attempts counts the attempts where a check ran rather than the attempt number; pipes in
   a command are escaped so the table stays readable.
+
+# v1 Phase 1 — item 1.5: escalation content
+
+Scope: when the host could not verify a run, the record carries enough for a person to act without
+opening the workspace: what each turn changed, what the agent said, and the check that stopped the run.
+
+## Steps
+
+1. `worker/escalation.ts` builds it: `buildEscalation(verification, status)` for `needs_attention` and
+   `failed_machine` returns `summary` (one line), `failingCheck` (name, command, exit code, output tail), and
+   one entry per attempt with `diffStat`, `assistantText` and the check that attempt stopped at (absent when it
+   passed). `truncateForRecord` keeps a field to 4000 chars, and `buildEscalation` returns null when no check
+   failed, so a verified run stores nothing.
+
+2. `runBatchJob` fills each attempt before its checks run — `diffStat` is `git diff --stat` against
+   `refs/localagent-box/start` (`RUN_START_REF`), `assistantText` is that turn's own text — so the record shows
+   the agent's work rather than build output. The escalation is written with the final status, and its summary
+   goes to the worker log.
+
+3. Webhook payloads are the whole agent record, so `agent.escalation` arrives on `agent.needs_attention` and
+   `agent.failed` without a change to the sender; the README webhooks section documents the field.
+
+4. UI: the Checks panel shows each attempt's diff stat (monospace) and "Agent's reasoning" as markdown; the
+   session page shows `escalation.summary` in a banner above the content.
+
+## Review
+
+- `npm test` (874), `npm run build` and `npx tsc -p client` pass.
+- `escalation.test.ts` covers both summary shapes, the per-attempt mapping, the 4000-char truncation, and the
+  nothing-to-escalate case.
+- `batch-run-flow.test.ts` drives the real flow: the needs_attention run asserts `escalation.attempts.length === 3`
+  with a non-empty diff stat on every attempt and the agent's text for each turn; the machine-failure run asserts
+  its own summary; a run that passed records no escalation; the log carries the summary.
+- The fake runner now delivers assistant text as a streamed delta, so `assistantText` comes from the orchestrator
+  rather than a fixture.
+- Assumptions: the escalation is written once at completion (the status is not known before then), and `outputTail`
+  uses the same 4000-char cap as the other fields.

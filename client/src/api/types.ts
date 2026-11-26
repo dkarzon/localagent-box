@@ -317,6 +317,30 @@ export interface AgentVerification {
   attempts: AgentVerificationAttempt[];
 }
 
+/** One attempt as an escalation reports it: what the agent changed and what it said. */
+export interface AgentEscalationAttempt {
+  attempt: number;
+  diffStat: string;
+  assistantText: string;
+  /** Check this attempt stopped at; absent when the attempt passed */
+  failedCheck?: CheckName;
+}
+
+/** The failing check an escalation reports, trimmed to what a person needs to act on. */
+export interface AgentEscalationFailingCheck {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  outputTail: string;
+}
+
+/** Set when the host could not verify the run: needs_attention or failed_machine. */
+export interface AgentEscalation {
+  summary: string;
+  failingCheck: AgentEscalationFailingCheck;
+  attempts: AgentEscalationAttempt[];
+}
+
 /** Why a batch run ended with no file changes; mirrors the server schema. */
 export type NoChangeReason = 'already_done' | 'not_applicable' | 'blocked' | 'unclear_task';
 
@@ -375,6 +399,8 @@ export interface Agent {
   bootstrap?: AgentBootstrapState;
   /** Host-run checks after the model's turn */
   verification?: AgentVerification | null;
+  /** Escalation for a run the host could not verify; set for needs_attention / failed_machine */
+  escalation?: AgentEscalation | null;
   /** Accepted explanation for a run that changed no files (v1 1.3) */
   noChange?: AgentNoChangeExplanation | null;
   queue?: AgentQueueState;
