@@ -1,72 +1,182 @@
-# v1 Phase 0 — item 0.5: narrow the mode union, warn on legacy config, protect legacy records
+# v1 Phase 1 — item 1.0: multi-turn hook in the batch orchestrator
 
-Scope: `AgentMode` becomes `batch | review` with the removed modes kept only as
-`LegacyAgentMode` for pre-v1 records; legacy config keys and legacy repo-config keys
-are dropped with a warning instead of being accepted or rewritten; legacy agent records
-are closed out at startup and cannot be actioned.
+Scope: the batch orchestrator no longer ends at the first turn. When a turn completes
+it can call a host hook that decides what to do next; a follow-up is sent on the same
+OpenCode session and polling continues. This is the seam items 1.1–1.3 (verification,
+repair, completion gate) hang off.
 
 ## Steps
 
-1. Single source of truth in `types/index.ts`: `AgentMode = 'batch' | 'review'` and
-   `LegacyAgentMode = 'interactive' | 'loop'`. `Agent.mode` and `CreateAgentResponse.mode`
-   accept both; `AgentJob.mode` stays `AgentMode`. `lib/validation.ts` imports the type
-   instead of redeclaring it, and `AgentStatus`'s `awaiting_input` is commented as legacy only.
+1. `onTurnComplete?: (turn: { index, assistantText }) => Promise<{ followUp, model? } | null>`
+   on `SessionOrchestratorOptions`. `index` is 0 for the initial task; `assistantText` is
+   the assistant text produced since that turn's prompt was sent.
 
-2. `validateAgentMode`: `batch`/`review` accepted (null or empty means `batch`);
-   `interactive`/`loop` throw `mode "<x>" was removed in v1; use "batch" (follow-ups are
-   new batch runs on the same branch) or "review"`; anything else throws
-   `mode must be "batch" or "review"`. `VALIDATION_ERROR` maps to 400, so
-   `POST /api/v1/agents` with `mode: "interactive"` returns 400 with that message.
+2. At the point that used to return `turn_complete`, the hook is called. Returning null
+   (or having no hook) ends the run as before; returning a follow-up sends it and keeps
+   polling. `followUp.model` (a model id) is resolved with `buildModelRefFromId`, falling
+   back to the run model.
 
-3. `worker/environment-config.ts`: `VALID_MODES` is `['batch', 'review']`; a removed mode
-   in `setup.runOnModes` is filtered out with the note `ignored removed mode <x>` rather
-   than throwing, while any other unknown mode still throws. The loader returns
-   `{ config, notes }` (mirroring `review-repo-config.ts`), and `workspace-bootstrap.ts`
-   writes the notes with `appendLog`.
+3. `sendTurn(text, model, transcriptText)` is the four-step turn pattern from the removed
+   inbox loop: transcript line, `sendPromptAsync`, reset the busy flags, count the turn.
+   The initial prompt and every follow-up go through it, so item 2.4 can wrap it. The turn
+   boundary is the prompt itself: the counters reset before sending, and `turnCount`
+   increments only when the send succeeds.
 
-4. `services/config-store.ts`: `LEGACY_CONFIG_KEYS` documents the keys from the removed
-   modes. `loadRaw` keeps only known keys and warns once with
-   `logger.warn({ keys }, 'ignoring unknown config keys')`, so `saveConfig` no longer writes
-   them back. Keys `AppConfig` declares but `DEFAULT_CONFIG` does not default
-   (`enabledRuntimeProfiles`, `bootstrapAutoDetect`, `globalSetupTimeoutMs`) are still
-   read from the file, so the worker env-hydration behaviour is unchanged.
+4. Per-turn assistant text: the event handler records each finalized message into the
+   turn state (`resolveTurnAssistantText` joins them, plus text still streaming at turn
+   end), and the state resets when the next prompt is sent.
 
-5. `worker/repo-config.ts`: unknown keys (the legacy `interactiveContextPrompt`,
-   `loopContextPrompt`, `checkCommand` among them) are reported as the note
-   `Ignoring unknown keys in .localagent-box/config.json: a, b` instead of being silently
-   ignored. Callers append the notes to the agent log: `session-orchestrator.ts` and
-   `review-repo-config.ts` (whose `notes[]` now carries them).
+5. The outcome object carries `turns: Array<{ index, assistantText }>` for every exit
+   path (`turn_complete`, `cancelled`, `failed`).
 
-6. Legacy records: `isLegacyMode(agent)` in `agent.types.ts`. `restoreOnStartup` fails any
-   legacy record in a non-terminal status with `Legacy <mode> session stopped by v1 upgrade`
-   (including `awaiting_input`, which no run can set). `retryAgent` and `allowSuccessors`
-   throw `Legacy <mode> sessions are read-only` (`VALIDATION_ERROR`), and the worker spawner
-   refuses to start a legacy record so it cannot run as a batch.
+6. Test seam: `createRunner` defaults to `createOpenCodeSessionRunner`, so a test can
+   supply a fake runner whose `getSessionStatusMap` flips busy → idle. The status poll is
+   now separated from the completion check so a transient poll failure cannot be read as
+   idle, and a hook error is not swallowed by that catch.
 
-7. Statuses: `awaiting_input` removed from `ACTIVE_STATUSES` (`agent.types.ts`),
-   `BRANCH_WORKER_STATUSES` (`queue-eligibility.ts`), `ACTIVE_AGENT_STATUSES`
-   (`lib/agent-review-gating.ts`) and the client sets; `Badge.tsx` no longer maps it, so a
-   legacy record renders with the neutral badge. Legacy records are skipped when deciding
-   whether a branch is occupied, and also when finding a coding predecessor — a read-only
-   record can never release a successor, so otherwise a queued successor behind it would wait
-   forever.
-
-8. Tests: `lib/validation.test.ts`, `agent.validation.test.ts`,
-   `environment-config.test.ts`, `repo-config.test.ts`, `queue-eligibility.test.ts`,
-   `agent.service.test.ts`, and the new `services/config-store.test.ts`.
+Timeout and cancel behaviour are unchanged.
 
 ## Review
 
-- `npm run build` passes, `npx tsc -p client` passes, and all 750 tests pass
-  (`npm test` reports 191 because its `src/**/*.test.ts` glob only matches one directory
-  level; the nested files were run explicitly with `npx tsx --test`).
-- Verified end to end for the API criterion: `parseCreateAgentPayload` with
-  `mode: 'interactive'` throws `VALIDATION_ERROR`, which `httpStatusForError` maps to 400
-  with the "removed in v1" message.
-- One judgement call beyond the brief: `findCodingPredecessor` also skips legacy records
-  (step 7). With retry and `allowSuccessors` closed off for them, a legacy predecessor would
-  otherwise permanently block its branch.
-- `handleWorkerExit` still names `awaiting_input` when a killed worker exits; that path can
-  no longer be reached by a current run, so it was left alone.
-- The client change is limited to the status set and the badge variant; legacy records
-  already render read-only from item 0.1.
+- `npm run build` passes and `npm test` passes (192 tests, 14 in
+  `session-orchestrator.test.ts`).
+- The new test drives the orchestrator with a fake runner and a hook that returns one
+  follow-up then null, and asserts: two `sendPromptAsync` calls, two `user` lines in
+  `conversation.jsonl`, `turns.length === 2`, and a `turn_complete` outcome. It also
+  asserts the follow-up is sent without the `## Context` framing and on `followUp.model`,
+  and that the run model is used when the hook gives no model.
+- The transcript still records the first turn as the task text without framing; only the
+  prompt sent to OpenCode carries it, so the session UI is unchanged.
+- Judgement call beyond the brief: `resolveTurnAssistantText` now takes a turn state
+  (`messageTexts` + `streamedAssistantText`) instead of a single snapshot, because a turn
+  can contain several assistant messages.
+
+# v1 Phase 1 — item 1.2: repair loop
+
+Scope: a failing host-run check sends the model back to work on the same session, up to the
+repo's repair budget. The host still decides whether a check passed; the model only fixes.
+
+## Steps
+
+1. `buildRepairPrompt({ attempt, max, failingCheck })` in `worker/verification.ts` builds the
+   follow-up text from `formatCommandResultBlock`, with the two constraints the model must not
+   cross: do not change the check, do not commit or push.
+
+2. `runBatchJob`'s `onTurnComplete` hook now verifies after **every** turn, not only turn 0:
+   `verifying` while the checks run, then either `passed`, `machine_failure`, or a repair
+   decision (`repairing` + `repairAttempt` n on the record) that returns the follow-up. The
+   repair model is the run model until item 5.1 adds a role model.
+
+3. Machine failures stop immediately (`classifyFailure` rows: timeout, OOM, disk full, missing
+   command) and never consume an attempt; a cancelled run is re-read before the checks so a
+   repair turn is never sent after cancellation, and the poll loop already refuses to run past
+   the timeout.
+
+4. Exhausted attempts leave `verification.state = 'failed'`, and the completion status is
+   `needs_attention` (added to `AgentStatus`, `TERMINAL_STATUSES`, `sseLockedStatuses`, the
+   client sets and the danger badge). The branch is still committed and pushed, and
+   `predecessorAllowsStart` treats `needs_attention && pushed` like `completed && pushed` so a
+   follow-up run on the branch can start.
+
+5. `verification.draftPrOnFailure` is resolved from the base config and stored on the record, so
+   `canCreatePullRequest` (server and client) can allow a draft PR for `needs_attention` without
+   the workspace.
+
+6. `handleWorkerExit` sends `agent.needs_attention` for that status and `agent.failed` for
+   `failed_machine`, and opens the draft PR when `draftPrOnFailure` is set.
+
+## Review
+
+- `npm test` (822), `npm run build` and `npx tsc -p client` pass.
+- `batch-run-flow.test.ts` drives `runBatchJob` through the 1.0 fake runner with an injected
+  `runChecks`: fail → fail → pass completes with three attempts; fail ×3 with max 2 gives
+  `needs_attention` after two repair turns; a timeout gives `failed_machine` with no follow-up
+  sent; `repairAttempts: 0` sends none at all. The test also asserts the status the record held
+  during each check run and the `repairAttempt` recorded before each repair turn.
+- `classifyFailure` rows are covered by `verification.test.ts` (1.1); `buildRepairPrompt` has its
+  own test for the exact injected text.
+- `queue-eligibility.test.ts` covers a `needs_attention` predecessor (pushed → start, not pushed
+  → defer), and `agent-pull-request.test.ts` the draft PR gate.
+- Assumptions: `repairAttempt` is stored on the record (needed by the 6.1 progress file and the
+  UI); `needs_attention` is not retryable in this item — resume is 6.2.
+
+# v1 Phase 1 — item 1.4: honest PR test plan
+
+Scope: the PR's `## Test plan` says what the host actually ran, not what the model claims. The
+generation prompt asks for a summary only, and the single exit of `resolvePullRequestContent`
+replaces whatever test plan a model or a caller wrote.
+
+## Steps
+
+1. `buildPullRequestGenerationPrompt` asks for `## Summary` only and states never to include a test
+   plan, because the host writes that section from its own checks.
+
+2. `buildHostTestPlanSection(verification, status?)` in `lib/agent-pull-request.ts`:
+   - no checks configured (`configSource: 'none'`), or checks configured but no attempt recorded, →
+     the `⚠️ Unverified` note;
+   - otherwise `## Test plan`, then a Check / Command / Result / Attempts table with one row per check
+     from the **last** attempt — Result is `✅ passed`, `❌ exit N` or `⏱ timed out`, and Attempts is
+     the number of attempts in which that check ran (a check skipped by the stop-at-first-failure rule
+     counts only the attempts where it ran);
+   - then `Repair attempts: n of max`, where attempt 0 is the task turn so repairs are the attempts
+     after it, and the `**Checks still failing — this draft PR needs attention.**` line for
+     `needs_attention`. `status` is optional: with no status passed, `state: 'failed'` is read as
+     needing attention, which is the status the repair loop reports for it.
+
+3. `stripModelTestPlanSection` removes a model `## Test plan` from the heading to the next `## `
+   heading or `---` rule, and `buildPullRequestBodyWithHostTestPlan` puts the host section in front of
+   the metadata `---` block. `buildDefaultPullRequestBody` now writes that `---` rule itself, so the
+   insertion point is the same shape for every content source.
+
+4. `resolvePullRequestContent` has one exit: the explicit-override branch no longer returns early, so
+   override, LLM, assistant summary and default bodies all get the host section.
+
+## Review
+
+- `npm test` (864), `npm run build` and `npx tsc -p client` pass.
+- `agent-pull-request.test.ts` covers the unverified cases, a passed run that needed a repair (with the
+  Attempts count for a check that only ran on the second attempt), a failing run flagged for attention,
+  a timed-out check, and stripping a model-written plan.
+- `pr-content-generator.test.ts` covers the prompt rule and every content source (llm, assistant
+  summary, default, explicit override) getting the section before the metadata block.
+- `agent.service.test.ts` asserts it through `createPullRequest`: the model's checklist is gone from the
+  created PR body and the host table is in its place.
+- Assumptions: Attempts counts the attempts where a check ran rather than the attempt number; pipes in
+  a command are escaped so the table stays readable.
+
+# v1 Phase 1 — item 1.5: escalation content
+
+Scope: when the host could not verify a run, the record carries enough for a person to act without
+opening the workspace: what each turn changed, what the agent said, and the check that stopped the run.
+
+## Steps
+
+1. `worker/escalation.ts` builds it: `buildEscalation(verification, status)` for `needs_attention` and
+   `failed_machine` returns `summary` (one line), `failingCheck` (name, command, exit code, output tail), and
+   one entry per attempt with `diffStat`, `assistantText` and the check that attempt stopped at (absent when it
+   passed). `truncateForRecord` keeps a field to 4000 chars, and `buildEscalation` returns null when no check
+   failed, so a verified run stores nothing.
+
+2. `runBatchJob` fills each attempt before its checks run — `diffStat` is `git diff --stat` against
+   `refs/localagent-box/start` (`RUN_START_REF`), `assistantText` is that turn's own text — so the record shows
+   the agent's work rather than build output. The escalation is written with the final status, and its summary
+   goes to the worker log.
+
+3. Webhook payloads are the whole agent record, so `agent.escalation` arrives on `agent.needs_attention` and
+   `agent.failed` without a change to the sender; the README webhooks section documents the field.
+
+4. UI: the Checks panel shows each attempt's diff stat (monospace) and "Agent's reasoning" as markdown; the
+   session page shows `escalation.summary` in a banner above the content.
+
+## Review
+
+- `npm test` (874), `npm run build` and `npx tsc -p client` pass.
+- `escalation.test.ts` covers both summary shapes, the per-attempt mapping, the 4000-char truncation, and the
+  nothing-to-escalate case.
+- `batch-run-flow.test.ts` drives the real flow: the needs_attention run asserts `escalation.attempts.length === 3`
+  with a non-empty diff stat on every attempt and the agent's text for each turn; the machine-failure run asserts
+  its own summary; a run that passed records no escalation; the log carries the summary.
+- The fake runner now delivers assistant text as a streamed delta, so `assistantText` comes from the orchestrator
+  rather than a fixture.
+- Assumptions: the escalation is written once at completion (the status is not known before then), and `outputTail`
+  uses the same 4000-char cap as the other fields.

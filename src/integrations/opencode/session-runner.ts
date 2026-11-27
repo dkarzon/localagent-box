@@ -184,7 +184,7 @@ function sameModel(a: OpenCodeModelRef | null | undefined, b: OpenCodeModelRef |
   return a?.providerID === b?.providerID && a?.modelID === b?.modelID;
 }
 
-export function createOpenCodeSessionRunner(options: {
+export interface CreateOpenCodeSessionRunnerOptions {
   cwd: string;
   agentDir: string;
   port?: number;
@@ -196,7 +196,11 @@ export function createOpenCodeSessionRunner(options: {
   /** Override for tests; a random per-run password is generated otherwise. */
   password?: string;
   fetch?: typeof fetch;
-}): OpenCodeSessionRunner {
+}
+
+export function createOpenCodeSessionRunner(
+  options: CreateOpenCodeSessionRunnerOptions,
+): OpenCodeSessionRunner {
   const spawnImpl = options.spawn || spawn;
   const fetchImpl = options.fetch || fetch;
   const opencodeBin = resolveOpencodeExecutable(options.opencodeBin || getOpencodeBin());

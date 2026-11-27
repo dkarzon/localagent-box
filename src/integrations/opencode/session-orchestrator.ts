@@ -37,32 +37,58 @@ import type {
 import { createOpenCodeEventMapper } from './event-mapper';
 import {
   buildModelRef,
+  buildModelRefFromId,
   buildOpenCodePrompt,
   formatBootstrapSummaryBlock,
   isAgentRunTimedOut,
   parseTimeoutMs,
   resolveAgentRunStartedAtMs,
+  type OpenCodeModelRef,
 } from './runner';
 import {
   createOpenCodeSessionRunner,
   getAgentOpenCodeConfigDir,
   isBatchTurnComplete,
+  type CreateOpenCodeSessionRunnerOptions,
   type OpenCodeServerEvent,
   type OpenCodeSessionRunner,
 } from './session-runner';
 
 export type SessionOrchestratorOutcome = 'cancelled' | 'failed' | 'turn_complete';
 
+/** One completed turn: `index` is 0 for the initial task. */
+export interface CompletedTurn {
+  index: number;
+  assistantText: string;
+}
+
+/** What the host wants done after a turn; `null` ends the run. */
+export interface TurnFollowUp {
+  followUp: string;
+  /** Model id for the follow-up turn; defaults to the run model. */
+  model?: string;
+}
+
 export interface SessionOrchestratorOptions {
   ctx: WorkerContext;
   /** PR2: merge permission allow block into per-agent opencode.json */
   autoApprovePermissions?: boolean;
+  /**
+   * Called when a turn completes while the session is still alive. Returning a
+   * follow-up sends it on the same session and keeps polling; returning null (or
+   * omitting the hook) ends the run with `turn_complete`.
+   */
+  onTurnComplete?: (turn: CompletedTurn) => Promise<TurnFollowUp | null>;
+  /** Test seam; defaults to `createOpenCodeSessionRunner`. */
+  createRunner?: (options: CreateOpenCodeSessionRunnerOptions) => OpenCodeSessionRunner;
 }
 
 export interface SessionOrchestratorResult {
   outcome: SessionOrchestratorOutcome;
   sessionId: string;
   failureMessage?: string;
+  /** Turns completed in this run, in order. */
+  turns: CompletedTurn[];
 }
 
 function sleep(ms: number): Promise<void> {
@@ -128,23 +154,26 @@ function describeError(err: unknown): string {
 }
 
 /**
- * Assistant text produced by a batch turn: the streamed deltas merged with the
- * message snapshot, whichever is longer (a snapshot can arrive after the stream).
- * Reported per turn so the host can show what the model actually said.
+ * Assistant text for one batch turn. Each message's own text is the longer of its
+ * stream and its snapshot (see `mergeAssistantText`), which is what the event
+ * handler records into `messageTexts`; `streamedAssistantText` holds the deltas of
+ * the message currently being streamed, which may never finalize, so it is appended
+ * at the end. Reported per turn so the host can show what the model actually said.
  */
-export function resolveTurnAssistantText(state: {
-  lastAssistantText: string | null;
+export interface TurnAssistantTextState {
+  /** Text of each finalized assistant message in the turn, in order. */
+  messageTexts: string[];
+  /** Streamed deltas accumulated since the last finalized message. */
   streamedAssistantText: string;
-}): string | null {
-  const snapshot = state.lastAssistantText;
-  const streamed = state.streamedAssistantText;
-  if (!streamed) {
-    return snapshot;
+}
+
+export function resolveTurnAssistantText(state: TurnAssistantTextState): string {
+  const parts = state.messageTexts.map((text) => text.trim()).filter(Boolean);
+  const pending = state.streamedAssistantText.trim();
+  if (pending) {
+    parts.push(pending);
   }
-  if (!snapshot) {
-    return streamed;
-  }
-  return mergeAssistantText(streamed, snapshot);
+  return parts.join('\n');
 }
 
 /**
@@ -215,6 +244,8 @@ export async function runSessionOrchestrator(
 ): Promise<SessionOrchestratorResult> {
   const { ctx } = options;
   const autoApprovePermissions = options.autoApprovePermissions ?? false;
+  const onTurnComplete = options.onTurnComplete ?? null;
+  const makeRunner = options.createRunner ?? createOpenCodeSessionRunner;
 
   const { job, logPath, config, agentsStore } = ctx;
   const repoConfig = loadRepoConfig(job.workspaceDir);
@@ -264,7 +295,7 @@ export async function runSessionOrchestrator(
   });
   appendLog(logPath, `OpenCode agent dir: ${agentDir}`);
 
-  const sessionRunner = createOpenCodeSessionRunner({
+  const sessionRunner = makeRunner({
     cwd: job.workspaceDir,
     agentDir,
     onServerOutput: (chunk) => fs.appendFileSync(logPath, chunk),
@@ -293,7 +324,9 @@ export async function runSessionOrchestrator(
   let loggedFirstTextDelta = false;
   let loggedReasoningOnlyWarning = false;
   let accumulatedStreamedTextLen = 0;
-  let accumulatedStreamedText = '';
+  /** Assistant text for the turn currently running, reset when a follow-up is sent. */
+  const turnText: TurnAssistantTextState = { messageTexts: [], streamedAssistantText: '' };
+  const turns: CompletedTurn[] = [];
 
   // Cumulative token usage across all assistant messages in this session
   let totalInputTokens = 0;
@@ -328,9 +361,13 @@ export async function runSessionOrchestrator(
   }
   const sseLockedStatuses = new Set<AgentStatus>([
     'queued',
+    'verifying',
+    'repairing',
     'completing',
     'completed',
     'failed',
+    'needs_attention',
+    'failed_machine',
     'cancelled',
   ]);
 
@@ -428,7 +465,7 @@ export async function runSessionOrchestrator(
         const deltaText = mapped.payload.text;
         if (typeof deltaText === 'string') {
           accumulatedStreamedTextLen += deltaText.length;
-          accumulatedStreamedText += deltaText;
+          turnText.streamedAssistantText += deltaText;
         }
       }
     }
@@ -436,7 +473,7 @@ export async function runSessionOrchestrator(
     if (mapped.type === 'assistant.message') {
       const info = mapped.payload.info as { role?: string } | undefined;
       const snapshot = extractAssistantTextFromPayload(mapped.payload);
-      const assistantText = mergeAssistantText(accumulatedStreamedText, snapshot).trim();
+      const assistantText = mergeAssistantText(turnText.streamedAssistantText, snapshot).trim();
       const parts = mapped.payload.parts as Array<{ type?: string; text?: string }> | undefined;
       const textParts = Array.isArray(parts)
         ? parts.filter(
@@ -452,6 +489,7 @@ export async function runSessionOrchestrator(
       );
       if (assistantText) {
         appendConversation(job, 'assistant', assistantText);
+        turnText.messageTexts.push(assistantText);
       }
       if (accumulatedStreamedTextLen > totalTextLen && totalTextLen > 0) {
         appendLog(
@@ -472,7 +510,7 @@ export async function runSessionOrchestrator(
         );
       }
       accumulatedStreamedTextLen = 0;
-      accumulatedStreamedText = '';
+      turnText.streamedAssistantText = '';
 
       // Extract and accumulate token usage from this message
       const msgTokens = extractMessageTokenUsage(mapped.payload, runConfig.modelTokenCosts ?? {});
@@ -550,6 +588,48 @@ export async function runSessionOrchestrator(
     }
   };
 
+  /**
+   * Send one turn on the live session: transcript line, prompt, reset the per-turn
+   * counters. Item 2.4 wraps this. `transcriptText` is what the transcript shows —
+   * the first turn records the task without the `## Context` framing.
+   */
+  async function sendTurn(
+    text: string,
+    model: OpenCodeModelRef | null,
+    transcriptText = text,
+  ): Promise<void> {
+    appendConversation(job, 'user', transcriptText);
+    // The turn boundary is this prompt: the per-turn text starts here and the idle
+    // poll must see this turn busy before it can complete.
+    seenBusySinceProcessing = false;
+    batchPromptBusySeen = false;
+    turnText.messageTexts = [];
+    turnText.streamedAssistantText = '';
+    await sessionRunner.sendPromptAsync(sessionId, {
+      parts: [{ type: 'text', text }],
+      agent: 'build',
+      ...(model ? { model } : {}),
+    });
+    turnCount += 1;
+    updateAgentRecord(agentsStore, job.agentId, { turnCount, status: 'processing' });
+  }
+
+  /** Null when the status poll fails transiently, so a failed poll is not read as idle. */
+  async function pollSessionStatus(): Promise<Record<string, { type?: string }> | null> {
+    try {
+      return await sessionRunner.getSessionStatusMap();
+    } catch {
+      return null;
+    }
+  }
+
+  function logTurnStreamTotals(turnIndex: number): void {
+    appendLog(
+      logPath,
+      `OpenCode text stream totals at turn ${turnIndex}: textDeltaEvents=${textDeltaEventCount} textDeltaEmitted=${textDeltaEmittedCount} textUpdatedEvents=${textUpdatedEventCount} reasoningDeltaEvents=${reasoningDeltaEventCount} reasoningDeltaEmitted=${reasoningDeltaEmittedCount} reasoningUpdatedEvents=${reasoningUpdatedEventCount}`,
+    );
+  }
+
   try {
     await sessionRunner.startServer();
     appendLog(logPath, `OpenCode serve spawned; waiting for ready on port ${sessionRunner.port}…`);
@@ -581,22 +661,19 @@ export async function runSessionOrchestrator(
     const bootstrapSummary = formatBootstrapSummaryBlock(
       readAgentRecord(agentsStore, job.agentId)?.bootstrap,
     );
-    const initialText = buildOpenCodePrompt(
-      bootstrapSummary
-        ? `${bootstrapSummary}\n\n${job.prompt}`
-        : job.prompt,
-      job.systemPrompt,
-      repoPromptOverrides ?? undefined,
-      config.systemPrompt,
+    const initialTaskText = bootstrapSummary
+      ? `${bootstrapSummary}\n\n${job.prompt}`
+      : job.prompt;
+    await sendTurn(
+      buildOpenCodePrompt(
+        initialTaskText,
+        job.systemPrompt,
+        repoPromptOverrides ?? undefined,
+        config.systemPrompt,
+      ),
+      modelRef,
+      initialTaskText,
     );
-    appendConversation(job, 'user', bootstrapSummary ? `${bootstrapSummary}\n\n${job.prompt}` : job.prompt);
-    await sessionRunner.sendPromptAsync(sessionId, {
-      parts: [{ type: 'text', text: initialText }],
-      agent: 'build',
-      ...(modelRef ? { model: modelRef } : {}),
-    });
-    turnCount = 1;
-    updateAgentRecord(agentsStore, job.agentId, { turnCount, status: 'processing' });
 
     while (!sessionFailed) {
       if (isAgentRunTimedOut(sessionStartedAt, timeoutMs)) {
@@ -609,27 +686,45 @@ export async function runSessionOrchestrator(
         if (sessionId) {
           await sessionRunner.abort(sessionId);
         }
-        return { outcome: 'cancelled', sessionId };
+        return { outcome: 'cancelled', sessionId, turns };
       }
 
       if (sessionId) {
-        try {
-          const statusMap = await sessionRunner.getSessionStatusMap();
+        const statusMap = await pollSessionStatus();
+        if (statusMap) {
           const status = statusMap[sessionId];
           if (status?.type === 'busy' || status?.type === 'retry') {
             batchPromptBusySeen = true;
           }
           const batchBusySeen = batchPromptBusySeen || seenBusySinceProcessing;
           if (isBatchTurnComplete(statusMap, sessionId, batchBusySeen)) {
-            appendLog(logPath, 'OpenCode session idle after task prompt — batch turn complete');
+            const turn: CompletedTurn = {
+              index: turnCount - 1,
+              assistantText: resolveTurnAssistantText(turnText),
+            };
+            appendLog(logPath, `OpenCode session idle — turn ${turn.index} complete`);
+            logTurnStreamTotals(turn.index);
+            turns.push(turn);
+
+            const next = onTurnComplete ? await onTurnComplete(turn) : null;
+            // The hook can run for minutes (host checks); a cancel that arrived meanwhile
+            // must end the run as cancelled, not as a completed turn or a new prompt.
+            if (onTurnComplete && readAgentStatus(agentsStore, job.agentId) === 'cancelled') {
+              appendLog(logPath, `Agent cancelled after turn ${turn.index} — aborting OpenCode session`);
+              await sessionRunner.abort(sessionId);
+              return { outcome: 'cancelled', sessionId, turns };
+            }
+            if (!next?.followUp.trim()) {
+              return { outcome: 'turn_complete', sessionId, turns };
+            }
+            const followUp = next.followUp.trim();
+            const followUpModel = next.model ? buildModelRefFromId(runConfig, next.model) : modelRef;
             appendLog(
               logPath,
-              `OpenCode text stream final: textDeltaEvents=${textDeltaEventCount} textDeltaEmitted=${textDeltaEmittedCount} textUpdatedEvents=${textUpdatedEventCount} reasoningDeltaEvents=${reasoningDeltaEventCount} reasoningDeltaEmitted=${reasoningDeltaEmittedCount} reasoningUpdatedEvents=${reasoningUpdatedEventCount}`,
+              `Host follow-up after turn ${turn.index} (model ${next.model ?? 'run model'}): ${followUp.slice(0, 200)}`,
             );
-            return { outcome: 'turn_complete', sessionId };
+            await sendTurn(followUp, followUpModel);
           }
-        } catch {
-          /* transient status poll failure */
         }
       }
 
@@ -640,6 +735,7 @@ export async function runSessionOrchestrator(
       outcome: 'failed',
       sessionId,
       failureMessage: failureMessage || 'OpenCode session failed',
+      turns,
     };
   } finally {
     if (hasTokenUsage) {

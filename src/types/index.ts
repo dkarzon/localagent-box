@@ -235,6 +235,20 @@ export interface AgentAutofixMetadata {
   batchIndex?: number;
 }
 
+/** Why a batch run ended with no file changes (v1 1.3). */
+export type NoChangeReason = 'already_done' | 'not_applicable' | 'blocked' | 'unclear_task';
+
+/**
+ * The agent's accepted explanation for a zero-change run (v1 1.3). Written by the
+ * model as `.localagent-box/artefacts/no-change.json` and validated by the host.
+ */
+export interface AgentNoChangeExplanation {
+  reason: NoChangeReason;
+  explanation: string;
+  /** File paths or commands the explanation rests on; at most 10. */
+  evidence: string[];
+}
+
 export interface AgentResult {
   branch: string;
   baseBranch: string;
@@ -244,6 +258,8 @@ export interface AgentResult {
   filesChanged: number;
   warning: string | null;
   opencodeSuccess: boolean;
+  /** True when the run completed on a no-change explanation instead of edits. */
+  noChange?: boolean;
 }
 
 export type AgentMode = 'batch' | 'review';
@@ -290,9 +306,17 @@ export type AgentStatus =
   /** Legacy only: pre-v1 interactive sessions; no run can set it any more */
   | 'awaiting_input'
   | 'processing'
+  /** Host-run post-run checks are executing (v1 1.1) */
+  | 'verifying'
+  /** A repair turn requested after a failing check (v1 1.2) */
+  | 'repairing'
   | 'completing'
   | 'completed'
   | 'failed'
+  /** Checks still failing after the repair attempts were used up (v1 1.2) */
+  | 'needs_attention'
+  /** Failed because of the machine (timeout, OOM, disk), not because of the code */
+  | 'failed_machine'
   | 'cancelled';
 
 export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
@@ -386,6 +410,15 @@ export interface RepoEnvironmentSetupConfig {
   runOnModes?: AgentMode[];
 }
 
+/** Post-run host checks in the `checks` block of `environment.json` (v1 1.1). */
+export interface RepoCheckConfig {
+  build?: string;
+  lint?: string;
+  test?: string;
+  /** Defaults to `verifyTimeoutMs`, then 600000. */
+  timeoutMs?: number;
+}
+
 /**
  * Parsed .localagent-box/environment.json content.
  * Unknown top-level keys are ignored by the loader.
@@ -415,6 +448,15 @@ export interface RepoEnvironmentConfig {
    * (or `DEFAULT_SETUP_TIMEOUT_MS` when the setup block has none).
    */
   verifyTimeoutMs?: number;
+  /**
+   * Host-run checks after the model's turn (v1 1.1), read from the base branch
+   * so a run cannot change the checks it is verified under.
+   */
+  checks?: RepoCheckConfig;
+  /** Repair turns allowed after a failing check, 0–3, default 2 (v1 1.2) */
+  repairAttempts?: number;
+  /** Allow a draft PR when checks fail; default false (v1 1.2) */
+  draftPrOnFailure?: boolean;
 }
 
 export type BootstrapStatus = 'skipped' | 'running' | 'completed' | 'failed';
@@ -455,6 +497,85 @@ export interface AgentBootstrapState {
   verifyExitCode?: number;
 }
 
+/** Names of the host-run post-turn checks (v1 1.1). */
+export type CheckName = 'build' | 'lint' | 'test' | 'verify';
+
+/** One host-run check: the exit status plus the output tail the host keeps. */
+export interface AgentCheckRun {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  /** Signal the process died on (string, not NodeJS.Signals, so the record stays JSON-safe). */
+  signal: string | null;
+  timedOut: boolean;
+  durationMs: number;
+  outputTail: string;
+}
+
+/**
+ * One verification pass over the workspace: `attempt` 0 is after the task turn,
+ * 1..n after repair n. Checks stop at the first failure.
+ */
+export interface AgentVerificationAttempt {
+  attempt: number;
+  startedAt: string;
+  finishedAt: string;
+  checks: AgentCheckRun[];
+  passed: boolean;
+  failureKind?: 'code' | 'machine';
+  machineReason?: string;
+  /** Working-tree `git diff --stat` against the run-start ref, captured before the checks ran */
+  diffStat?: string;
+  /** What the agent said in the turn that produced the change (truncated to 4000 chars) */
+  assistantText?: string;
+}
+
+/** Host-run verification state for the run, persisted on the agent record. */
+export interface AgentVerification {
+  state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
+  /**
+   * Where the check config came from; checks are never read from the working tree.
+   * `unavailable`: the base branch could not be read, so whether checks exist is unknown.
+   */
+  configSource: 'base' | 'none' | 'unavailable';
+  maxRepairAttempts: number;
+  /**
+   * Resolved `draftPrOnFailure`, kept on the record so the server can decide about
+   * a draft PR without the workspace (v1 1.2).
+   */
+  draftPrOnFailure?: boolean;
+  attempts: AgentVerificationAttempt[];
+}
+
+/** One attempt as an escalation reports it: what the agent changed and what it said. */
+export interface AgentEscalationAttempt {
+  attempt: number;
+  diffStat: string;
+  assistantText: string;
+  /** Check this attempt stopped at; absent when the attempt passed */
+  failedCheck?: CheckName;
+}
+
+/** The failing check an escalation reports, trimmed to what a person needs to act on. */
+export interface AgentEscalationFailingCheck {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  outputTail: string;
+}
+
+/**
+ * What a person is told when the host could not verify the run on its own
+ * (v1 1.5): present only for `needs_attention` and `failed_machine`, and carried
+ * by webhook payloads as part of `agent`.
+ */
+export interface AgentEscalation {
+  /** One line, e.g. "test still failing after 2 repair attempts" */
+  summary: string;
+  failingCheck: AgentEscalationFailingCheck;
+  attempts: AgentEscalationAttempt[];
+}
+
 export interface Agent {
   agentId: string;
   workspaceId: string;
@@ -476,6 +597,8 @@ export interface Agent {
   /** Distinct models invoked during the run (read by PR content generation) */
   modelsUsed?: string[] | null;
   status: AgentStatus;
+  /** Repair turn in progress (1-based); set when a code failure sends the model back to work */
+  repairAttempt?: number;
   /** Legacy interactive-session fields; kept so pre-v1 records still read */
   opencodeSessionId?: string | null;
   turnCount?: number;
@@ -508,6 +631,12 @@ export interface Agent {
   tokenUsage?: AgentTokenUsage;
   /** Host-run workspace bootstrap (setup command) before the agent starts */
   bootstrap?: AgentBootstrapState;
+  /** Host-run checks after the model's turn (v1 1.1) */
+  verification?: AgentVerification | null;
+  /** Escalation for a run the host could not verify (v1 1.5); present for needs_attention / failed_machine */
+  escalation?: AgentEscalation | null;
+  /** Accepted explanation for a run that changed no files (v1 1.3) */
+  noChange?: AgentNoChangeExplanation | null;
   /** Derived wait/retry info; not persisted */
   queue?: AgentQueueState;
 }
@@ -524,6 +653,11 @@ export interface AgentJob {
   agentBranch: string;
   /** When true, clone and checkout agentBranch instead of creating a new branch from baseBranch */
   useExistingBranch?: boolean;
+  /**
+   * Branch the post-run check config is read from (v1 1.1): the repo default
+   * when the run works on an existing branch, otherwise `baseBranch`.
+   */
+  checksBaseBranch: string;
   commitMessage: string;
   push: boolean;
   pushOnFailure: boolean;

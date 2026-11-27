@@ -73,6 +73,7 @@ function makeJob(dataDir: string): AgentJob {
     systemPrompt: '',
     baseBranch: 'main',
     agentBranch: 'main',
+    checksBaseBranch: 'main',
     commitMessage: 'test',
     push: false,
     pushOnFailure: false,

@@ -1,3 +1,4 @@
+import os from 'os';
 import { spawn } from 'child_process';
 import { registerChildCleanup } from '../../../lib/child-cleanup';
 
@@ -7,10 +8,19 @@ const KILL_GRACE_MS = 5_000;
 
 export interface WorkspaceCommandResult {
   command: string;
+  /** Exit code, or `128 + signal number` when the process was killed by a signal. */
   exitCode: number;
+  /** Signal the process exited on, or null when it exited normally (or timed out). */
+  signal: NodeJS.Signals | null;
+  durationMs: number;
   outputTail: string;
   timedOut: boolean;
   success: boolean;
+}
+
+/** Shell convention for a signal kill: 128 + signal number (SIGKILL is 137). */
+export function signalExitCode(signal: NodeJS.Signals): number {
+  return 128 + (os.constants.signals[signal] ?? 0);
 }
 
 export interface RunWorkspaceCommandOptions {
@@ -69,6 +79,7 @@ export function runWorkspaceCommand(
       detached: !isWin,
     });
 
+    const startedAt = Date.now();
     let combined = '';
     let timedOut = false;
     let settled = false;
@@ -85,7 +96,10 @@ export function runWorkspaceCommand(
       trimCombined();
     };
 
-    const finish = (result: WorkspaceCommandResult) => {
+    /** Result without `durationMs`: filled in from the spawn time when the run settles. */
+    type CommandOutcome = Omit<WorkspaceCommandResult, 'durationMs'>;
+
+    const finish = (result: CommandOutcome) => {
       if (settled) {
         return;
       }
@@ -93,7 +107,7 @@ export function runWorkspaceCommand(
       unregisterCleanup();
       clearTimeout(timer);
       clearTimeout(killGraceTimer);
-      resolve(result);
+      resolve({ ...result, durationMs: Date.now() - startedAt });
     };
 
     const killProcessTree = (signal: NodeJS.Signals = 'SIGTERM') => {
@@ -128,6 +142,7 @@ export function runWorkspaceCommand(
         finish({
           command,
           exitCode: 124,
+          signal: null,
           outputTail: tailOutputLines(combined, maxOutputLines),
           timedOut: true,
           success: false,
@@ -140,17 +155,21 @@ export function runWorkspaceCommand(
       finish({
         command,
         exitCode: 1,
+        signal: null,
         outputTail: tailOutputLines(message, maxOutputLines),
         timedOut: false,
         success: false,
       });
     });
 
-    child.on('close', (code) => {
-      const exitCode = timedOut ? 124 : (code ?? 1);
+    child.on('close', (code, signal) => {
+      // A signal kill (OOM, an outside SIGKILL) has no exit code, so report the
+      // shell convention; otherwise a null code is a plain failure.
+      const exitCode = timedOut ? 124 : (code ?? (signal ? signalExitCode(signal) : 1));
       finish({
         command,
         exitCode,
+        signal: timedOut ? null : (signal ?? null),
         outputTail: tailOutputLines(combined, maxOutputLines),
         timedOut,
         success: !timedOut && exitCode === 0,

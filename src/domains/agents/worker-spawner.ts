@@ -3,7 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { getLogger } from '../../lib/logger';
-import { CodedError, type Agent, type AgentJob, type SpawnFn } from '../../types';
+import { CodedError, type Agent, type AgentJob, type Repo, type SpawnFn } from '../../types';
 import type { AgentRepository } from './agent.repository';
 import { getAgentMode } from './agent.types';
 
@@ -41,6 +41,17 @@ export interface WorkerSpawner {
 
 const DEFAULT_SHUTDOWN_WAIT_MS = 30_000;
 
+/** Branch the post-run check config is read from (see worker/verification.ts). */
+function resolveChecksBaseBranch(
+  agent: Agent,
+  getRepo?: (repoId: string) => Repo | undefined,
+): string {
+  if (agent.useExistingBranch) {
+    return getRepo?.(agent.repoId)?.defaultBranch || agent.baseBranch;
+  }
+  return agent.baseBranch;
+}
+
 export function createWorkerSpawner(options: {
   repository: AgentRepository;
   dataDir: string;
@@ -50,6 +61,8 @@ export function createWorkerSpawner(options: {
   fs?: FsLike;
   path?: typeof path;
   spawn?: SpawnFn;
+  /** Repo lookup for the checks base branch; absent repos return undefined. */
+  getRepo?: (repoId: string) => Repo | undefined;
   onWorkerExit: (
     agentId: string,
     code: number | null,
@@ -115,6 +128,9 @@ export function createWorkerSpawner(options: {
       baseBranch: agent.baseBranch,
       agentBranch: agent.agentBranch,
       useExistingBranch: agent.useExistingBranch,
+      // Post-run checks are read from the repo default branch when the run works
+      // on an existing branch, otherwise from the branch it was created from.
+      checksBaseBranch: resolveChecksBaseBranch(agent, options.getRepo),
       commitMessage: agent.commitMessage,
       push: agent.push,
       pushOnFailure: agent.pushOnFailure,

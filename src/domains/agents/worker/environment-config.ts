@@ -3,6 +3,7 @@ import path from 'path';
 import type {
   AgentMode,
   LegacyAgentMode,
+  RepoCheckConfig,
   RepoEnvironmentConfig,
   RepoEnvironmentSetupConfig,
 } from '../../../types';
@@ -12,7 +13,12 @@ export const environmentConfigRelative = path.join(
   'environment.json',
 );
 
+/** Forward-slash form, for reading the file from a git ref. */
+export const ENVIRONMENT_CONFIG_REPOSITORY_PATH = '.localagent-box/environment.json';
+
 const MAX_SETUP_TIMEOUT_MS = 1_800_000; // 30 min
+export const MAX_REPAIR_ATTEMPTS = 3;
+const CHECK_KEYS = ['build', 'lint', 'test'] as const;
 
 /** Modes a setup command can still run on; the removed ones are skipped with a note. */
 const VALID_MODES = ['batch', 'review'] as const satisfies readonly AgentMode[];
@@ -22,11 +28,6 @@ export interface EnvironmentConfigResult {
   config: RepoEnvironmentConfig;
   /** Human-readable notes for the worker log. */
   notes: string[];
-}
-
-function readJsonFile(filePath: string): unknown {
-  const raw = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(raw) as unknown;
 }
 
 function assertObject(raw: unknown, location: string): Record<string, unknown> {
@@ -93,7 +94,71 @@ export function validateEnvironmentConfig(raw: unknown): EnvironmentConfigResult
     config.verifyTimeoutMs = verifyTimeoutMs;
   }
 
+  if (obj.checks !== undefined) {
+    config.checks = validateChecks(obj.checks);
+  }
+
+  if (obj.repairAttempts !== undefined) {
+    const repairAttempts = obj.repairAttempts;
+    if (
+      typeof repairAttempts !== 'number' ||
+      !Number.isInteger(repairAttempts) ||
+      repairAttempts < 0 ||
+      repairAttempts > MAX_REPAIR_ATTEMPTS
+    ) {
+      throw new Error(
+        `${environmentConfigRelative} repairAttempts must be an integer between 0 and ${MAX_REPAIR_ATTEMPTS} when provided`,
+      );
+    }
+    config.repairAttempts = repairAttempts;
+  }
+
+  if (obj.draftPrOnFailure !== undefined) {
+    if (typeof obj.draftPrOnFailure !== 'boolean') {
+      throw new Error(
+        `${environmentConfigRelative} draftPrOnFailure must be a boolean when provided`,
+      );
+    }
+    config.draftPrOnFailure = obj.draftPrOnFailure;
+  }
+
   return { config, notes };
+}
+
+function validateChecks(raw: unknown): RepoCheckConfig {
+  const location = `${environmentConfigRelative} checks`;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${location} must be a JSON object when provided`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const checks: RepoCheckConfig = {};
+
+  for (const key of CHECK_KEYS) {
+    const value = obj[key];
+    if (value !== undefined) {
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new Error(`${location}.${key} must be a non-empty string when provided`);
+      }
+      checks[key] = value;
+    }
+  }
+
+  if (obj.timeoutMs !== undefined) {
+    const timeoutMs = obj.timeoutMs;
+    if (
+      typeof timeoutMs !== 'number' ||
+      !Number.isInteger(timeoutMs) ||
+      timeoutMs <= 0 ||
+      timeoutMs > MAX_SETUP_TIMEOUT_MS
+    ) {
+      throw new Error(
+        `${location} timeoutMs must be a positive integer no greater than ${MAX_SETUP_TIMEOUT_MS} when provided`,
+      );
+    }
+    checks.timeoutMs = timeoutMs;
+  }
+
+  return checks;
 }
 
 function validateProfiles(raw: unknown): string[] {
@@ -178,6 +243,19 @@ function validateRunOnModes(raw: unknown, notes: string[]): AgentMode[] {
   return modes;
 }
 
+/** Parses and validates file text; the error names the file. */
+export function parseEnvironmentConfig(raw: string): EnvironmentConfigResult {
+  try {
+    return validateEnvironmentConfig(JSON.parse(raw) as unknown);
+  } catch (err) {
+    const cause = err instanceof Error ? err : new Error(String(err));
+    throw new Error(
+      `Failed to load ${environmentConfigRelative}: ${cause.message}`,
+      { cause },
+    );
+  }
+}
+
 export function loadEnvironmentConfig(
   workspaceDir: string,
   fsImpl: Pick<typeof fs, 'existsSync' | 'readFileSync'> = fs,
@@ -186,13 +264,5 @@ export function loadEnvironmentConfig(
   if (!fsImpl.existsSync(repoPath)) {
     return null;
   }
-  try {
-    return validateEnvironmentConfig(readJsonFile(repoPath));
-  } catch (err) {
-    const cause = err instanceof Error ? err : new Error(String(err));
-    throw new Error(
-      `Failed to load ${environmentConfigRelative}: ${cause.message}`,
-      { cause },
-    );
-  }
+  return parseEnvironmentConfig(fsImpl.readFileSync(repoPath, 'utf8'));
 }

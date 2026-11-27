@@ -1,8 +1,12 @@
 import type {
   Agent,
   AgentBootstrapState,
+  AgentCheckRun,
   AgentPullRequest,
   AgentTokenUsage,
+  AgentVerification,
+  AgentVerificationAttempt,
+  NoChangeReason,
 } from '../../api/types';
 import {
   canCreatePullRequest,
@@ -15,6 +19,7 @@ import { IconLink, IconLogs, IconRefresh } from '../icons';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Form';
 import { AgentGitStatus } from './AgentGitStatus';
+import { MarkdownMessage } from './MarkdownMessage';
 import { Link } from 'react-router-dom';
 
 function bootstrapStatusVariant(
@@ -31,6 +36,54 @@ function bootstrapStatusVariant(
     default:
       return 'neutral';
   }
+}
+
+const VERIFICATION_STATE_LABELS: Record<AgentVerification['state'], string> = {
+  unverified: 'Unverified',
+  passed: 'Passed',
+  failed: 'Failed',
+  machine_failure: 'Machine failure',
+};
+
+const NO_CHANGE_REASON_LABELS: Record<NoChangeReason, string> = {
+  already_done: 'Already done',
+  not_applicable: 'Not applicable',
+  blocked: 'Blocked',
+  unclear_task: 'Unclear task',
+};
+
+function verificationStatusVariant(
+  state: AgentVerification['state'],
+): 'verified' | 'failed' | 'danger' | 'neutral' {
+  switch (state) {
+    case 'passed':
+      return 'verified';
+    case 'failed':
+      return 'failed';
+    case 'machine_failure':
+      return 'danger';
+    default:
+      return 'neutral';
+  }
+}
+
+function checkResultLabel(run: AgentCheckRun): string {
+  if (run.timedOut) return 'timed out';
+  if (run.exitCode === 0) return 'passed';
+  return `exit ${run.exitCode}`;
+}
+
+function formatCheckDuration(ms: number): string {
+  return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+}
+
+function attemptSummary(attempt: AgentVerificationAttempt): string {
+  if (attempt.passed) return 'All checks passed';
+  const failed = attempt.checks.at(-1);
+  const reason = attempt.failureKind === 'machine'
+    ? `machine failure (${attempt.machineReason ?? 'unknown'})`
+    : 'check failed';
+  return `Stopped at ${failed?.name ?? 'unknown'} — ${reason}`;
 }
 
 const BOOTSTRAP_STATUS_LABELS: Record<AgentBootstrapState['status'], string> = {
@@ -94,6 +147,10 @@ export function AgentSessionInfo({
   const showCreatePr = agent ? canCreatePullRequest(agent) : false;
   const bootstrap = agent?.bootstrap ?? null;
   const showBootstrap = Boolean(bootstrap && bootstrap.status !== 'skipped');
+  // Set only by batch runs: review runs are not verified by host checks.
+  const verification = agent?.verification ?? null;
+  const showChecks = Boolean(verification);
+  const noChange = agent?.noChange ?? null;
 
   const resolveModelLabel = () => {
     if (agent?.model) return agent.model;
@@ -221,6 +278,126 @@ export function AgentSessionInfo({
               </dl>
               {bootstrap.status === 'failed' && bootstrap.error ? (
                 <p className="mt-2 text-xs text-error">{bootstrap.error}</p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {showChecks && verification ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-on-surface">Checks</p>
+                <Badge variant={verificationStatusVariant(verification.state)}>
+                  {VERIFICATION_STATE_LABELS[verification.state]}
+                </Badge>
+              </div>
+              <p className="mb-3 text-xs text-muted">
+                {verification.configSource === 'base'
+                  ? 'Config from the base branch'
+                  : verification.configSource === 'unavailable'
+                    ? 'Base branch could not be read — no checks ran'
+                    : 'No checks configured'}
+                {verification.maxRepairAttempts > 0
+                  ? ` · up to ${verification.maxRepairAttempts} repair attempt(s)`
+                  : ''}
+              </p>
+
+              {verification.attempts.length === 0 ? (
+                <p className="text-xs text-muted">No checks have run yet.</p>
+              ) : null}
+
+              <ul className="space-y-3">
+                {verification.attempts.map((attempt) => (
+                  <li
+                    key={attempt.attempt}
+                    className="rounded border border-surface-low bg-surface-low p-3"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-sm text-on-surface">
+                        Attempt {attempt.attempt === 0 ? 'after the task' : attempt.attempt}
+                      </p>
+                      <span
+                        className={`code-md text-xs ${attempt.passed ? 'text-success' : 'text-error'}`}
+                      >
+                        {attemptSummary(attempt)}
+                      </span>
+                    </div>
+                    <ul className="space-y-2">
+                      {attempt.checks.map((run) => (
+                        <li key={`${attempt.attempt}-${run.name}`} className="text-sm">
+                          <div className="flex justify-between gap-4">
+                            <dt className="text-on-surface-variant">{run.name}</dt>
+                            <dd className="code-md text-on-surface">
+                              <span
+                                className={
+                                  run.timedOut || run.exitCode !== 0 ? 'text-error' : 'text-success'
+                                }
+                              >
+                                {checkResultLabel(run)}
+                              </span>
+                              {' · '}
+                              {formatCheckDuration(run.durationMs)}
+                            </dd>
+                          </div>
+                          <p className="code-md mt-1 break-all text-on-surface-variant">
+                            {run.command}
+                          </p>
+                          {run.outputTail ? (
+                            <details className="mt-1">
+                              <summary className="label-md normal-case tracking-wide text-muted">
+                                Output
+                              </summary>
+                              <pre className="code-md mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all text-on-surface-variant">
+                                {run.outputTail}
+                              </pre>
+                            </details>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                    {attempt.diffStat ? (
+                      <>
+                        <p className="label-md mt-2 normal-case tracking-wide text-muted">
+                          Diff stat
+                        </p>
+                        <p className="code-md mt-1 whitespace-pre-wrap break-all text-on-surface-variant">
+                          {attempt.diffStat}
+                        </p>
+                      </>
+                    ) : null}
+                    {attempt.assistantText ? (
+                      <div className="mt-2">
+                        <p className="label-md normal-case tracking-wide text-muted">
+                          Agent&apos;s reasoning
+                        </p>
+                        <MarkdownMessage text={attempt.assistantText} />
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {noChange ? (
+            <div className="rounded border border-surface-container-highest bg-background p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-on-surface">No changes</p>
+                <Badge variant="neutral">{NO_CHANGE_REASON_LABELS[noChange.reason]}</Badge>
+              </div>
+              <p className="text-xs text-muted">
+                Completed on the agent&apos;s explanation — nothing was committed and no PR was opened.
+              </p>
+              <p className="code-md mt-2 whitespace-pre-wrap break-words text-on-surface">
+                {noChange.explanation}
+              </p>
+              {noChange.evidence.length > 0 ? (
+                <ul className="mt-2 space-y-1">
+                  {noChange.evidence.map((entry) => (
+                    <li key={entry} className="code-md break-all text-on-surface-variant">
+                      {entry}
+                    </li>
+                  ))}
+                </ul>
               ) : null}
             </div>
           ) : null}

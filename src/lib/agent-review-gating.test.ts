@@ -109,4 +109,20 @@ describe('canReviewBranches with canCreatePullRequest', () => {
       false,
     );
   });
+
+  it('blocks review while another agent is still verifying or repairing the branch', () => {
+    const agent = completedAgent();
+    for (const status of ['verifying', 'repairing'] as const) {
+      const followUp = completedAgent({ agentId: 'agent-follow-up', status, pushed: false });
+      assert.equal(
+        canReviewBranches(agent, {
+          relatedAgents: [agent, followUp],
+          baseBranch: 'main',
+          agentsLoaded: true,
+        }),
+        false,
+        status,
+      );
+    }
+  });
 });

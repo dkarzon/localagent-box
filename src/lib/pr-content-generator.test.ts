@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { Agent } from '../types';
-import { buildDefaultPullRequestBody, buildPullRequestMetadataSection } from './agent-pull-request';
+import type { Agent, AgentVerification } from '../types';
 import {
+  buildDefaultPullRequestBody,
+  buildPullRequestBodyWithHostTestPlan,
+  buildPullRequestMetadataSection,
+} from './agent-pull-request';
+import {
+  buildPullRequestGenerationPrompt,
   enrichGeneratedPullRequestBody,
   extractAssistantSummary,
   parsePullRequestGenerationResponse,
@@ -132,6 +137,25 @@ describe('buildPullRequestMetadataSection', () => {
   });
 });
 
+describe('buildPullRequestGenerationPrompt', () => {
+  it('asks for a summary and never for a test plan', () => {
+    const prompt = buildPullRequestGenerationPrompt({
+      agent: baseAgent(),
+      base: 'main',
+      repoOwner: 'acme',
+      repoName: 'demo',
+      messages: [{ ts: '2026-06-09T00:00:00.000Z', role: 'user', text: 'Add retry logic' }],
+      diffStat: null,
+      diffPatch: null,
+      logExcerpt: null,
+    });
+
+    assert.match(prompt, /Include a ## Summary section/);
+    assert.match(prompt, /Never include a test plan/);
+    assert.doesNotMatch(prompt, /Include ## Summary and ## Test plan/);
+  });
+});
+
 describe('extractAssistantSummary', () => {
   it('returns the latest assistant message', () => {
     const summary = extractAssistantSummary([
@@ -163,6 +187,93 @@ describe('buildDefaultPullRequestBody', () => {
     assert.match(body, /## Prompt/);
     assert.match(body, /Local Agent Box session/);
   });
+});
+
+describe('buildPullRequestBodyWithHostTestPlan', () => {
+  const verification: AgentVerification = {
+    state: 'passed',
+    configSource: 'base',
+    maxRepairAttempts: 2,
+    attempts: [
+      {
+        attempt: 0,
+        startedAt: '2026-06-09T00:04:00.000Z',
+        finishedAt: '2026-06-09T00:04:30.000Z',
+        checks: [
+          {
+            name: 'test',
+            command: 'npm test',
+            exitCode: 1,
+            signal: null,
+            timedOut: false,
+            durationMs: 30_000,
+            outputTail: '1 test failed',
+          },
+        ],
+        passed: false,
+        failureKind: 'code',
+      },
+      {
+        attempt: 1,
+        startedAt: '2026-06-09T00:05:00.000Z',
+        finishedAt: '2026-06-09T00:05:30.000Z',
+        checks: [
+          {
+            name: 'test',
+            command: 'npm test',
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            durationMs: 29_000,
+            outputTail: 'all tests passed',
+          },
+        ],
+        passed: true,
+      },
+    ],
+  };
+
+  const sources: Array<{ name: string; body: string; hasFooter: boolean }> = [
+    {
+      name: 'llm',
+      body: enrichGeneratedPullRequestBody(
+        '## Summary\n\n- Added retries.\n\n## Test plan\n\n- [ ] Run the webhook tests',
+        baseAgent(),
+        'main',
+      ),
+      hasFooter: true,
+    },
+    {
+      name: 'assistant summary',
+      body: enrichGeneratedPullRequestBody(
+        'Implemented retries.\n\n## Test plan\n\n- [ ] Manual check',
+        baseAgent(),
+        'main',
+      ),
+      hasFooter: true,
+    },
+    { name: 'default', body: buildDefaultPullRequestBody(baseAgent(), 'main'), hasFooter: true },
+    { name: 'explicit override', body: 'Manual notes for the reviewer.', hasFooter: false },
+  ];
+
+  for (const source of sources) {
+    it(`writes the host test plan into the ${source} body and drops the model one`, () => {
+      const body = buildPullRequestBodyWithHostTestPlan(baseAgent({ verification }), source.body);
+
+      assert.match(body, /^## Test plan$/m);
+      assert.match(body, /\| Check \| Command \| Result \| Attempts \|/);
+      assert.match(body, /\| test \| `npm test` \| ✅ passed \| 2 \|/);
+      assert.match(body, /Repair attempts: 1 of 2/);
+      assert.doesNotMatch(body, /- \[ \]/);
+
+      if (source.hasFooter) {
+        assert.ok(
+          body.indexOf('## Test plan') < body.indexOf('Local Agent Box session'),
+          'the host section goes before the metadata block',
+        );
+      }
+    });
+  }
 });
 
 describe('truncateText', () => {

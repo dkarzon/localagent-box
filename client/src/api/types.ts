@@ -11,9 +11,17 @@ export type AgentStatus =
   /** Legacy only: pre-v1 interactive sessions; no run can set it */
   | 'awaiting_input'
   | 'processing'
+  /** Host-run post-run checks are running */
+  | 'verifying'
+  /** A repair turn requested after a failing check */
+  | 'repairing'
   | 'completing'
   | 'completed'
   | 'failed'
+  /** Checks still failing after the repair attempts were used up */
+  | 'needs_attention'
+  /** Stopped by a machine failure (timeout, OOM, disk), not by the code */
+  | 'failed_machine'
   | 'cancelled';
 
 export type AgentQueueWaitingOn = 'predecessor' | 'slot' | 'branch_worker';
@@ -270,6 +278,80 @@ export interface AgentBootstrapState {
   error?: string;
 }
 
+/** Host-run post-run check names. */
+export type CheckName = 'build' | 'lint' | 'test' | 'verify';
+
+/** One host-run check, as recorded by the server. */
+export interface AgentCheckRun {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  signal: string | null;
+  timedOut: boolean;
+  durationMs: number;
+  outputTail: string;
+}
+
+/** One verification pass: `attempt` 0 is after the task turn, 1..n after repair n. */
+export interface AgentVerificationAttempt {
+  attempt: number;
+  startedAt: string;
+  finishedAt: string;
+  checks: AgentCheckRun[];
+  passed: boolean;
+  failureKind?: 'code' | 'machine';
+  machineReason?: string;
+  /** Filled by 1.5 */
+  diffStat?: string;
+  /** Filled by 1.5 */
+  assistantText?: string;
+}
+
+/** Host-run verification state; mirrors the server-side record. */
+export interface AgentVerification {
+  state: 'unverified' | 'passed' | 'failed' | 'machine_failure';
+  /** `unavailable`: the base branch could not be read, so no checks ran */
+  configSource: 'base' | 'none' | 'unavailable';
+  maxRepairAttempts: number;
+  /** True when the repo allows a draft PR for a failing run */
+  draftPrOnFailure?: boolean;
+  attempts: AgentVerificationAttempt[];
+}
+
+/** One attempt as an escalation reports it: what the agent changed and what it said. */
+export interface AgentEscalationAttempt {
+  attempt: number;
+  diffStat: string;
+  assistantText: string;
+  /** Check this attempt stopped at; absent when the attempt passed */
+  failedCheck?: CheckName;
+}
+
+/** The failing check an escalation reports, trimmed to what a person needs to act on. */
+export interface AgentEscalationFailingCheck {
+  name: CheckName;
+  command: string;
+  exitCode: number;
+  outputTail: string;
+}
+
+/** Set when the host could not verify the run: needs_attention or failed_machine. */
+export interface AgentEscalation {
+  summary: string;
+  failingCheck: AgentEscalationFailingCheck;
+  attempts: AgentEscalationAttempt[];
+}
+
+/** Why a batch run ended with no file changes; mirrors the server schema. */
+export type NoChangeReason = 'already_done' | 'not_applicable' | 'blocked' | 'unclear_task';
+
+/** Accepted explanation for a run that changed no files (v1 1.3). */
+export interface AgentNoChangeExplanation {
+  reason: NoChangeReason;
+  explanation: string;
+  evidence: string[];
+}
+
 export interface AgentsListResponse {
   agents: Agent[];
   overallTokenUsage: OverallTokenUsage;
@@ -279,6 +361,8 @@ export interface Agent {
   agentId: string;
   repoId: string;
   status: AgentStatus | string;
+  /** Repair turn in progress (1-based), from the host verification loop */
+  repairAttempt?: number;
   mode?: AgentMode | LegacyAgentMode;
   workspaceId?: string;
   prompt?: string;
@@ -300,7 +384,13 @@ export interface Agent {
   messagesPreview?: string | null;
   gitStatus?: AgentGitStatus | null;
   autoApprovePermissions?: boolean;
-  result?: { warning?: string; commitSha?: string | null; opencodeSuccess?: boolean };
+  result?: {
+    warning?: string;
+    commitSha?: string | null;
+    opencodeSuccess?: boolean;
+    /** True when the run completed on a no-change explanation. */
+    noChange?: boolean;
+  };
   pullRequest?: AgentPullRequest | null;
   parentAgentId?: string | null;
   review?: AgentReviewMetadata | null;
@@ -308,6 +398,12 @@ export interface Agent {
   allowSuccessors?: boolean;
   /** Host-run workspace bootstrap (setup command) before the agent starts */
   bootstrap?: AgentBootstrapState;
+  /** Host-run checks after the model's turn */
+  verification?: AgentVerification | null;
+  /** Escalation for a run the host could not verify; set for needs_attention / failed_machine */
+  escalation?: AgentEscalation | null;
+  /** Accepted explanation for a run that changed no files (v1 1.3) */
+  noChange?: AgentNoChangeExplanation | null;
   queue?: AgentQueueState;
 }
 
@@ -351,13 +447,21 @@ export const BATCH_ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'queued',
   'running',
   'processing',
+  'verifying',
+  'repairing',
   'completing',
 ]);
 
 // `awaiting_input` is legacy only, so it is not an active status.
 export const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([...BATCH_ACTIVE_AGENT_STATUSES]);
 
-export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>(['completed', 'failed', 'cancelled']);
+export const TERMINAL_AGENT_STATUSES = new Set<AgentStatus>([
+  'completed',
+  'failed',
+  'needs_attention',
+  'failed_machine',
+  'cancelled',
+]);
 
 export function getAgentMode(agent: Agent): AgentMode | LegacyAgentMode {
   return agent.mode || 'batch';
@@ -473,12 +577,12 @@ export function isAgentActive(agent: Agent): boolean {
 }
 
 export function canCreatePullRequest(agent: Agent): boolean {
-  return (
-    agent.status === 'completed' &&
-    agent.result?.opencodeSuccess === true &&
-    agent.pushed === true &&
-    !agent.pullRequest
-  );
+  if (agent.pushed !== true || agent.pullRequest) return false;
+  // A no-change completion has nothing on the branch to open a PR for.
+  if (agent.result?.noChange) return false;
+  if (agent.status === 'completed') return agent.result?.opencodeSuccess === true;
+  // Failed checks only get a draft PR when the repo asked for one.
+  return agent.status === 'needs_attention' && agent.verification?.draftPrOnFailure === true;
 }
 
 export function buildGitHubPullRequestUrl(

@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import {
   environmentConfigRelative,
   loadEnvironmentConfig,
+  parseEnvironmentConfig,
   validateEnvironmentConfig,
 } from './environment-config';
 
@@ -294,6 +295,92 @@ describe('validateEnvironmentConfig', () => {
         /environment\.json verifyTimeoutMs must be a positive integer no greater than 1800000 when provided/,
       );
     }
+  });
+
+  it('accepts an optional checks block', () => {
+    const result = validate({
+      version: 1,
+      checks: { build: 'npm run build', lint: 'npm run lint', test: 'npm test', timeoutMs: 900_000 },
+    });
+    assert.deepEqual(result.checks, {
+      build: 'npm run build',
+      lint: 'npm run lint',
+      test: 'npm test',
+      timeoutMs: 900_000,
+    });
+  });
+
+  it('accepts a single check', () => {
+    const result = validate({ version: 1, checks: { test: 'npm test' } });
+    assert.deepEqual(result.checks, { test: 'npm test' });
+  });
+
+  it('rejects non-object checks', () => {
+    for (const checks of ['npm test', 42, null, true, []]) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, checks }),
+        /environment\.json checks must be a JSON object when provided/,
+      );
+    }
+  });
+
+  it('rejects empty or non-string check commands', () => {
+    for (const value of [42, null, true, [], '', '   ']) {
+      for (const key of ['build', 'lint', 'test']) {
+        assert.throws(
+          () => validateEnvironmentConfig({ version: 1, checks: { [key]: value } }),
+          new RegExp(
+            `environment\\.json checks\\.${key} must be a non-empty string when provided`,
+          ),
+        );
+      }
+    }
+  });
+
+  it('rejects bad checks.timeoutMs values, including out-of-range', () => {
+    const cases: unknown[] = [0, -1, -300_000, 1.5, 0.5, '300000', null, true, NaN, Infinity, 1_800_001];
+    for (const timeoutMs of cases) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, checks: { test: 'npm test', timeoutMs } }),
+        /environment\.json checks timeoutMs must be a positive integer no greater than 1800000 when provided/,
+      );
+    }
+  });
+
+  it('accepts repairAttempts within 0..3', () => {
+    for (const repairAttempts of [0, 1, 2, 3]) {
+      assert.equal(validate({ version: 1, repairAttempts }).repairAttempts, repairAttempts);
+    }
+  });
+
+  it('rejects out-of-range or non-integer repairAttempts', () => {
+    const cases: unknown[] = [4, -1, 1.5, '2', null, true, NaN, Infinity];
+    for (const repairAttempts of cases) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, repairAttempts }),
+        /environment\.json repairAttempts must be an integer between 0 and 3 when provided/,
+      );
+    }
+  });
+
+  it('accepts an optional draftPrOnFailure', () => {
+    assert.equal(validate({ version: 1, draftPrOnFailure: true }).draftPrOnFailure, true);
+    assert.equal(validate({ version: 1, draftPrOnFailure: false }).draftPrOnFailure, false);
+  });
+
+  it('rejects non-boolean draftPrOnFailure', () => {
+    for (const draftPrOnFailure of ['true', 1, null, []]) {
+      assert.throws(
+        () => validateEnvironmentConfig({ version: 1, draftPrOnFailure }),
+        /environment\.json draftPrOnFailure must be a boolean when provided/,
+      );
+    }
+  });
+
+  it('parses text the same way the loader does', () => {
+    const parsed = parseEnvironmentConfig(JSON.stringify({ version: 1, checks: { test: 'npm test' } }));
+    assert.deepEqual(parsed.config.checks, { test: 'npm test' });
+    assert.throws(() => parseEnvironmentConfig('{oops'), /Failed to load \.localagent-box\/environment\.json/);
   });
 
   it('ignores unknown keys without error', () => {

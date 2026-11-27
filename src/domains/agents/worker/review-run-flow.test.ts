@@ -197,6 +197,7 @@ function makeFlowHarness(root: string, expectedSha: string | null): FlowHarness 
     baseBranch: 'main',
     agentBranch: 'feature',
     headBranch: 'feature',
+    checksBaseBranch: 'main',
     commitMessage: '',
     push: false,
     pushOnFailure: false,

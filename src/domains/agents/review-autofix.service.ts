@@ -28,6 +28,8 @@ const ACTIVE_FIX_STATUSES = new Set<Agent['status']>([
   'queued',
   'running',
   'processing',
+  'verifying',
+  'repairing',
   'completing',
 ]);
 
@@ -35,9 +37,13 @@ const ACTIVE_FIX_STATUSES = new Set<Agent['status']>([
 const ACTIVE_FIX_TERMINAL_OR_STOPPED = new Set<Agent['status']>([
   'running',
   'processing',
+  'verifying',
+  'repairing',
   'completing',
   'completed',
   'failed',
+  'needs_attention',
+  'failed_machine',
   'cancelled',
 ]);
 

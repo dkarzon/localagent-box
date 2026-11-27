@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import {
   formatCommandResultBlock,
   runWorkspaceCommand,
+  signalExitCode,
   tailOutputLines,
 } from './workspace-command';
 
@@ -54,6 +55,8 @@ describe('formatCommandResultBlock', () => {
     const block = formatCommandResultBlock({
       command: 'npm test',
       exitCode: 1,
+      signal: null,
+      durationMs: 1200,
       outputTail: 'AssertionError: expected true',
       timedOut: false,
       success: false,
@@ -68,6 +71,8 @@ describe('formatCommandResultBlock', () => {
       {
         command: 'npm test',
         exitCode: 124,
+        signal: null,
+        durationMs: 5000,
         outputTail: '',
         timedOut: true,
         success: false,
@@ -183,6 +188,34 @@ describe('runWorkspaceCommand', () => {
       spawnImpl: (() => child) as unknown as typeof spawn,
     });
     assert.equal(result.outputTail, 'l3\nl4');
+  });
+
+  it('reports the wall-clock duration of the run', async () => {
+    const child = makeFakeChild();
+    setTimeout(() => {
+      child.emit('close', 0);
+    }, 20);
+
+    const result = await runWorkspaceCommand('/tmp/workspace', 'sleep 0.02', {
+      spawnImpl: (() => child) as unknown as typeof spawn,
+    });
+    assert.ok(result.durationMs > 0, `expected durationMs > 0, got ${result.durationMs}`);
+  });
+
+  it('reports a signal kill as 128 + the signal number', async () => {
+    const child = makeFakeChild();
+    queueMicrotask(() => {
+      child.emit('close', null, 'SIGKILL');
+    });
+
+    const result = await runWorkspaceCommand('/tmp/workspace', 'true', {
+      spawnImpl: (() => child) as unknown as typeof spawn,
+    });
+    assert.equal(result.signal, 'SIGKILL');
+    assert.equal(result.exitCode, 137);
+    assert.equal(result.success, false);
+    assert.equal(signalExitCode('SIGKILL'), 137);
+    assert.equal(signalExitCode('SIGTERM'), 143);
   });
 
   it('resolves with a failure result when spawn emits an error', async () => {

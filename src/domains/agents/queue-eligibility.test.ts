@@ -66,6 +66,40 @@ describe('queue-eligibility', () => {
     assert.equal(decideQueueAction(second, [completed, second], () => false), 'start');
   });
 
+  it('starts a successor after a no-change completion, which pushed nothing', () => {
+    const explained = {
+      ...first,
+      status: 'completed' as const,
+      pushed: false,
+      result: {
+        branch: first.agentBranch,
+        baseBranch: first.baseBranch,
+        workspaceId: first.workspaceId,
+        commitSha: null,
+        pushed: false,
+        filesChanged: 0,
+        warning: null,
+        opencodeSuccess: true,
+        noChange: true,
+      },
+    };
+    assert.equal(decideQueueAction(second, [explained, second], () => false), 'start');
+  });
+
+  it('starts a successor after a needs_attention predecessor pushed its branch', () => {
+    const stalled = { ...first, status: 'needs_attention' as const, pushed: true };
+    assert.equal(predecessorAllowsStart(stalled), true);
+    assert.equal(decideQueueAction(second, [stalled, second], () => false), 'start');
+  });
+
+  it('defers a successor while a needs_attention predecessor has not pushed', () => {
+    const stalled = { ...first, status: 'needs_attention' as const, pushed: false };
+    assert.equal(predecessorAllowsStart(stalled), false);
+    const state = buildAgentQueueState(second, [stalled, second], () => false);
+    assert.equal(state.waitingOn, 'predecessor');
+    assert.match(state.reason || '', /needs_attention/);
+  });
+
   it('defers a successor when the predecessor failed without allowSuccessors', () => {
     const failed = { ...first, status: 'failed' as const };
     assert.equal(decideQueueAction(second, [failed, second], () => false), 'defer');

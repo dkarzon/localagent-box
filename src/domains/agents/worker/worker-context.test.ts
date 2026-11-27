@@ -16,6 +16,7 @@ function makeJob(dataDir: string): AgentJob {
     prompt: 'goal',
     baseBranch: 'main',
     agentBranch: 'main',
+    checksBaseBranch: 'main',
     commitMessage: 'test',
     push: false,
     pushOnFailure: false,
